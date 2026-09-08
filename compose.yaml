@@ -1,0 +1,17 @@
+services:
+  bookharbor:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    environment:
+      BOOKHARBOR_ADDR: ":8080"
+      BOOKHARBOR_DATA_DIR: /data
+      BOOKHARBOR_NAME: "${BOOKHARBOR_NAME:-BookHarbor}"
+    ports:
+      - "${BOOKHARBOR_PORT:-8080}:8080"
+    volumes:
+      - bookharbor-data:/data
+    restart: unless-stopped
+
+volumes:
+  bookharbor-data:

@@ -1,0 +1,12 @@
+.git
+.agents
+.codex
+.env
+.gradle
+.idea
+.vscode
+**/build
+**/dist
+**/node_modules
+apps/server/bookharbor
+data

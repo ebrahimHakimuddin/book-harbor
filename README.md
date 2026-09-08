@@ -26,8 +26,29 @@ after this core loop is dependable.
 
 ## Repository status
 
-BookHarbor is at the product-foundation stage. The product scope, system shape,
-and first client/server contract live in [`docs/`](docs/README.md).
+BookHarbor is in early development. The server skeleton exposes health and
+instance-discovery endpoints; persistence, bootstrap, and book imports are the
+next server milestones. The product scope, system shape, and first client/server
+contract live in [`docs/`](docs/README.md).
+
+## Run the server
+
+With Go 1.24 or newer:
+
+```sh
+cd apps/server
+go run ./cmd/bookharbor
+```
+
+Or run the self-hosted container from the repository root:
+
+```sh
+cp .env.example .env
+docker compose up --build
+```
+
+The health endpoint is `http://localhost:8080/healthz`; instance discovery is
+available at `http://localhost:8080/api/v1/instance`.
 
 ## Product principles
 
@@ -52,5 +73,6 @@ packages/
 docs/             Product, architecture, and decision records
 ```
 
-The implementation stack is intentionally not committed yet. The immediate
-next decision is documented in [`docs/architecture.md`](docs/architecture.md).
+The server uses Go; the Android client will use Kotlin and Jetpack Compose. The
+rationale and remaining technology decisions are documented in
+[`docs/architecture.md`](docs/architecture.md).

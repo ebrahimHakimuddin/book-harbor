@@ -86,17 +86,14 @@ waits on this module's network work.
 - **Persistence:** domain modules receive storage dependencies; they do not
   create database connections inside domain behavior.
 
-## Technology decision still open
+## Technology direction
 
-Before generating framework code, choose the server and administration stack.
-The preferred starting options are:
+The server is written in Go and the Android client will use Kotlin with Jetpack
+Compose. The initial server uses the Go standard library where practical and is
+packaged as a small container. This favors a low operational footprint and an
+explicit client/server contract over sharing implementation code across tiers.
 
-1. **Kotlin end to end:** Ktor server, PostgreSQL or SQLite, and Jetpack Compose
-   Android. This maximizes language and model sharing.
-2. **Go server + Kotlin Android:** a small server binary and native Android app.
-   This favors simple self-hosting and explicit contracts over shared code.
-3. **TypeScript server/web + Kotlin Android:** fast web administration work and
-   a broad ecosystem, with a somewhat heavier server toolchain.
-
-Regardless of choice, client/server types should be generated from the versioned
-contract rather than maintained by hand in two languages.
+The metadata store and administration frontend will be selected when their
+first end-to-end slice is implemented. Client/server types should eventually be
+generated from the versioned contract rather than maintained by hand in two
+languages. See [decision 0002](decisions/0002-go-server-kotlin-android.md).
