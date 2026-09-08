@@ -95,3 +95,16 @@ func verifyPassword(encoded, password string) (bool, error) {
 	actual := argon2.IDKey([]byte(password), salt, params.time, params.memory, params.threads, params.keyLen)
 	return subtle.ConstantTimeCompare(actual, expected) == 1, nil
 }
+
+func consumePasswordWork(password string) {
+	salt := make([]byte, passwordSaltLen)
+	actual := argon2.IDKey(
+		[]byte(password),
+		salt,
+		defaultPasswordParams.time,
+		defaultPasswordParams.memory,
+		defaultPasswordParams.threads,
+		defaultPasswordParams.keyLen,
+	)
+	subtle.ConstantTimeCompare(actual, make([]byte, passwordKeyLen))
+}

@@ -23,6 +23,18 @@ var migrations = []string{
 		role TEXT NOT NULL CHECK (role IN ('admin', 'reader')),
 		created_at TEXT NOT NULL
 	) STRICT;`,
+	`CREATE TABLE sessions (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		access_token_hash BLOB NOT NULL UNIQUE CHECK (length(access_token_hash) = 32),
+		refresh_token_hash BLOB NOT NULL UNIQUE CHECK (length(refresh_token_hash) = 32),
+		access_expires_at TEXT NOT NULL,
+		refresh_expires_at TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		last_used_at TEXT NOT NULL,
+		revoked_at TEXT
+	) STRICT;
+	CREATE INDEX sessions_user_id_idx ON sessions(user_id);`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

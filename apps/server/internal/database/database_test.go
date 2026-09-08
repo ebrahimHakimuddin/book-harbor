@@ -38,6 +38,13 @@ func TestOpenCreatesAndReopensDatabase(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("user count = %d, want 1", count)
 	}
+	var schemaVersion int
+	if err := second.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVersion); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if schemaVersion != len(migrations) {
+		t.Fatalf("schema version = %d, want %d", schemaVersion, len(migrations))
+	}
 
 	info, err := os.Stat(filepath.Join(dataDir, databaseFilename))
 	if err != nil {

@@ -21,7 +21,8 @@ var (
 )
 
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	now func() time.Time
 }
 
 type BootstrapInput struct {
@@ -39,7 +40,11 @@ type User struct {
 }
 
 func NewStore(db *sql.DB) *Store {
-	return &Store{db: db}
+	return newStoreWithClock(db, time.Now)
+}
+
+func newStoreWithClock(db *sql.DB, now func() time.Time) *Store {
+	return &Store{db: db, now: now}
 }
 
 func (s *Store) SetupRequired(ctx context.Context) (bool, error) {
@@ -84,7 +89,7 @@ func (s *Store) BootstrapAdmin(ctx context.Context, input BootstrapInput) (User,
 	if err != nil {
 		return User{}, err
 	}
-	createdAt := time.Now().UTC()
+	createdAt := s.now().UTC()
 
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO users (id, email, display_name, password_hash, role, created_at)
