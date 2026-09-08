@@ -102,6 +102,17 @@ func TestCreateSessionRejectsInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestCreateSessionBoundsPasswordHashingConcurrency(t *testing.T) {
+	store, db := testStore(t)
+	defer db.Close()
+	store.passwordSlots <- struct{}{}
+	store.passwordSlots <- struct{}{}
+
+	if _, err := store.CreateSession(context.Background(), "admin@example.com", "password"); !errors.Is(err, ErrAuthenticationBusy) {
+		t.Fatalf("CreateSession() error = %v, want ErrAuthenticationBusy", err)
+	}
+}
+
 func TestSessionExpiration(t *testing.T) {
 	db, err := database.Open(context.Background(), t.TempDir())
 	if err != nil {

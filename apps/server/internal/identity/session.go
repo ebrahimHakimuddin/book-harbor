@@ -21,6 +21,7 @@ const (
 )
 
 var (
+	ErrAuthenticationBusy  = errors.New("authentication capacity exhausted")
 	ErrInvalidCredentials  = errors.New("invalid credentials")
 	ErrInvalidAccessToken  = errors.New("invalid access token")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
@@ -45,6 +46,13 @@ type Principal struct {
 }
 
 func (s *Store) CreateSession(ctx context.Context, email, password string) (SessionResult, error) {
+	select {
+	case s.passwordSlots <- struct{}{}:
+		defer func() { <-s.passwordSlots }()
+	default:
+		return SessionResult{}, ErrAuthenticationBusy
+	}
+
 	email = strings.ToLower(strings.TrimSpace(email))
 	var user User
 	var passwordHash, createdAt string

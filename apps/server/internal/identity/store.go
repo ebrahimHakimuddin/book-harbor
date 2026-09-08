@@ -21,8 +21,9 @@ var (
 )
 
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db            *sql.DB
+	now           func() time.Time
+	passwordSlots chan struct{}
 }
 
 type BootstrapInput struct {
@@ -44,7 +45,11 @@ func NewStore(db *sql.DB) *Store {
 }
 
 func newStoreWithClock(db *sql.DB, now func() time.Time) *Store {
-	return &Store{db: db, now: now}
+	return &Store{
+		db:            db,
+		now:           now,
+		passwordSlots: make(chan struct{}, 2),
+	}
 }
 
 func (s *Store) SetupRequired(ctx context.Context) (bool, error) {
