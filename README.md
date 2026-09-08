@@ -26,10 +26,10 @@ after this core loop is dependable.
 
 ## Repository status
 
-BookHarbor is in early development. The server skeleton exposes health and
-instance-discovery endpoints; persistence, bootstrap, and book imports are the
-next server milestones. The product scope, system shape, and first client/server
-contract live in [`docs/`](docs/README.md).
+BookHarbor is in early development. The server provides persistent instance
+discovery and one-time administrator bootstrap; sessions and book imports are
+the next server milestones. The product scope, system shape, and first
+client/server contract live in [`docs/`](docs/README.md).
 
 ## Run the server
 

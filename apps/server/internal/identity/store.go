@@ -54,6 +54,14 @@ func (s *Store) SetupRequired(ctx context.Context) (bool, error) {
 }
 
 func (s *Store) BootstrapAdmin(ctx context.Context, input BootstrapInput) (User, error) {
+	required, err := s.SetupRequired(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	if !required {
+		return User{}, ErrAlreadyBootstrapped
+	}
+
 	displayName := strings.TrimSpace(input.DisplayName)
 	if utf8.RuneCountInString(displayName) < 1 || utf8.RuneCountInString(displayName) > 100 {
 		return User{}, ErrInvalidDisplayName

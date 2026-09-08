@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
+	"github.com/bookharbor/bookharbor/apps/server/internal/database"
 	"github.com/bookharbor/bookharbor/apps/server/internal/httpapi"
+	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 )
 
 var (
@@ -31,11 +33,18 @@ func main() {
 		logger.Error("create data directory", "error", err)
 		os.Exit(1)
 	}
+	db, err := database.Open(context.Background(), cfg.DataDir)
+	if err != nil {
+		logger.Error("open metadata database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+	identityStore := identity.NewStore(db)
 
 	handler := httpapi.New(cfg, httpapi.BuildInfo{
 		Version: version,
 		Commit:  commit,
-	}, logger)
+	}, identityStore, logger)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,

@@ -2,12 +2,17 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
+	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 )
+
+const maxJSONBodyBytes = 16 * 1024
 
 type BuildInfo struct {
 	Version string
@@ -17,18 +22,20 @@ type BuildInfo struct {
 type server struct {
 	config config.Config
 	build  BuildInfo
+	users  *identity.Store
 	logger *slog.Logger
 }
 
-func New(cfg config.Config, build BuildInfo, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, logger: logger}
+	s := &server{config: cfg, build: build, users: users, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", requireMethod(http.MethodGet, http.HandlerFunc(s.health)))
 	mux.Handle("/api/v1/instance", requireMethod(http.MethodGet, http.HandlerFunc(s.instance)))
+	mux.Handle("/api/v1/bootstrap", requireMethod(http.MethodPost, http.HandlerFunc(s.bootstrap)))
 	mux.HandleFunc("/", notFound)
 
 	return s.withRequestLogging(s.withSecurityHeaders(mux))
@@ -38,7 +45,14 @@ func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *server) instance(w http.ResponseWriter, _ *http.Request) {
+func (s *server) instance(w http.ResponseWriter, r *http.Request) {
+	setupRequired, err := s.users.SetupRequired(r.Context())
+	if err != nil {
+		s.logger.Error("read instance state", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read instance state")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, struct {
 		Name          string   `json:"name"`
 		Version       string   `json:"version"`
@@ -49,8 +63,56 @@ func (s *server) instance(w http.ResponseWriter, _ *http.Request) {
 		Name:          s.config.Name,
 		Version:       s.build.Version,
 		Commit:        s.build.Commit,
-		SetupRequired: true,
+		SetupRequired: setupRequired,
 		Formats:       []string{"epub", "pdf"},
+	})
+}
+
+func (s *server) bootstrap(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		DisplayName string `json:"displayName"`
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+	}
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be one valid JSON object")
+		return
+	}
+
+	user, err := s.users.BootstrapAdmin(r.Context(), identity.BootstrapInput{
+		DisplayName: request.DisplayName,
+		Email:       request.Email,
+		Password:    request.Password,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, identity.ErrAlreadyBootstrapped):
+			writeError(w, http.StatusConflict, "already_bootstrapped", "instance setup is already complete")
+		case errors.Is(err, identity.ErrInvalidDisplayName):
+			writeError(w, http.StatusUnprocessableEntity, "invalid_display_name", "display name must contain 1 to 100 characters")
+		case errors.Is(err, identity.ErrInvalidEmail):
+			writeError(w, http.StatusUnprocessableEntity, "invalid_email", "email address is invalid")
+		case errors.Is(err, identity.ErrWeakPassword):
+			writeError(w, http.StatusUnprocessableEntity, "invalid_password", "password must contain 12 to 1024 bytes")
+		default:
+			s.logger.Error("bootstrap administrator", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "unable to complete instance setup")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, struct {
+		ID          string    `json:"id"`
+		DisplayName string    `json:"displayName"`
+		Email       string    `json:"email"`
+		Role        string    `json:"role"`
+		CreatedAt   time.Time `json:"createdAt"`
+	}{
+		ID:          user.ID,
+		DisplayName: user.DisplayName,
+		Email:       user.Email,
+		Role:        user.Role,
+		CreatedAt:   user.CreatedAt,
 	})
 }
 
@@ -104,4 +166,17 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 		Code:    code,
 		Message: message,
 	})
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain one JSON value")
+	}
+	return nil
 }

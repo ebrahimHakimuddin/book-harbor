@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -9,10 +11,12 @@ import (
 	"testing"
 
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
+	"github.com/bookharbor/bookharbor/apps/server/internal/database"
+	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 )
 
 func TestHealth(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	response := httptest.NewRecorder()
 
@@ -27,7 +31,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestInstance(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil)
 	response := httptest.NewRecorder()
 
@@ -62,7 +66,7 @@ func TestInstance(t *testing.T) {
 }
 
 func TestInstanceRejectsWrongMethod(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/instance", nil)
 	response := httptest.NewRecorder()
 
@@ -78,7 +82,7 @@ func TestInstanceRejectsWrongMethod(t *testing.T) {
 }
 
 func TestUnknownRouteReturnsJSONError(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/missing", nil)
 	response := httptest.NewRecorder()
 
@@ -90,10 +94,98 @@ func TestUnknownRouteReturnsJSONError(t *testing.T) {
 	assertErrorCode(t, response, "not_found")
 }
 
-func testHandler() http.Handler {
+func TestBootstrapAdministrator(t *testing.T) {
+	handler := testHandler(t)
+	body := []byte(`{
+		"displayName": "Harbor Master",
+		"email": "ADMIN@example.com",
+		"password": "a secure first password"
+	}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", bytes.NewReader(body))
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	var created struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"displayName"`
+		Email       string `json:"email"`
+		Role        string `json:"role"`
+		Password    string `json:"password"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+		t.Fatalf("decode bootstrap response: %v", err)
+	}
+	if created.ID == "" || created.DisplayName != "Harbor Master" || created.Email != "admin@example.com" || created.Role != "admin" {
+		t.Fatalf("bootstrap response = %#v", created)
+	}
+	if created.Password != "" {
+		t.Fatal("bootstrap response exposed password")
+	}
+
+	instanceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil)
+	instanceResponse := httptest.NewRecorder()
+	handler.ServeHTTP(instanceResponse, instanceRequest)
+	var instance struct {
+		SetupRequired bool `json:"setupRequired"`
+	}
+	if err := json.NewDecoder(instanceResponse.Body).Decode(&instance); err != nil {
+		t.Fatalf("decode instance response: %v", err)
+	}
+	if instance.SetupRequired {
+		t.Fatal("setupRequired = true after bootstrap, want false")
+	}
+
+	secondRequest := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", bytes.NewReader(body))
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, secondRequest)
+	if secondResponse.Code != http.StatusConflict {
+		t.Fatalf("second bootstrap status = %d, want %d", secondResponse.Code, http.StatusConflict)
+	}
+	assertErrorCode(t, secondResponse, "already_bootstrapped")
+}
+
+func TestBootstrapRejectsInvalidRequests(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "malformed JSON", body: `{`, wantStatus: http.StatusBadRequest, wantCode: "invalid_json"},
+		{name: "unknown field", body: `{"displayName":"Admin","email":"admin@example.com","password":"a secure password","extra":true}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_json"},
+		{name: "short password", body: `{"displayName":"Admin","email":"admin@example.com","password":"short"}`, wantStatus: http.StatusUnprocessableEntity, wantCode: "invalid_password"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := testHandler(t)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/bootstrap", bytes.NewBufferString(test.body))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+			}
+			assertErrorCode(t, response, test.wantCode)
+		})
+	}
+}
+
+func testHandler(t *testing.T) http.Handler {
+	t.Helper()
+	db, err := database.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("database.Open() error = %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
 	return New(
 		config.Config{Addr: ":0", DataDir: "testdata", Name: "Test Harbor"},
 		BuildInfo{Version: "test", Commit: "abc123"},
+		identity.NewStore(db),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 }

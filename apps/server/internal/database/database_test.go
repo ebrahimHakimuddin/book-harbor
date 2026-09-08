@@ -2,6 +2,8 @@ package database
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -35,6 +37,14 @@ func TestOpenCreatesAndReopensDatabase(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("user count = %d, want 1", count)
+	}
+
+	info, err := os.Stat(filepath.Join(dataDir, databaseFilename))
+	if err != nil {
+		t.Fatalf("stat database: %v", err)
+	}
+	if permissions := info.Mode().Perm(); permissions != 0o600 {
+		t.Fatalf("database permissions = %o, want 600", permissions)
 	}
 }
 

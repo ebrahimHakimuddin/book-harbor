@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -31,6 +32,16 @@ func Open(ctx context.Context, dataDir string) (*sql.DB, error) {
 	absolutePath, err := filepath.Abs(filepath.Join(dataDir, databaseFilename))
 	if err != nil {
 		return nil, fmt.Errorf("resolve database path: %w", err)
+	}
+	file, err := os.OpenFile(absolutePath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create database file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("close database file: %w", err)
+	}
+	if err := os.Chmod(absolutePath, 0o600); err != nil {
+		return nil, fmt.Errorf("secure database file: %w", err)
 	}
 
 	dsn := (&url.URL{

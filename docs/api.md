@@ -20,6 +20,19 @@ GET    /me
 returns short-lived access credentials plus a renewable session appropriate for
 native clients.
 
+The bootstrap request creates the first administrator:
+
+```json
+{
+  "displayName": "Harbor Master",
+  "email": "reader@example.com",
+  "password": "a long private password"
+}
+```
+
+It returns `201 Created` once. Subsequent requests return the stable
+`already_bootstrapped` conflict code.
+
 ## Library
 
 ```text
