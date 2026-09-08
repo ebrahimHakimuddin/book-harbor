@@ -33,7 +33,7 @@ contract live in [`docs/`](docs/README.md).
 
 ## Run the server
 
-With Go 1.24 or newer:
+With Go 1.26 or newer:
 
 ```sh
 cd apps/server

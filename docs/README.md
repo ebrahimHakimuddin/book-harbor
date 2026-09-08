@@ -9,6 +9,8 @@
   records why the reading loop comes before social features.
 - [`decisions/0002-go-server-kotlin-android.md`](decisions/0002-go-server-kotlin-android.md)
   records the initial implementation stack.
+- [`decisions/0003-sqlite-metadata-store.md`](decisions/0003-sqlite-metadata-store.md)
+  records the default metadata store.
 
 These documents describe intended behavior. Once implementation begins, tested
 code and the versioned HTTP contract become authoritative where they differ.

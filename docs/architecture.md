@@ -93,7 +93,11 @@ Compose. The initial server uses the Go standard library where practical and is
 packaged as a small container. This favors a low operational footprint and an
 explicit client/server contract over sharing implementation code across tiers.
 
-The metadata store and administration frontend will be selected when their
-first end-to-end slice is implemented. Client/server types should eventually be
-generated from the versioned contract rather than maintained by hand in two
-languages. See [decision 0002](decisions/0002-go-server-kotlin-android.md).
+The default metadata store is SQLite in WAL mode. This preserves the one-process,
+one-directory deployment model and provides transactional state without another
+required container. See [decision 0003](decisions/0003-sqlite-metadata-store.md).
+
+The administration frontend will be selected when its first end-to-end slice is
+implemented. Client/server types should eventually be generated from the
+versioned contract rather than maintained by hand in two languages. See
+[decision 0002](decisions/0002-go-server-kotlin-android.md).

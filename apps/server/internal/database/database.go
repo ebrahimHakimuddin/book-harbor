@@ -1,0 +1,96 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"net/url"
+	"path/filepath"
+	"strconv"
+
+	_ "modernc.org/sqlite"
+)
+
+const databaseFilename = "bookharbor.db"
+
+var migrations = []string{
+	`CREATE TABLE users (
+		id TEXT PRIMARY KEY,
+		email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+		display_name TEXT NOT NULL,
+		password_hash TEXT NOT NULL,
+		role TEXT NOT NULL CHECK (role IN ('admin', 'reader')),
+		created_at TEXT NOT NULL
+	) STRICT;`,
+}
+
+// Open creates or opens BookHarbor's metadata database and applies all known
+// migrations. SQLite connection settings live in the DSN so every connection
+// in database/sql's pool receives the same safety settings.
+func Open(ctx context.Context, dataDir string) (*sql.DB, error) {
+	absolutePath, err := filepath.Abs(filepath.Join(dataDir, databaseFilename))
+	if err != nil {
+		return nil, fmt.Errorf("resolve database path: %w", err)
+	}
+
+	dsn := (&url.URL{
+		Scheme: "file",
+		Path:   filepath.ToSlash(absolutePath),
+		RawQuery: url.Values{
+			"_busy_timeout": {"5000"},
+			"_defensive":    {"1"},
+			"_dqs":          {"0"},
+			"_foreign_keys": {"on"},
+			"_journal_mode": {"WAL"},
+			"_synchronous":  {"NORMAL"},
+		}.Encode(),
+	}).String()
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite database: %w", err)
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("connect to sqlite database: %w", err)
+	}
+	if err := migrate(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
+}
+
+func migrate(ctx context.Context, db *sql.DB) error {
+	var current int
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if current > len(migrations) {
+		return fmt.Errorf("database schema version %d is newer than supported version %d", current, len(migrations))
+	}
+
+	for index := current; index < len(migrations); index++ {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin migration %d: %w", index+1, err)
+		}
+		if _, err := tx.ExecContext(ctx, migrations[index]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("apply migration %d: %w", index+1, err)
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = "+strconv.Itoa(index+1)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("record migration %d: %w", index+1, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %d: %w", index+1, err)
+		}
+	}
+
+	return nil
+}
