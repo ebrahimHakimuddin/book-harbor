@@ -1,0 +1,23 @@
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Build output
+build/
+dist/
+out/
+.gradle/
+node_modules/
+
+# Runtime data
+data/
+*.db
+*.db-shm
+*.db-wal
