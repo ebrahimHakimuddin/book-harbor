@@ -54,6 +54,37 @@ var migrations = []string{
 		created_at TEXT NOT NULL
 	) STRICT;
 	CREATE INDEX editions_book_id_idx ON editions(book_id);`,
+	`CREATE TABLE reading_events (
+		revision INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		client_event_id TEXT NOT NULL,
+		device_id TEXT NOT NULL,
+		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		edition_id TEXT NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
+		locator_kind TEXT NOT NULL CHECK (locator_kind IN ('epub-cfi', 'pdf-page')),
+		locator_value TEXT NOT NULL,
+		percentage REAL NOT NULL CHECK (percentage >= 0 AND percentage <= 1),
+		occurred_at TEXT NOT NULL,
+		received_at TEXT NOT NULL,
+		disposition TEXT NOT NULL CHECK (disposition IN ('pending', 'applied', 'superseded')),
+		UNIQUE (user_id, client_event_id)
+	) STRICT;
+	CREATE INDEX reading_events_user_revision_idx ON reading_events(user_id, revision);
+	CREATE TABLE reading_progress (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		edition_id TEXT NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
+		event_revision INTEGER NOT NULL REFERENCES reading_events(revision),
+		client_event_id TEXT NOT NULL,
+		device_id TEXT NOT NULL,
+		locator_kind TEXT NOT NULL CHECK (locator_kind IN ('epub-cfi', 'pdf-page')),
+		locator_value TEXT NOT NULL,
+		percentage REAL NOT NULL CHECK (percentage >= 0 AND percentage <= 1),
+		occurred_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		PRIMARY KEY (user_id, book_id)
+	) STRICT;
+	CREATE INDEX reading_progress_user_revision_idx ON reading_progress(user_id, event_revision);`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known
