@@ -4,21 +4,25 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
 const (
-	defaultAddr    = ":8080"
-	defaultDataDir = "./data"
-	defaultName    = "BookHarbor"
+	defaultAddr                 = ":8080"
+	defaultDataDir              = "./data"
+	defaultName                 = "BookHarbor"
+	defaultMaxUploadBytes int64 = 512 * 1024 * 1024
+	maxAllowedUploadBytes int64 = 20 * 1024 * 1024 * 1024
 )
 
 // Config contains the small set of operator-owned server settings. Secrets and
 // runtime state belong in their respective modules rather than this structure.
 type Config struct {
-	Addr    string
-	DataDir string
-	Name    string
+	Addr           string
+	DataDir        string
+	Name           string
+	MaxUploadBytes int64
 }
 
 func Load() (Config, error) {
@@ -27,6 +31,11 @@ func Load() (Config, error) {
 		DataDir: envOrDefault("BOOKHARBOR_DATA_DIR", defaultDataDir),
 		Name:    envOrDefault("BOOKHARBOR_NAME", defaultName),
 	}
+	maxUploadBytes, err := strconv.ParseInt(envOrDefault("BOOKHARBOR_MAX_UPLOAD_BYTES", strconv.FormatInt(defaultMaxUploadBytes, 10)), 10, 64)
+	if err != nil || maxUploadBytes < 1 || maxUploadBytes > maxAllowedUploadBytes {
+		return Config{}, fmt.Errorf("BOOKHARBOR_MAX_UPLOAD_BYTES must be between 1 and %d", maxAllowedUploadBytes)
+	}
+	cfg.MaxUploadBytes = maxUploadBytes
 
 	if _, _, err := net.SplitHostPort(cfg.Addr); err != nil {
 		return Config{}, fmt.Errorf("BOOKHARBOR_ADDR must be a host:port pair: %w", err)

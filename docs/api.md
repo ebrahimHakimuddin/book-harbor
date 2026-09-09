@@ -60,17 +60,23 @@ session revokes both its access and refresh tokens.
 ## Library
 
 ```text
-GET    /books?cursor=&query=
+GET    /books?limit=
 GET    /books/{bookId}
 POST   /books                         administrator only
-PATCH  /books/{bookId}                administrator only
-POST   /books/{bookId}/editions       administrator only
+PATCH  /books/{bookId}                planned; administrator only
+POST   /books/{bookId}/editions       planned; administrator only
 GET    /editions/{editionId}/content
 ```
 
-An edition response includes format, byte length, media type, checksum, and a
-content revision. Content supports standard byte ranges so Android can resume a
-partial download.
+`POST /books` accepts `multipart/form-data` with exactly one `file` part and an
+optional `title` field. The server validates the file contents rather than its
+extension, extracts an EPUB title when available, and preserves the original
+bytes. The default upload limit is 512 MiB and can be changed with
+`BOOKHARBOR_MAX_UPLOAD_BYTES`.
+
+An edition response includes format, byte length, media type, SHA-256 checksum,
+and an authenticated content URL. Content supports `GET`, `HEAD`, and standard
+byte ranges so Android can verify and resume a partial download.
 
 ## Reading progress
 

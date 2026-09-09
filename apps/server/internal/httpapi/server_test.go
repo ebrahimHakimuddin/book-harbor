@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
+	"github.com/bookharbor/bookharbor/apps/server/internal/library"
 )
 
 func TestHealth(t *testing.T) {
@@ -176,18 +178,29 @@ func TestBootstrapRejectsInvalidRequests(t *testing.T) {
 
 func testHandler(t *testing.T) http.Handler {
 	t.Helper()
+	handler, _ := testHandlerWithDatabase(t)
+	return handler
+}
+
+func testHandlerWithDatabase(t *testing.T) (http.Handler, *sql.DB) {
+	t.Helper()
 	db, err := database.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatalf("database.Open() error = %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	bookLibrary, err := library.NewStore(db, t.TempDir(), 2<<20)
+	if err != nil {
+		t.Fatalf("library.NewStore() error = %v", err)
+	}
 
 	return New(
-		config.Config{Addr: ":0", DataDir: "testdata", Name: "Test Harbor"},
+		config.Config{Addr: ":0", DataDir: "testdata", Name: "Test Harbor", MaxUploadBytes: 2 << 20},
 		BuildInfo{Version: "test", Commit: "abc123"},
 		identity.NewStore(db),
+		bookLibrary,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-	)
+	), db
 }
 
 func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, want string) {

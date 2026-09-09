@@ -76,6 +76,7 @@ type Content struct {
 	OriginalFilename string
 	MediaType        string
 	ByteLength       int64
+	SHA256           string
 	ModifiedAt       time.Time
 }
 
@@ -279,13 +280,13 @@ func (s *Store) Get(ctx context.Context, bookID string) (Book, error) {
 }
 
 func (s *Store) OpenContent(ctx context.Context, editionID string) (Content, error) {
-	var storagePath, filename, mediaType, createdAt string
+	var storagePath, filename, mediaType, checksum, createdAt string
 	var byteLength int64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT storage_path, original_filename, media_type, byte_length, created_at
+		SELECT storage_path, original_filename, media_type, byte_length, sha256, created_at
 		FROM editions
 		WHERE id = ?
-	`, editionID).Scan(&storagePath, &filename, &mediaType, &byteLength, &createdAt)
+	`, editionID).Scan(&storagePath, &filename, &mediaType, &byteLength, &checksum, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Content{}, ErrNotFound
 	}
@@ -309,6 +310,7 @@ func (s *Store) OpenContent(ctx context.Context, editionID string) (Content, err
 		OriginalFilename: filename,
 		MediaType:        mediaType,
 		ByteLength:       byteLength,
+		SHA256:           checksum,
 		ModifiedAt:       modifiedAt,
 	}, nil
 }

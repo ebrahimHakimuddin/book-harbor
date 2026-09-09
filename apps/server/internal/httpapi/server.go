@@ -10,6 +10,7 @@ import (
 
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
+	"github.com/bookharbor/bookharbor/apps/server/internal/library"
 )
 
 const maxJSONBodyBytes = 16 * 1024
@@ -20,18 +21,19 @@ type BuildInfo struct {
 }
 
 type server struct {
-	config config.Config
-	build  BuildInfo
-	users  *identity.Store
-	logger *slog.Logger
+	config  config.Config
+	build   BuildInfo
+	users   *identity.Store
+	library *library.Store
+	logger  *slog.Logger
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, bookLibrary *library.Store, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, logger: logger}
+	s := &server{config: cfg, build: build, users: users, library: bookLibrary, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", requireMethod(http.MethodGet, http.HandlerFunc(s.health)))
 	mux.Handle("/api/v1/instance", requireMethod(http.MethodGet, http.HandlerFunc(s.instance)))
@@ -40,6 +42,9 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, logger *slog
 	mux.Handle("/api/v1/sessions/refresh", requireMethod(http.MethodPost, http.HandlerFunc(s.refreshSession)))
 	mux.Handle("/api/v1/sessions/current", requireMethod(http.MethodDelete, s.requireAuthentication(s.deleteCurrentSession)))
 	mux.Handle("/api/v1/me", requireMethod(http.MethodGet, s.requireAuthentication(s.me)))
+	mux.Handle("/api/v1/books", s.requireAuthentication(s.books))
+	mux.Handle("/api/v1/books/", s.requireAuthentication(s.book))
+	mux.Handle("/api/v1/editions/", s.requireAuthentication(s.edition))
 	mux.HandleFunc("/", notFound)
 
 	return s.withRequestLogging(s.withSecurityHeaders(mux))

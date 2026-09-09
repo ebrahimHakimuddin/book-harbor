@@ -7,6 +7,7 @@ services:
       BOOKHARBOR_ADDR: ":8080"
       BOOKHARBOR_DATA_DIR: /data
       BOOKHARBOR_NAME: "${BOOKHARBOR_NAME:-BookHarbor}"
+      BOOKHARBOR_MAX_UPLOAD_BYTES: "${BOOKHARBOR_MAX_UPLOAD_BYTES:-536870912}"
     ports:
       - "${BOOKHARBOR_PORT:-8080}:8080"
     volumes:

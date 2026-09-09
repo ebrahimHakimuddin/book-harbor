@@ -81,7 +81,7 @@ func (s *server) refreshSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) me(w http.ResponseWriter, r *http.Request) {
-	principal, ok := r.Context().Value(principalContextKey{}).(identity.Principal)
+	principal, ok := authenticatedPrincipal(r)
 	if !ok {
 		s.logger.Error("authenticated request missing principal")
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read authenticated user")
@@ -91,7 +91,7 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deleteCurrentSession(w http.ResponseWriter, r *http.Request) {
-	principal, ok := r.Context().Value(principalContextKey{}).(identity.Principal)
+	principal, ok := authenticatedPrincipal(r)
 	if !ok {
 		s.logger.Error("authenticated request missing principal")
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read authenticated session")
@@ -135,6 +135,11 @@ func bearerToken(header string) (string, bool) {
 		return "", false
 	}
 	return token, true
+}
+
+func authenticatedPrincipal(r *http.Request) (identity.Principal, bool) {
+	principal, ok := r.Context().Value(principalContextKey{}).(identity.Principal)
+	return principal, ok
 }
 
 func writeUnauthorized(w http.ResponseWriter) {

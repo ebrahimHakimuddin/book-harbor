@@ -28,8 +28,10 @@ after this core loop is dependable.
 
 BookHarbor is in early development. The server provides persistent instance
 discovery, one-time administrator bootstrap, and rotating authenticated
-sessions. Book imports are the next server milestone. The product scope, system
-shape, and first client/server contract live in [`docs/`](docs/README.md).
+sessions. Administrators can import EPUB and PDF files, and authenticated
+readers can browse and download the library with byte-range resumption. Reading
+progress is the next server milestone. The product scope, system shape, and
+first client/server contract live in [`docs/`](docs/README.md).
 
 ## Run the server
 

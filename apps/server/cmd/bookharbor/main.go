@@ -14,6 +14,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
 	"github.com/bookharbor/bookharbor/apps/server/internal/httpapi"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
+	"github.com/bookharbor/bookharbor/apps/server/internal/library"
 )
 
 var (
@@ -40,11 +41,16 @@ func main() {
 	}
 	defer db.Close()
 	identityStore := identity.NewStore(db)
+	libraryStore, err := library.NewStore(db, cfg.DataDir, cfg.MaxUploadBytes)
+	if err != nil {
+		logger.Error("initialize library storage", "error", err)
+		os.Exit(1)
+	}
 
 	handler := httpapi.New(cfg, httpapi.BuildInfo{
 		Version: version,
 		Commit:  commit,
-	}, identityStore, logger)
+	}, identityStore, libraryStore, logger)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
