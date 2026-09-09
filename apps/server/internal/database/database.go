@@ -35,6 +35,25 @@ var migrations = []string{
 		revoked_at TEXT
 	) STRICT;
 	CREATE INDEX sessions_user_id_idx ON sessions(user_id);`,
+	`CREATE TABLE books (
+		id TEXT PRIMARY KEY,
+		title TEXT NOT NULL,
+		created_by TEXT NOT NULL REFERENCES users(id),
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	) STRICT;
+	CREATE TABLE editions (
+		id TEXT PRIMARY KEY,
+		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		format TEXT NOT NULL CHECK (format IN ('epub', 'pdf')),
+		media_type TEXT NOT NULL,
+		original_filename TEXT NOT NULL,
+		byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+		sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+		storage_path TEXT NOT NULL UNIQUE,
+		created_at TEXT NOT NULL
+	) STRICT;
+	CREATE INDEX editions_book_id_idx ON editions(book_id);`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known
