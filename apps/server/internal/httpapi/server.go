@@ -36,6 +36,10 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, logger *slog
 	mux.Handle("/healthz", requireMethod(http.MethodGet, http.HandlerFunc(s.health)))
 	mux.Handle("/api/v1/instance", requireMethod(http.MethodGet, http.HandlerFunc(s.instance)))
 	mux.Handle("/api/v1/bootstrap", requireMethod(http.MethodPost, http.HandlerFunc(s.bootstrap)))
+	mux.Handle("/api/v1/sessions", requireMethod(http.MethodPost, http.HandlerFunc(s.createSession)))
+	mux.Handle("/api/v1/sessions/refresh", requireMethod(http.MethodPost, http.HandlerFunc(s.refreshSession)))
+	mux.Handle("/api/v1/sessions/current", requireMethod(http.MethodDelete, s.requireAuthentication(s.deleteCurrentSession)))
+	mux.Handle("/api/v1/me", requireMethod(http.MethodGet, s.requireAuthentication(s.me)))
 	mux.HandleFunc("/", notFound)
 
 	return s.withRequestLogging(s.withSecurityHeaders(mux))
@@ -101,19 +105,7 @@ func (s *server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, struct {
-		ID          string    `json:"id"`
-		DisplayName string    `json:"displayName"`
-		Email       string    `json:"email"`
-		Role        string    `json:"role"`
-		CreatedAt   time.Time `json:"createdAt"`
-	}{
-		ID:          user.ID,
-		DisplayName: user.DisplayName,
-		Email:       user.Email,
-		Role:        user.Role,
-		CreatedAt:   user.CreatedAt,
-	})
+	writeJSON(w, http.StatusCreated, newUserResponse(user))
 }
 
 func (s *server) withSecurityHeaders(next http.Handler) http.Handler {

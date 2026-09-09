@@ -12,6 +12,7 @@ This is a behavioral sketch, not yet an OpenAPI definition.
 GET    /instance
 POST   /bootstrap
 POST   /sessions
+POST   /sessions/refresh
 DELETE /sessions/current
 GET    /me
 ```
@@ -32,6 +33,29 @@ The bootstrap request creates the first administrator:
 
 It returns `201 Created` once. Subsequent requests return the stable
 `already_bootstrapped` conflict code.
+
+Session creation accepts an email and password. It returns a 15-minute bearer
+access token and a rotating refresh token with a 30-day lifetime. Only SHA-256
+token hashes are stored by the server.
+
+```json
+{
+  "email": "reader@example.com",
+  "password": "a long private password"
+}
+```
+
+Refresh requests exchange the current refresh token for a new access and
+refresh token pair. The exchanged tokens stop working immediately:
+
+```json
+{
+  "refreshToken": "bha_rt_..."
+}
+```
+
+Protected routes use `Authorization: Bearer <accessToken>`. Deleting the current
+session revokes both its access and refresh tokens.
 
 ## Library
 
