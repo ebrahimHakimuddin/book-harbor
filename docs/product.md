@@ -33,6 +33,10 @@ following:
 - A reader can sign in and browse the books they may access.
 - Android can download a complete original file and verify its integrity.
 - A downloaded book opens and remains readable with no network connection.
+- EPUB chapters use continuous vertical scrolling and require an explicit
+  next-chapter action at each chapter boundary.
+- A reader can see or hide progress and adjust theme, typeface, font size,
+  spacing, margins, alignment, and brightness without a network connection.
 - EPUB location and PDF page progress survive application restarts.
 - Progress synchronizes after connectivity returns without silently discarding
   a newer position.

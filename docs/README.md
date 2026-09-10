@@ -7,6 +7,8 @@
 - [`api.md`](api.md) sketches the first client/server interface.
 - [`offline-sync.md`](offline-sync.md) defines lossless reading-progress
   synchronization through client or server outages.
+- [`reader.md`](reader.md) defines EPUB/PDF navigation, progress display, and
+  offline reader customization.
 - [`decisions/0001-mvp-before-social.md`](decisions/0001-mvp-before-social.md)
   records why the reading loop comes before social features.
 - [`decisions/0002-go-server-kotlin-android.md`](decisions/0002-go-server-kotlin-android.md)

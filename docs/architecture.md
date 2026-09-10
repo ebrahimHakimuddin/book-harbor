@@ -67,13 +67,19 @@ file lifecycle, and storage-pressure failures.
 
 Presents one small interface to the rest of the app while selecting a
 format-specific EPUB or PDF implementation internally. It emits stable reading
-locations rather than exposing engine details to synchronization code.
+locations rather than exposing engine details to synchronization code. EPUB
+renders one isolated spine item as a continuous vertical surface and requires
+an explicit transition at chapter boundaries. PDF incrementally renders a
+vertical window of pages. Reader preferences and the current render location
+are local dependencies, so reflow and customization do not depend on the
+network. See [`reader.md`](reader.md).
 
 ### Progress
 
 Persists reading state locally first, queues synchronization, and reconciles
 server state after reconnecting. Opening and reading a downloaded book never
-waits on this module's network work.
+waits on this module's network work. Its durable outbox and server cursor are
+updated transactionally as defined in [`offline-sync.md`](offline-sync.md).
 
 ## Important seams
 

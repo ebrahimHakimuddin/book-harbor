@@ -49,9 +49,9 @@ never move the current position backward.
 The client applies a server position when its source event is newer than the
 local position and is not still represented by an unacknowledged local event.
 This keeps freshly recorded offline activity visible until the server has had a
-chance to reconcile it. Server times more than five minutes in the future are
-rejected; the client should surface a device-clock problem rather than rewrite
-the original event.
+chance to reconcile it. Client event times more than five minutes ahead of the
+server are rejected; the client should surface a device-clock problem rather
+than rewrite the original event.
 
 ## Required invariants
 
