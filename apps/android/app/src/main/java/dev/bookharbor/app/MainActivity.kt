@@ -1,57 +1,37 @@
 package dev.bookharbor.app
 
 import android.os.Bundle
-import androidx.activity.compose.LocalActivity
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
-import dev.bookharbor.app.reader.ReaderAction
+import dev.bookharbor.app.library.*
 import dev.bookharbor.app.reader.ReaderScreen
 import dev.bookharbor.app.reader.ReaderState
-import dev.bookharbor.app.reader.reduce
+import dev.bookharbor.app.reader.ReaderTheme
 import dev.bookharbor.app.ui.theme.BookHarborTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent {
-            BookHarborApp()
-        }
-    }
-}
+class MainActivity : ComponentActivity() { override fun onCreate(state: Bundle?) { super.onCreate(state); enableEdgeToEdge(); setContent { BookHarborApp() } } }
 
-@Composable
-fun BookHarborApp() {
-    var readerState by remember { mutableStateOf(ReaderState.preview()) }
-    val activity = LocalActivity.current
-
-    BookHarborTheme(readerTheme = readerState.settings.theme) {
-        ReaderScreen(
-            state = readerState,
-            onClose = { activity?.finish() },
-            onAction = { action: ReaderAction ->
-                readerState = readerState.reduce(action)
-            },
-        )
-    }
+@Composable fun BookHarborApp() {
+    val context = LocalContext.current
+    val store = remember { SessionStore(context.getSharedPreferences("bookharbor", 0)) }
+    val downloadStore = remember { DownloadStore(context.getSharedPreferences("bookharbor", 0), java.io.File(context.filesDir, "downloads")) }
+    val client = remember { LibraryClient(store) }
+    val downloader = remember { EditionDownloader(store, downloadStore) }
+    val scope = rememberCoroutineScope()
+    var uiState by remember { mutableStateOf<LibraryUiState>(if (store.serverUrl.isBlank()) LibraryUiState.Setup else LibraryUiState.Loading) }
+    fun updateCatalog(update: (LibraryUiState.Catalog) -> LibraryUiState.Catalog) { val current = uiState; if (current is LibraryUiState.Catalog) uiState = update(current) }
+    fun load() { uiState = LibraryUiState.Loading; scope.launch(Dispatchers.IO) { try { val instance = client.instance(store.serverUrl); uiState = when { instance.setupRequired -> LibraryUiState.Error("This BookHarbor server still needs to be set up by an administrator.", LibraryUiState.Setup); store.tokens == null -> LibraryUiState.SignIn(instance, store.serverUrl); else -> { val books = client.books(); LibraryUiState.Catalog(instance, books, books.flatMap { it.editions }.associate { it.id to if (downloadStore.get(it.id) != null) DownloadStatus.AVAILABLE else DownloadStatus.NOT_DOWNLOADED }) } } } catch (e: Exception) { uiState = LibraryUiState.Error(e.message ?: "Unable to connect", LibraryUiState.Setup) } } }
+    fun download(edition: Edition) { val current = uiState as? LibraryUiState.Catalog ?: return; uiState = current.copy(downloads = current.downloads + (edition.id to DownloadStatus.DOWNLOADING), errors = current.errors - edition.id); scope.launch(Dispatchers.IO) { try { downloader.download(edition); updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.AVAILABLE)) } } catch (error: Exception) { updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.FAILED), errors = it.errors + (edition.id to (error.message ?: "Download failed"))) } } } }
+    fun remove(edition: Edition) { val current = uiState as? LibraryUiState.Catalog ?: return; scope.launch(Dispatchers.IO) { try { downloader.remove(edition.id); updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.NOT_DOWNLOADED), errors = it.errors - edition.id) } } catch (error: Exception) { updateCatalog { it.copy(errors = it.errors + (edition.id to (error.message ?: "Could not remove download"))) } } } }
+    LaunchedEffect(Unit) { if (uiState == LibraryUiState.Loading) load() }
+    BookHarborTheme(readerTheme = ReaderTheme.System) { LibraryScreen(uiState, onServer = { store.serverUrl = it; load() }, onSignIn = { email, password -> uiState = LibraryUiState.Loading; scope.launch(Dispatchers.IO) { try { client.signIn(store.serverUrl, email, password); load() } catch (e: Exception) { uiState = LibraryUiState.Error(e.message ?: "Sign in failed", LibraryUiState.SignIn(serverUrl = store.serverUrl)) } } }, onRetry = { load() }, onSignOut = { scope.launch(Dispatchers.IO) { client.signOut(); store.tokens = null; uiState = LibraryUiState.SignIn(serverUrl = store.serverUrl) } }, onDownload = ::download, onRemove = ::remove) }
 }
 
 @Preview(showBackground = true, widthDp = 393, heightDp = 852)
-@Composable
-private fun BookHarborPreview() {
-    var state by remember { mutableStateOf(ReaderState.preview()) }
-    BookHarborTheme(readerTheme = state.settings.theme) {
-        ReaderScreen(
-            state = state,
-            onClose = {},
-            onAction = { action -> state = state.reduce(action) },
-        )
-    }
-}
+@Composable private fun BookHarborPreview() { BookHarborTheme(readerTheme = ReaderTheme.System) { ReaderScreen(ReaderState.preview(), {}, {}) } }
