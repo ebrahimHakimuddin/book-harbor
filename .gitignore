@@ -15,6 +15,9 @@ dist/
 out/
 .gradle/
 node_modules/
+local.properties
+*.apk
+*.aab
 
 # Runtime data
 data/
