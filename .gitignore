@@ -18,6 +18,8 @@ node_modules/
 local.properties
 *.apk
 *.aab
+release-key.jks
+.release-password
 
 # Runtime data
 data/

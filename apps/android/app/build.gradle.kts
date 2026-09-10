@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseKeystore = rootProject.file("release-key.jks")
+val releasePasswordFile = rootProject.file(".release-password")
+val hasReleaseSigning = releaseKeystore.isFile && releasePasswordFile.isFile
+
 android {
     namespace = "dev.bookharbor.app"
     compileSdk = 37
@@ -22,10 +26,24 @@ android {
         buildConfig = false
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = releasePasswordFile.readText().trim()
+                keyAlias = "bookharbor"
+                keyPassword = storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
