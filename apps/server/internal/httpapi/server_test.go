@@ -15,6 +15,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
+	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 )
 
 func TestHealth(t *testing.T) {
@@ -199,6 +200,7 @@ func testHandlerWithDatabase(t *testing.T) (http.Handler, *sql.DB) {
 		BuildInfo{Version: "test", Commit: "abc123"},
 		identity.NewStore(db),
 		bookLibrary,
+		reading.NewStore(db),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	), db
 }

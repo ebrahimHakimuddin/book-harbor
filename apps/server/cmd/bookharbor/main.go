@@ -15,6 +15,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/httpapi"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
+	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 )
 
 var (
@@ -50,7 +51,7 @@ func main() {
 	handler := httpapi.New(cfg, httpapi.BuildInfo{
 		Version: version,
 		Commit:  commit,
-	}, identityStore, libraryStore, logger)
+	}, identityStore, libraryStore, reading.NewStore(db), logger)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,

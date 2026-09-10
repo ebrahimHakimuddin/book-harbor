@@ -81,36 +81,83 @@ byte ranges so Android can verify and resume a partial download.
 ## Reading progress
 
 ```text
-GET    /progress?changedAfter=&cursor=
-GET    /books/{bookId}/progress
-PUT    /books/{bookId}/progress
+POST   /progress/sync
 ```
 
-A progress write contains:
+One authenticated request pushes locally queued events and pulls canonical
+progress changed after the client's durable cursor:
 
 ```json
 {
-  "editionId": "edition_opaque_id",
-  "deviceId": "device_opaque_id",
-  "baseRevision": 12,
-  "occurredAt": "2026-09-21T12:00:00Z",
-  "locator": {
-    "kind": "epub-cfi",
-    "value": "epubcfi(...)"
-  },
-  "percentage": 0.42
+  "cursor": 41,
+  "changes": [
+    {
+      "eventId": "01K5Q4Y87CT6C8S6AVJAWN5F4T",
+      "editionId": "edition_opaque_id",
+      "bookId": "book_opaque_id",
+      "deviceId": "device_opaque_id",
+      "occurredAt": "2026-09-21T12:00:00Z",
+      "locator": {
+        "kind": "epub-cfi",
+        "value": "epubcfi(...)"
+      },
+      "percentage": 0.42
+    }
+  ]
+}
+```
+
+The response acknowledges every pushed event and returns the current value for
+books touched after the supplied cursor:
+
+```json
+{
+  "cursor": 44,
+  "hasMore": false,
+  "acknowledgements": [
+    {
+      "eventId": "01K5Q4Y87CT6C8S6AVJAWN5F4T",
+      "revision": 44,
+      "disposition": "applied",
+      "duplicate": false
+    }
+  ],
+  "progress": [
+    {
+      "revision": 44,
+      "eventId": "01K5Q4Y87CT6C8S6AVJAWN5F4T",
+      "deviceId": "device_opaque_id",
+      "bookId": "book_opaque_id",
+      "editionId": "edition_opaque_id",
+      "occurredAt": "2026-09-21T12:00:00Z",
+      "locator": {
+        "kind": "epub-cfi",
+        "value": "epubcfi(...)"
+      },
+      "percentage": 0.42
+    }
+  ]
 }
 ```
 
 PDF uses a tagged locator such as `{ "kind": "pdf-page", "page": 84 }`.
-The server returns a monotonically increasing revision. A stale `baseRevision`
-produces a conflict response containing current server state; the client must
-make reconciliation visible rather than silently overwriting newer progress.
+`changes` is limited to 100 events per request. Pull pages contain at most 200
+events; clients continue immediately with the returned cursor while `hasMore`
+is true.
+
+Client event IDs are idempotency keys scoped to the authenticated reader. A
+retry with the same event and payload returns its original revision with
+`duplicate: true`. Reusing an ID with different data returns
+`event_id_conflict`. A delayed event is retained and acknowledged as
+`superseded`, but cannot move canonical progress behind newer reading activity.
+See [`offline-sync.md`](offline-sync.md) for the client protocol.
 
 ## Contract rules
 
-- Timestamps are UTC RFC 3339 values and are not used as the sole conflict
-  authority because client clocks are untrusted.
+- Timestamps are UTC RFC 3339 values. Canonical progress uses the latest reading
+  time, with the server revision breaking ties. Events more than five minutes
+  ahead of server time are rejected so a badly skewed clock cannot indefinitely
+  dominate other devices.
 - Percentages range from `0` through `1`; they are summaries, not reopen
   locations.
 - Unknown response fields are ignored by clients.

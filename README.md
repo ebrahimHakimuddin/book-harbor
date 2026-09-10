@@ -30,8 +30,9 @@ BookHarbor is in early development. The server provides persistent instance
 discovery, one-time administrator bootstrap, and rotating authenticated
 sessions. Administrators can import EPUB and PDF files, and authenticated
 readers can browse and download the library with byte-range resumption. Reading
-progress is the next server milestone. The product scope, system shape, and
-first client/server contract live in [`docs/`](docs/README.md).
+progress is synchronized through an idempotent, offline-safe event protocol.
+The Android client is the next implementation milestone. The product scope,
+system shape, and first client/server contract live in [`docs/`](docs/README.md).
 
 ## Run the server
 

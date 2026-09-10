@@ -11,9 +11,10 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
+	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 )
 
-const maxJSONBodyBytes = 16 * 1024
+const maxJSONBodyBytes = 1 << 20
 
 type BuildInfo struct {
 	Version string
@@ -25,15 +26,16 @@ type server struct {
 	build   BuildInfo
 	users   *identity.Store
 	library *library.Store
+	reading *reading.Store
 	logger  *slog.Logger
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, bookLibrary *library.Store, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, bookLibrary *library.Store, readingProgress *reading.Store, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, library: bookLibrary, logger: logger}
+	s := &server{config: cfg, build: build, users: users, library: bookLibrary, reading: readingProgress, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", requireMethod(http.MethodGet, http.HandlerFunc(s.health)))
 	mux.Handle("/api/v1/instance", requireMethod(http.MethodGet, http.HandlerFunc(s.instance)))
@@ -45,6 +47,7 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, bookLibrary 
 	mux.Handle("/api/v1/books", s.requireAuthentication(s.books))
 	mux.Handle("/api/v1/books/", s.requireAuthentication(s.book))
 	mux.Handle("/api/v1/editions/", s.requireAuthentication(s.edition))
+	mux.Handle("/api/v1/progress/sync", requireMethod(http.MethodPost, s.requireAuthentication(s.syncProgress)))
 	mux.HandleFunc("/", notFound)
 
 	return s.withRequestLogging(s.withSecurityHeaders(mux))
