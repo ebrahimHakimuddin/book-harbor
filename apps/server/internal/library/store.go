@@ -492,7 +492,8 @@ func validMetadata(book Book) bool {
 			return false
 		}
 	}
-	if len(book.CoverURL) > 2048 || (book.CoverURL != "" && !validHTTPURL(book.CoverURL)) {
+	// A cover is either a web address or this book's own uploaded image.
+	if len(book.CoverURL) > 2048 || (book.CoverURL != "" && book.CoverURL != CoverURL(book.ID) && !validHTTPURL(book.CoverURL)) {
 		return false
 	}
 	if utf8.RuneCountInString(book.MetadataProvider) > 100 || utf8.RuneCountInString(book.MetadataProviderID) > 300 {

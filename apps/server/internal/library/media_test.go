@@ -119,3 +119,28 @@ func TestCoverLifecycleAndBookDeletion(t *testing.T) {
 		t.Fatalf("book directory survived deletion: %v", err)
 	}
 }
+
+func TestEditingMetadataKeepsUploadedCover(t *testing.T) {
+	store, db, _ := testLibraryStore(t, 2<<20)
+	defer db.Close()
+	ctx := context.Background()
+	book, err := store.Import(ctx, ImportInput{Filename: "b.pdf", Content: bytes.NewReader(mediaTestPDF), CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetCover(ctx, book.ID, bytes.NewReader(mediaTestPNG)); err != nil {
+		t.Fatal(err)
+	}
+	subtitle := "Still editable"
+	updated, err := store.UpdateMetadata(ctx, book.ID, BookUpdate{Subtitle: &subtitle})
+	if err != nil {
+		t.Fatalf("UpdateMetadata() after cover upload error = %v", err)
+	}
+	if updated.CoverURL != CoverURL(book.ID) || updated.Subtitle != subtitle {
+		t.Fatalf("updated = %q / %q", updated.CoverURL, updated.Subtitle)
+	}
+	other := "/api/v1/books/book_other/cover"
+	if _, err := store.UpdateMetadata(ctx, book.ID, BookUpdate{CoverURL: &other}); !errors.Is(err, ErrInvalidMetadata) {
+		t.Fatalf("another book's cover path error = %v", err)
+	}
+}

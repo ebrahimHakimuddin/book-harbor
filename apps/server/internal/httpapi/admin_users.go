@@ -67,10 +67,14 @@ func (s *server) adminUser(w http.ResponseWriter, r *http.Request) {
 		}
 		var changes []string
 		if request.Role != nil {
-			changes = append(changes, "role="+user.Role)
+			changes = append(changes, "role set to "+user.Role)
 		}
 		if request.Disabled != nil {
-			changes = append(changes, "disabled="+strconv.FormatBool(user.Disabled))
+			if user.Disabled {
+				changes = append(changes, "disabled")
+			} else {
+				changes = append(changes, "enabled")
+			}
 		}
 		if request.Password != nil {
 			changes = append(changes, "password reset")
