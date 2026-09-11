@@ -15,6 +15,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
+	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 )
 
@@ -184,6 +185,10 @@ func testHandler(t *testing.T) http.Handler {
 }
 
 func testHandlerWithDatabase(t *testing.T) (http.Handler, *sql.DB) {
+	return testHandlerWithMetadata(t, nil)
+}
+
+func testHandlerWithMetadata(t *testing.T, metadataProvider metadata.Provider) (http.Handler, *sql.DB) {
 	t.Helper()
 	db, err := database.Open(context.Background(), t.TempDir())
 	if err != nil {
@@ -201,6 +206,7 @@ func testHandlerWithDatabase(t *testing.T) (http.Handler, *sql.DB) {
 		identity.NewStore(db),
 		bookLibrary,
 		reading.NewStore(db),
+		metadataProvider,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	), db
 }

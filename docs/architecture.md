@@ -48,6 +48,12 @@ integrity metadata needed by offline clients.
 Coordinates instance bootstrap, account management, imports, and export. It is
 not a second copy of Identity or Library behavior.
 
+The built-in web administration surface is served by the Go server at
+`/admin/`. It speaks only to the versioned HTTP interface, so presentation code
+does not depend on SQLite tables or file paths. External catalog lookups sit
+behind a provider interface and return reviewable candidates; providers cannot
+write local library state directly.
+
 ## Android modules
 
 ### Account
@@ -103,7 +109,7 @@ The default metadata store is SQLite in WAL mode. This preserves the one-process
 one-directory deployment model and provides transactional state without another
 required container. See [decision 0003](decisions/0003-sqlite-metadata-store.md).
 
-The administration frontend will be selected when its first end-to-end slice is
-implemented. Client/server types should eventually be generated from the
-versioned contract rather than maintained by hand in two languages. See
-[decision 0002](decisions/0002-go-server-kotlin-android.md).
+The first administration frontend is a dependency-free, responsive web app
+embedded in the server binary. Client/server types should eventually be
+generated from the versioned contract rather than maintained by hand in two
+languages. See [decision 0002](decisions/0002-go-server-kotlin-android.md).

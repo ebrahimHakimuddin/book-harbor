@@ -65,6 +65,50 @@ func TestBootstrapAdminPersistsSingleAdministrator(t *testing.T) {
 	}
 }
 
+func TestCreateReaderAndListUsers(t *testing.T) {
+	store, db := testStore(t)
+	defer db.Close()
+	ctx := context.Background()
+	admin, err := store.BootstrapAdmin(ctx, BootstrapInput{DisplayName: "Admin", Email: "admin@example.com", Password: "a secure first password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := store.CreateReader(ctx, ReaderInput{DisplayName: " Reader ", Email: "READER@example.com", Password: "a secure reader password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.Role != "reader" || reader.DisplayName != "Reader" || reader.Email != "reader@example.com" {
+		t.Fatalf("reader = %#v", reader)
+	}
+	users, err := store.ListUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 2 || users[0].ID != admin.ID || users[1].ID != reader.ID {
+		t.Fatalf("users = %#v", users)
+	}
+	var hash string
+	if err := db.QueryRow("SELECT password_hash FROM users WHERE id = ?", reader.ID).Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	if hash == "a secure reader password" {
+		t.Fatal("reader password stored in plaintext")
+	}
+}
+
+func TestCreateReaderRejectsDuplicateEmail(t *testing.T) {
+	store, db := testStore(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := store.CreateReader(ctx, ReaderInput{DisplayName: "Reader", Email: "reader@example.com", Password: "a secure reader password"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.CreateReader(ctx, ReaderInput{DisplayName: "Other", Email: "READER@example.com", Password: "another secure password"})
+	if !errors.Is(err, ErrEmailAlreadyExists) {
+		t.Fatalf("CreateReader() error = %v, want duplicate email", err)
+	}
+}
+
 func TestBootstrapAdminIsAtomic(t *testing.T) {
 	store, db := testStore(t)
 	defer db.Close()

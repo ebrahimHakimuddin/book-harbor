@@ -15,6 +15,9 @@ POST   /sessions
 POST   /sessions/refresh
 DELETE /sessions/current
 GET    /me
+GET    /admin/users                    administrator only
+POST   /admin/users                    administrator only
+GET    /admin/metadata/search?q=       administrator only
 ```
 
 `/bootstrap` is available only while no administrator exists. Session creation
@@ -57,13 +60,18 @@ refresh token pair. The exchanged tokens stop working immediately:
 Protected routes use `Authorization: Bearer <accessToken>`. Deleting the current
 session revokes both its access and refresh tokens.
 
+Administrators create reader accounts explicitly; there is no public
+registration. `POST /admin/users` accepts `displayName`, `email`, and a password
+of at least 12 bytes. `GET /admin/users` returns administrators and readers but
+never credential data.
+
 ## Library
 
 ```text
 GET    /books?limit=
 GET    /books/{bookId}
 POST   /books                         administrator only
-PATCH  /books/{bookId}                planned; administrator only
+PATCH  /books/{bookId}                administrator only
 POST   /books/{bookId}/editions       planned; administrator only
 GET    /editions/{editionId}/content
 ```
@@ -77,6 +85,26 @@ bytes. The default upload limit is 512 MiB and can be changed with
 An edition response includes format, byte length, media type, SHA-256 checksum,
 and an authenticated content URL. Content supports `GET`, `HEAD`, and standard
 byte ranges so Android can verify and resume a partial download.
+
+`PATCH /books/{bookId}` accepts any non-empty subset of `title`, `subtitle`,
+`description`, `authors`, `coverUrl`, and a reviewed external metadata `source`:
+
+```json
+{
+  "title": "The Left Hand of Darkness",
+  "subtitle": "A Novel",
+  "authors": ["Ursula K. Le Guin"],
+  "description": "...",
+  "coverUrl": "https://...",
+  "source": { "provider": "hardcover", "id": "12345" }
+}
+```
+
+Metadata search is a suggestion workflow rather than a direct write. When
+`BOOKHARBOR_HARDCOVER_TOKEN` is configured, the admin search endpoint queries
+Hardcover on the server and returns provider-neutral candidates. The
+administrator reviews a candidate and applies its fields through the ordinary
+book patch route. Provider credentials are never exposed to the browser.
 
 ## Reading progress
 

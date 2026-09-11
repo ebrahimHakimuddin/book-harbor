@@ -90,6 +90,68 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newUserResponse(principal.User))
 }
 
+func (s *server) adminUsers(w http.ResponseWriter, r *http.Request) {
+	principal, ok := authenticatedPrincipal(r)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read authenticated user")
+		return
+	}
+	if principal.User.Role != "admin" {
+		writeError(w, http.StatusForbidden, "forbidden", "administrator access is required")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		users, err := s.users.ListUsers(r.Context())
+		if err != nil {
+			s.logger.Error("list users", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "unable to list users")
+			return
+		}
+		items := make([]userResponse, 0, len(users))
+		for _, user := range users {
+			items = append(items, newUserResponse(user))
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Items []userResponse `json:"items"`
+		}{Items: items})
+	case http.MethodPost:
+		var request struct {
+			DisplayName string `json:"displayName"`
+			Email       string `json:"email"`
+			Password    string `json:"password"`
+		}
+		if err := decodeJSON(w, r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", "request body must be one valid JSON object")
+			return
+		}
+		user, err := s.users.CreateReader(r.Context(), identity.ReaderInput{DisplayName: request.DisplayName, Email: request.Email, Password: request.Password})
+		if err != nil {
+			s.writeCreateReaderError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, newUserResponse(user))
+	default:
+		writeMethodNotAllowed(w, "GET, POST")
+	}
+}
+
+func (s *server) writeCreateReaderError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, identity.ErrInvalidDisplayName):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_display_name", "display name must contain 1 to 100 characters")
+	case errors.Is(err, identity.ErrInvalidEmail):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_email", "email address is invalid")
+	case errors.Is(err, identity.ErrWeakPassword):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_password", "password must contain 12 to 1024 bytes")
+	case errors.Is(err, identity.ErrEmailAlreadyExists):
+		writeError(w, http.StatusConflict, "email_already_exists", "email address is already in use")
+	default:
+		s.logger.Error("create reader", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to create reader")
+	}
+}
+
 func (s *server) deleteCurrentSession(w http.ResponseWriter, r *http.Request) {
 	principal, ok := authenticatedPrincipal(r)
 	if !ok {

@@ -8,6 +8,60 @@ import (
 	"testing"
 )
 
+func TestAdminUserRoutes(t *testing.T) {
+	handler := testHandler(t)
+	bootstrapAdministrator(t, handler)
+	admin := login(t, handler, "admin@example.com", "a secure first password")
+	body := bytes.NewBufferString(`{"displayName":"Reader","email":"reader@example.com","password":"a secure reader password"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users", body)
+	request.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create user status = %d; body = %s", response.Code, response.Body.String())
+	}
+	var created userResponse
+	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Role != "reader" || created.Email != "reader@example.com" {
+		t.Fatalf("created = %#v", created)
+	}
+	list := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	list.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	listResponse := httptest.NewRecorder()
+	handler.ServeHTTP(listResponse, list)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("list users status = %d", listResponse.Code)
+	}
+	var listed struct {
+		Items []userResponse `json:"items"`
+	}
+	if err := json.NewDecoder(listResponse.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Items) != 2 {
+		t.Fatalf("listed users = %#v", listed.Items)
+	}
+	reader := login(t, handler, "reader@example.com", "a secure reader password")
+	unauthorized := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	unauthorized.Header.Set("Authorization", "Bearer "+reader.AccessToken)
+	unauthorizedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorizedResponse, unauthorized)
+	if unauthorizedResponse.Code != http.StatusForbidden {
+		t.Fatalf("reader admin status = %d", unauthorizedResponse.Code)
+	}
+
+	duplicate := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users", bytes.NewBufferString(`{"displayName":"Other","email":"READER@example.com","password":"another secure password"}`))
+	duplicate.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	duplicateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(duplicateResponse, duplicate)
+	if duplicateResponse.Code != http.StatusConflict {
+		t.Fatalf("duplicate status = %d", duplicateResponse.Code)
+	}
+	assertErrorCode(t, duplicateResponse, "email_already_exists")
+}
+
 func TestHTTPAuthenticationLifecycle(t *testing.T) {
 	handler := testHandler(t)
 	bootstrapAdministrator(t, handler)

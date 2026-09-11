@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#0f2d46">
+  <title>BookHarbor administration</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <section id="entry" class="entry-shell" aria-labelledby="entry-title">
+    <div class="entry-brand" aria-label="BookHarbor">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>BookHarbor</span>
+    </div>
+    <div class="entry-copy">
+      <p class="entry-message">Your library has a home port.</p>
+      <p>Manage the people and books on this private BookHarbor server.</p>
+    </div>
+    <div class="entry-panel">
+      <h1 id="entry-title">Welcome aboard</h1>
+      <p id="entry-help">Sign in with an administrator account.</p>
+      <form id="login-form" class="form-stack">
+        <label>Email<input name="email" type="email" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+        <p class="form-error" data-error="login" role="alert"></p>
+        <button class="button primary" type="submit">Sign in</button>
+      </form>
+      <form id="bootstrap-form" class="form-stack" hidden>
+        <label>Display name<input name="displayName" autocomplete="name" maxlength="100" required></label>
+        <label>Email<input name="email" type="email" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+        <p class="field-help">Use at least 12 characters.</p>
+        <p class="form-error" data-error="bootstrap" role="alert"></p>
+        <button class="button primary" type="submit">Create administrator</button>
+      </form>
+    </div>
+  </section>
+
+  <div id="console" class="console" hidden>
+    <header class="topbar">
+      <a href="/admin/" class="wordmark" aria-label="BookHarbor administration home">
+        <span class="brand-mark small" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>BookHarbor</span>
+      </a>
+      <div class="instance-chip"><span id="instance-name">BookHarbor</span><small>Self-hosted</small></div>
+      <button id="sign-out" class="button quiet" type="button">Sign out</button>
+    </header>
+    <div class="app-frame">
+      <nav class="sidebar" aria-label="Administration">
+        <p class="nav-label">Manage</p>
+        <button class="nav-item active" data-view="library" type="button">Library</button>
+        <button class="nav-item" data-view="readers" type="button">Readers</button>
+        <div class="harbor-note">
+          <span class="wave-rule" aria-hidden="true"></span>
+          <p>Open books.<br>Brighter horizons.</p>
+        </div>
+      </nav>
+
+      <main id="main" tabindex="-1">
+        <section id="library-view" class="view">
+          <div class="page-heading">
+            <div><h1>Your library.</h1><p>Import books and keep their catalog details tidy.</p></div>
+            <button id="toggle-upload" class="button primary" type="button">Import book</button>
+          </div>
+
+          <form id="upload-form" class="action-panel upload-panel" hidden>
+            <div><h2>Import a book</h2><p>Original EPUB and PDF files stay on this server.</p></div>
+            <label>Book file<input name="file" type="file" accept=".epub,.pdf,application/epub+zip,application/pdf" required></label>
+            <label>Title <span class="optional">Optional</span><input name="title" maxlength="300" placeholder="Use the title found in the file"></label>
+            <p class="form-error" data-error="upload" role="alert"></p>
+            <div class="button-row"><button class="button primary" type="submit">Import</button><button class="button quiet" data-cancel-upload type="button">Cancel</button></div>
+          </form>
+
+          <div id="library-status" class="status-line" role="status">Loading library...</div>
+          <div class="library-layout">
+            <div id="book-list" class="book-list" aria-live="polite"></div>
+            <aside id="book-editor" class="editor" aria-labelledby="editor-title" hidden>
+              <div class="editor-heading"><div><h2 id="editor-title">Edit book</h2><p>Changes update the local catalog.</p></div><button id="close-editor" class="text-button" type="button">Close</button></div>
+              <form id="metadata-form" class="form-stack">
+                <label>Title<input name="title" maxlength="300" required></label>
+                <label>Subtitle<input name="subtitle" maxlength="300"></label>
+                <label>Authors<input name="authors" maxlength="2000" placeholder="One author per line"></label>
+                <label>Description<textarea name="description" rows="6" maxlength="10000"></textarea></label>
+                <label>Cover URL<input name="coverUrl" type="url" maxlength="2048" placeholder="https://"></label>
+                <input name="sourceProvider" type="hidden"><input name="sourceId" type="hidden">
+                <p id="source-note" class="field-help"></p>
+                <p class="form-error" data-error="metadata" role="alert"></p>
+                <button class="button primary" type="submit">Save metadata</button>
+              </form>
+              <div class="provider-search">
+                <h3>Find details on Hardcover</h3>
+                <p>Search results are suggestions. Review them before saving.</p>
+                <form id="hardcover-form" class="search-row"><label class="sr-only" for="hardcover-query">Title or author</label><input id="hardcover-query" name="query" minlength="2" maxlength="200" placeholder="Title or author" required><button class="button secondary" type="submit">Search</button></form>
+                <p class="form-error" data-error="hardcover" role="alert"></p>
+                <div id="hardcover-results" class="provider-results" aria-live="polite"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="readers-view" class="view" hidden>
+          <div class="page-heading"><div><h1>Your readers.</h1><p>Create private accounts for the people sharing this library.</p></div></div>
+          <div class="reader-layout">
+            <div><div id="reader-status" class="status-line" role="status">Loading readers...</div><div id="reader-list" class="reader-list"></div></div>
+            <form id="reader-form" class="action-panel form-stack">
+              <div><h2>Add a reader</h2><p>They can sign in immediately with this password.</p></div>
+              <label>Display name<input name="displayName" maxlength="100" autocomplete="off" required></label>
+              <label>Email<input name="email" type="email" autocomplete="off" required></label>
+              <label>Temporary password<input name="password" type="password" minlength="12" autocomplete="new-password" required></label>
+              <p class="field-help">Use at least 12 characters and share it privately.</p>
+              <p class="form-error" data-error="reader" role="alert"></p>
+              <button class="button primary" type="submit">Create reader</button>
+            </form>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
