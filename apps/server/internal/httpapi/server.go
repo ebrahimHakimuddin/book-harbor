@@ -52,6 +52,7 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/me", requireMethod(http.MethodGet, s.requireAuthentication(s.me)))
 	mux.Handle("/api/v1/admin/users", s.requireAuthentication(s.adminUsers))
 	mux.Handle("/api/v1/admin/users/", s.requireAdmin(s.adminUser))
+	mux.Handle("/api/v1/admin/export", requireMethod(http.MethodGet, s.requireAdmin(s.exportArchive)))
 	mux.Handle("/api/v1/admin/audit", requireMethod(http.MethodGet, s.requireAdmin(s.auditLog)))
 	mux.Handle("/api/v1/admin/metadata/search", requireMethod(http.MethodGet, s.requireAuthentication(s.searchMetadata)))
 	mux.Handle("/api/v1/books", s.requireAuthentication(s.books))

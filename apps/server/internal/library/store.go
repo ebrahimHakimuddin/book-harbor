@@ -13,6 +13,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/bookharbor/bookharbor/apps/server/internal/export"
 	"io"
 	"net/url"
 	"os"
@@ -662,4 +663,58 @@ func newID(prefix string) (string, error) {
 		return "", fmt.Errorf("generate library ID: %w", err)
 	}
 	return prefix + base64.RawURLEncoding.EncodeToString(random), nil
+}
+
+// Delete removes a book, its editions, and every reader's progress on it, then
+// removes the stored files. A file that cannot be removed is reported after the
+// catalog rows are gone, so the book never reappears half-deleted.
+func (s *Store) Delete(ctx context.Context, bookID string) (Book, error) {
+	book, err := s.Get(ctx, bookID)
+	if err != nil {
+		return Book{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT storage_path FROM editions WHERE book_id = ?`, bookID)
+	if err != nil {
+		return Book{}, fmt.Errorf("list edition files: %w", err)
+	}
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			rows.Close()
+			return Book{}, fmt.Errorf("scan edition file: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Book{}, fmt.Errorf("iterate edition files: %w", err)
+	}
+	rows.Close()
+	result, err := s.db.ExecContext(ctx, `DELETE FROM books WHERE id = ?`, bookID)
+	if err != nil {
+		return Book{}, fmt.Errorf("delete book: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return Book{}, ErrNotFound
+	}
+	var removeErr error
+	for _, path := range paths {
+		clean := filepath.Clean(path)
+		if filepath.IsAbs(clean) || !strings.HasPrefix(clean, "books"+string(filepath.Separator)) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.dataDir, clean)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			removeErr = errors.Join(removeErr, err)
+		}
+	}
+	if removeErr != nil {
+		return book, fmt.Errorf("book deleted but files remain: %w", removeErr)
+	}
+	return book, nil
+}
+
+// WriteExport streams every original file and a database snapshot as a zip.
+func (s *Store) WriteExport(ctx context.Context, w io.Writer) error {
+	return export.Write(ctx, w, s.db, s.dataDir)
 }

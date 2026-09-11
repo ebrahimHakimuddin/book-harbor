@@ -17,6 +17,10 @@ DELETE /sessions/current
 GET    /me
 GET    /admin/users                    administrator only
 POST   /admin/users                    administrator only
+PATCH  /admin/users/{userId}           administrator only
+DELETE /admin/users/{userId}           administrator only
+GET    /admin/audit?limit=             administrator only
+GET    /admin/export                   administrator only
 GET    /admin/metadata/search?q=       administrator only
 ```
 
@@ -63,7 +67,23 @@ session revokes both its access and refresh tokens.
 Administrators create reader accounts explicitly; there is no public
 registration. `POST /admin/users` accepts `displayName`, `email`, and a password
 of at least 12 bytes. `GET /admin/users` returns administrators and readers but
-never credential data.
+never credential data, and includes each user's `disabled` state.
+
+`PATCH /admin/users/{userId}` accepts any non-empty subset of `role`
+(`admin` or `reader`), `disabled`, and `password`. Disabling an account or
+resetting its password revokes its sessions; a disabled account cannot sign in.
+Administrators cannot change their own role, disable, or delete themselves, and
+the last active administrator cannot be demoted, disabled, or deleted (`409`).
+`DELETE` removes the account and its reading progress but not book files.
+
+Account and book changes (`user.create`, `user.update`, `user.delete`,
+`book.import`, `book.update`, `book.delete`, `export.create`) are recorded in an
+audit log returned newest first by `GET /admin/audit`. Entries never contain
+passwords.
+
+`GET /admin/export` streams a zip containing every original book file under
+`books/`, `manifest.json`, and `bookharbor.db`, a consistent snapshot of the
+metadata database with sessions removed. Password hashes remain in the snapshot.
 
 ## Library
 
@@ -72,6 +92,7 @@ GET    /books?limit=
 GET    /books/{bookId}
 POST   /books                         administrator only
 PATCH  /books/{bookId}                administrator only
+DELETE /books/{bookId}                administrator only
 POST   /books/{bookId}/editions       planned; administrator only
 GET    /editions/{editionId}/content
 ```

@@ -10,12 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
 	"github.com/bookharbor/bookharbor/apps/server/internal/httpapi"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
-	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 )

@@ -65,12 +65,16 @@ func (s *server) books(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) book(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPatch {
+	switch r.Method {
+	case http.MethodPatch:
 		s.patchBook(w, r)
+		return
+	case http.MethodDelete:
+		s.requireAdmin(s.deleteBook).ServeHTTP(w, r)
 		return
 	}
 	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w, "GET, PATCH")
+		writeMethodNotAllowed(w, "GET, PATCH, DELETE")
 		return
 	}
 	bookID, ok := singlePathValue(r.URL.Path, "/api/v1/books/")
@@ -151,6 +155,7 @@ func (s *server) patchBook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to update book")
 		return
 	}
+	s.record(r, "book.update", "book", book.ID, book.Title)
 	writeJSON(w, http.StatusOK, newBookResponse(book))
 }
 
@@ -267,6 +272,7 @@ func (s *server) importBook(w http.ResponseWriter, r *http.Request, createdBy st
 		s.writeImportError(w, err)
 		return
 	}
+	s.record(r, "book.import", "book", book.ID, book.Title)
 	writeJSON(w, http.StatusCreated, newBookResponse(book))
 }
 
@@ -321,4 +327,38 @@ func singlePathValue(requestPath, prefix string) (string, bool) {
 func writeMethodNotAllowed(w http.ResponseWriter, allow string) {
 	w.Header().Set("Allow", allow)
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+}
+
+func (s *server) deleteBook(w http.ResponseWriter, r *http.Request) {
+	bookID, ok := singlePathValue(r.URL.Path, "/api/v1/books/")
+	if !ok {
+		notFound(w, r)
+		return
+	}
+	book, err := s.library.Delete(r.Context(), bookID)
+	if errors.Is(err, library.ErrNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil && book.ID == "" {
+		s.logger.Error("delete book", "error", err, "bookId", bookID)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to delete book")
+		return
+	}
+	if err != nil {
+		s.logger.Error("remove deleted book files", "error", err, "bookId", bookID)
+	}
+	s.record(r, "book.delete", "book", book.ID, book.Title)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) exportArchive(w http.ResponseWriter, r *http.Request) {
+	s.record(r, "export.create", "instance", "", "original files and database snapshot")
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="bookharbor-export-`+time.Now().UTC().Format("20060102")+`.zip"`)
+	w.Header().Set("Cache-Control", "no-store")
+	if err := s.library.WriteExport(r.Context(), w); err != nil {
+		// Headers are already sent; the truncated archive fails to open, which is the signal.
+		s.logger.Error("write export", "error", err)
+	}
 }

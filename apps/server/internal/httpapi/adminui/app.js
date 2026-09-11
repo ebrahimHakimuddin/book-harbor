@@ -52,6 +52,9 @@ function bindEvents() {
   $("#hardcover-form").addEventListener("submit", searchHardcover);
   $("#close-editor").addEventListener("click", closeEditor);
   $("#reader-form").addEventListener("submit", createReader);
+  $("#book-search").addEventListener("input", renderBooks);
+  $("#delete-book").addEventListener("click", deleteBook);
+  $("#export-button").addEventListener("click", exportArchive);
   $("#refresh-activity").addEventListener("click", loadActivity);
   $$("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
 }
@@ -129,6 +132,7 @@ function changeView(name) {
   $("#library-view").hidden = name !== "library";
   $("#readers-view").hidden = name !== "readers";
   $("#activity-view").hidden = name !== "activity";
+  $("#backup-view").hidden = name !== "backup";
   if (name === "activity") loadActivity();
   $("#main").focus();
 }
@@ -147,12 +151,19 @@ async function loadBooks() {
 function renderBooks() {
   const list = $("#book-list");
   list.replaceChildren();
-  $("#library-status").textContent = state.books.length === 1 ? "1 book" : `${state.books.length} books`;
+  const query = $("#book-search").value.trim().toLowerCase();
+  const books = state.books.filter((book) => !query || [book.title, book.subtitle, ...(book.authors || [])].some((value) => value?.toLowerCase().includes(query)));
+  const count = (n) => n === 1 ? "1 book" : `${n} books`;
+  $("#library-status").textContent = query ? `${count(books.length)} of ${state.books.length}` : count(state.books.length);
   if (!state.books.length) {
     list.append(emptyState("No books yet", "Import an EPUB or PDF to begin your library."));
     return;
   }
-  state.books.forEach((book) => {
+  if (!books.length) {
+    list.append(emptyState("No matches", "Try a different title or author."));
+    return;
+  }
+  books.forEach((book) => {
     const button = node("button", "book-row");
     button.type = "button";
     button.classList.toggle("selected", state.selectedBook?.id === book.id);
@@ -200,6 +211,42 @@ function closeEditor() {
   state.selectedBook = null;
   $("#book-editor").hidden = true;
   renderBooks();
+}
+
+function deleteBook() {
+  const book = state.selectedBook;
+  if (!book) return;
+  confirmAction(`Delete "${book.title}"?`, "The book, its files, and every reader's progress on it are removed from this server. This cannot be undone.", "Delete book", async () => {
+    try {
+      await request(`/api/v1/books/${book.id}`, { method: "DELETE" });
+      state.books = state.books.filter((item) => item.id !== book.id);
+      closeEditor();
+      showToast(`${book.title} was deleted.`);
+    } catch (error) {
+      showToast(readableError(error, "The book could not be deleted."), true);
+    }
+  });
+}
+
+async function exportArchive(event) {
+  setError("export", "");
+  await withButton(event.currentTarget, "Preparing...", async () => {
+    try {
+      const headers = { Authorization: `Bearer ${state.session.accessToken}` };
+      let response = await fetch("/api/v1/admin/export", { headers });
+      if (response.status === 401 && await refreshSession()) {
+        response = await fetch("/api/v1/admin/export", { headers: { Authorization: `Bearer ${state.session.accessToken}` } });
+      }
+      if (!response.ok) throw new APIError(response.status, "export_failed", "The export could not be created.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = Object.assign(document.createElement("a"), { href: url, download: `bookharbor-export-${new Date().toISOString().slice(0, 10)}.zip` });
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      showToast("Export downloaded.");
+    } catch (error) {
+      setError("export", readableError(error, "The export could not be created."));
+    }
+  });
 }
 
 async function uploadBook(event) {

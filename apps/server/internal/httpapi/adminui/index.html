@@ -61,6 +61,7 @@
         <button class="nav-item active" data-view="library" type="button">Library</button>
         <button class="nav-item" data-view="readers" type="button">Readers</button>
         <button class="nav-item" data-view="activity" type="button">Activity</button>
+        <button class="nav-item" data-view="backup" type="button">Backup</button>
         <div class="harbor-note">
           <span class="wave-rule" aria-hidden="true"></span>
           <p>A brighter tomorrow,<br>one book at a time.</p>
@@ -82,7 +83,11 @@
             <div class="button-row"><button class="button primary" type="submit">Import</button><button class="button quiet" data-cancel-upload type="button">Cancel</button></div>
           </form>
 
-          <div id="library-status" class="status-line" role="status">Loading library...</div>
+          <div class="library-tools">
+            <label class="sr-only" for="book-search">Search books</label>
+            <input id="book-search" type="search" placeholder="Search title or author" autocomplete="off">
+            <div id="library-status" class="status-line" role="status">Loading library...</div>
+          </div>
           <div class="library-layout">
             <div id="book-list" class="book-list" aria-live="polite"></div>
             <aside id="book-editor" class="editor" aria-labelledby="editor-title" hidden>
@@ -98,6 +103,11 @@
                 <p class="form-error" data-error="metadata" role="alert"></p>
                 <button class="button primary" type="submit">Save metadata</button>
               </form>
+              <div class="danger-zone">
+                <h3>Delete this book</h3>
+                <p>Removes the book, its files, and every reader's progress from this server. Downloaded copies on devices are not affected.</p>
+                <button id="delete-book" class="button danger-outline" type="button">Delete book</button>
+              </div>
               <div class="provider-search">
                 <h3>Find details on Hardcover</h3>
                 <p>Search results are suggestions. Review them before saving.</p>
@@ -128,6 +138,14 @@
           <div class="page-heading"><div><h1>Harbor log.</h1><p>A record of who changed accounts and books, and when.</p></div><button id="refresh-activity" class="button quiet" type="button">Refresh</button></div>
           <div id="activity-status" class="status-line" role="status">Loading activity...</div>
           <ol id="activity-list" class="activity-list"></ol>
+        </section>
+        <section id="backup-view" class="view" hidden>
+          <div class="page-heading"><div><h1>Keep it safe.</h1><p>Your books and data belong to you. Take a copy any time.</p></div></div>
+          <div class="action-panel backup-panel">
+            <div><h2>Export everything</h2><p>Downloads one zip with every original EPUB and PDF, a manifest, and a snapshot of the library database. Sign-in sessions are left out; password hashes are included, so store the file as carefully as the server.</p></div>
+            <button id="export-button" class="button primary" type="button">Download export</button>
+            <p class="form-error" data-error="export" role="alert"></p>
+          </div>
         </section>
       </main>
     </div>
