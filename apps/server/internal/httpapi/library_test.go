@@ -86,6 +86,47 @@ func TestHTTPBookImportBrowseAndRangeDownload(t *testing.T) {
 	}
 }
 
+func TestHTTPBookTitlePatchRequiresAdminAndUpdatesMetadata(t *testing.T) {
+	handler := testHandler(t)
+	bootstrapAdministrator(t, handler)
+	admin := login(t, handler, "admin@example.com", "a secure first password")
+	uploadBody, contentType := multipartBook(t, "file", "book.pdf", "Original", testPDF)
+	upload := httptest.NewRequest(http.MethodPost, "/api/v1/books", uploadBody)
+	upload.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	upload.Header.Set("Content-Type", contentType)
+	uploadResponse := httptest.NewRecorder()
+	handler.ServeHTTP(uploadResponse, upload)
+	var book bookResponse
+	if err := json.NewDecoder(uploadResponse.Body).Decode(&book); err != nil {
+		t.Fatal(err)
+	}
+	patch := httptest.NewRequest(http.MethodPatch, "/api/v1/books/"+book.ID, bytes.NewBufferString(`{
+        "title":"Updated", "subtitle":"A novel", "authors":["A. Reader"],
+        "description":"A description", "coverUrl":"https://images.example/cover.jpg",
+        "source":{"provider":"hardcover","id":"42"}
+    }`))
+	patch.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	patched := httptest.NewRecorder()
+	handler.ServeHTTP(patched, patch)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("patch status = %d; body = %s", patched.Code, patched.Body.String())
+	}
+	var result bookResponse
+	if err := json.NewDecoder(patched.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Title != "Updated" || result.Subtitle != "A novel" || len(result.Authors) != 1 || result.Source == nil || result.Source.Provider != "hardcover" || len(result.Editions) != 1 || result.Editions[0].ID != book.Editions[0].ID {
+		t.Fatalf("patched = %#v", result)
+	}
+	bad := httptest.NewRequest(http.MethodPatch, "/api/v1/books/missing", bytes.NewBufferString(`{"title":"Updated"}`))
+	bad.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	badResponse := httptest.NewRecorder()
+	handler.ServeHTTP(badResponse, bad)
+	if badResponse.Code != http.StatusNotFound {
+		t.Fatalf("missing patch status = %d", badResponse.Code)
+	}
+}
+
 func TestBookRoutesRequireAuthenticationAndAdminImport(t *testing.T) {
 	handler, db := testHandlerWithDatabase(t)
 

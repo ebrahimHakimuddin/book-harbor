@@ -15,12 +15,22 @@ import (
 const multipartOverheadAllowance int64 = 1 << 20
 
 type bookResponse struct {
-	ID        string            `json:"id"`
-	Title     string            `json:"title"`
-	CreatedBy string            `json:"createdBy"`
-	CreatedAt time.Time         `json:"createdAt"`
-	UpdatedAt time.Time         `json:"updatedAt"`
-	Editions  []editionResponse `json:"editions"`
+	ID          string              `json:"id"`
+	Title       string              `json:"title"`
+	Subtitle    string              `json:"subtitle"`
+	Description string              `json:"description"`
+	Authors     []string            `json:"authors"`
+	CoverURL    string              `json:"coverUrl"`
+	Source      *bookMetadataSource `json:"source,omitempty"`
+	CreatedBy   string              `json:"createdBy"`
+	CreatedAt   time.Time           `json:"createdAt"`
+	UpdatedAt   time.Time           `json:"updatedAt"`
+	Editions    []editionResponse   `json:"editions"`
+}
+
+type bookMetadataSource struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
 }
 
 type editionResponse struct {
@@ -55,8 +65,12 @@ func (s *server) books(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) book(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPatch {
+		s.patchBook(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w, http.MethodGet)
+		writeMethodNotAllowed(w, "GET, PATCH")
 		return
 	}
 	bookID, ok := singlePathValue(r.URL.Path, "/api/v1/books/")
@@ -72,6 +86,69 @@ func (s *server) book(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("get book", "error", err, "bookId", bookID)
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read book")
+		return
+	}
+	writeJSON(w, http.StatusOK, newBookResponse(book))
+}
+
+func (s *server) patchBook(w http.ResponseWriter, r *http.Request) {
+	principal, ok := authenticatedPrincipal(r)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read authenticated user")
+		return
+	}
+	if principal.User.Role != "admin" {
+		writeError(w, http.StatusForbidden, "forbidden", "administrator access is required")
+		return
+	}
+	bookID, ok := singlePathValue(r.URL.Path, "/api/v1/books/")
+	if !ok {
+		notFound(w, r)
+		return
+	}
+	var request struct {
+		Title       *string   `json:"title"`
+		Subtitle    *string   `json:"subtitle"`
+		Description *string   `json:"description"`
+		Authors     *[]string `json:"authors"`
+		CoverURL    *string   `json:"coverUrl"`
+		Source      *struct {
+			Provider string `json:"provider"`
+			ID       string `json:"id"`
+		} `json:"source"`
+	}
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be one valid JSON object")
+		return
+	}
+	if request.Title == nil && request.Subtitle == nil && request.Description == nil && request.Authors == nil && request.CoverURL == nil && request.Source == nil {
+		writeError(w, http.StatusUnprocessableEntity, "no_metadata_changes", "at least one metadata field is required")
+		return
+	}
+	update := library.BookUpdate{
+		Title: request.Title, Subtitle: request.Subtitle, Description: request.Description,
+		Authors: request.Authors, CoverURL: request.CoverURL,
+	}
+	if request.Source != nil {
+		update.MetadataProvider = &request.Source.Provider
+		update.MetadataProviderID = &request.Source.ID
+	}
+	book, err := s.library.UpdateMetadata(r.Context(), bookID, update)
+	if errors.Is(err, library.ErrNotFound) {
+		notFound(w, r)
+		return
+	}
+	if errors.Is(err, library.ErrInvalidTitle) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_title", "book title must contain 1 to 300 visible characters")
+		return
+	}
+	if errors.Is(err, library.ErrInvalidMetadata) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_metadata", "book metadata contains an invalid or oversized value")
+		return
+	}
+	if err != nil {
+		s.logger.Error("update book title", "error", err, "bookId", bookID)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to update book")
 		return
 	}
 	writeJSON(w, http.StatusOK, newBookResponse(book))
@@ -225,13 +302,14 @@ func newBookResponse(book library.Book) bookResponse {
 			ContentURL:       "/api/v1/editions/" + edition.ID + "/content",
 		})
 	}
+	var source *bookMetadataSource
+	if book.MetadataProvider != "" && book.MetadataProviderID != "" {
+		source = &bookMetadataSource{Provider: book.MetadataProvider, ID: book.MetadataProviderID}
+	}
 	return bookResponse{
-		ID:        book.ID,
-		Title:     book.Title,
-		CreatedBy: book.CreatedBy,
-		CreatedAt: book.CreatedAt,
-		UpdatedAt: book.UpdatedAt,
-		Editions:  editions,
+		ID: book.ID, Title: book.Title, Subtitle: book.Subtitle, Description: book.Description,
+		Authors: book.Authors, CoverURL: book.CoverURL, Source: source, CreatedBy: book.CreatedBy,
+		CreatedAt: book.CreatedAt, UpdatedAt: book.UpdatedAt, Editions: editions,
 	}
 }
 

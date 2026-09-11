@@ -85,6 +85,12 @@ var migrations = []string{
 		PRIMARY KEY (user_id, book_id)
 	) STRICT;
 	CREATE INDEX reading_progress_user_revision_idx ON reading_progress(user_id, event_revision);`,
+	`ALTER TABLE books ADD COLUMN subtitle TEXT NOT NULL DEFAULT '';
+	ALTER TABLE books ADD COLUMN description TEXT NOT NULL DEFAULT '';
+	ALTER TABLE books ADD COLUMN authors_json TEXT NOT NULL DEFAULT '[]';
+	ALTER TABLE books ADD COLUMN cover_url TEXT NOT NULL DEFAULT '';
+	ALTER TABLE books ADD COLUMN metadata_provider TEXT NOT NULL DEFAULT '';
+	ALTER TABLE books ADD COLUMN metadata_provider_id TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

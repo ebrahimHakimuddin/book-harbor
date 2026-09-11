@@ -199,6 +199,48 @@ func TestMissingLibraryRecords(t *testing.T) {
 	}
 }
 
+func TestUpdateBookMetadata(t *testing.T) {
+	store, db, _ := testLibraryStore(t, 1<<20)
+	defer db.Close()
+	book, err := store.Import(context.Background(), ImportInput{
+		Title: "Original", Filename: "book.pdf", Content: bytes.NewReader([]byte("%PDF-1.7\n%%EOF\n")), CreatedBy: "usr_test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	title, subtitle, description := " Updated ", " A novel ", " Description "
+	authors := []string{" Ursula K. Le Guin ", "ursula k. le guin", ""}
+	coverURL, provider, providerID := "https://images.example/cover.jpg", "hardcover", "42"
+	updated, err := store.UpdateMetadata(context.Background(), book.ID, BookUpdate{
+		Title: &title, Subtitle: &subtitle, Description: &description, Authors: &authors,
+		CoverURL: &coverURL, MetadataProvider: &provider, MetadataProviderID: &providerID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Title != "Updated" || updated.Subtitle != "A novel" || updated.Description != "Description" || len(updated.Authors) != 1 || updated.Authors[0] != "Ursula K. Le Guin" {
+		t.Fatalf("updated = %#v", updated)
+	}
+	if updated.MetadataProvider != "hardcover" || updated.MetadataProviderID != "42" || len(updated.Editions) != 1 {
+		t.Fatalf("updated metadata = %#v", updated)
+	}
+}
+
+func TestUpdateBookMetadataRejectsInvalidValues(t *testing.T) {
+	store, db, _ := testLibraryStore(t, 1<<20)
+	defer db.Close()
+	book, err := store.Import(context.Background(), ImportInput{
+		Title: "Original", Filename: "book.pdf", Content: bytes.NewReader([]byte("%PDF-1.7\n%%EOF\n")), CreatedBy: "usr_test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverURL := "file:///etc/passwd"
+	if _, err := store.UpdateMetadata(context.Background(), book.ID, BookUpdate{CoverURL: &coverURL}); !errors.Is(err, ErrInvalidMetadata) {
+		t.Fatalf("UpdateMetadata() error = %v", err)
+	}
+}
+
 func testLibraryStore(t *testing.T, maxBytes int64) (*Store, *sql.DB, string) {
 	t.Helper()
 	dataDir := t.TempDir()

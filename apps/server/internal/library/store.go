@@ -9,10 +9,12 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,6 +34,7 @@ var (
 	ErrInvalidBook       = errors.New("invalid book file")
 	ErrInvalidFilename   = errors.New("invalid filename")
 	ErrInvalidTitle      = errors.New("invalid title")
+	ErrInvalidMetadata   = errors.New("invalid book metadata")
 	ErrNotFound          = errors.New("book not found")
 	ErrTooLarge          = errors.New("book file exceeds size limit")
 	ErrUnsupportedFormat = errors.New("unsupported book format")
@@ -52,12 +55,28 @@ type ImportInput struct {
 }
 
 type Book struct {
-	ID        string
-	Title     string
-	CreatedBy string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	Editions  []Edition
+	ID                 string
+	Title              string
+	Subtitle           string
+	Description        string
+	Authors            []string
+	CoverURL           string
+	MetadataProvider   string
+	MetadataProviderID string
+	CreatedBy          string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	Editions           []Edition
+}
+
+type BookUpdate struct {
+	Title              *string
+	Subtitle           *string
+	Description        *string
+	Authors            *[]string
+	CoverURL           *string
+	MetadataProvider   *string
+	MetadataProviderID *string
 }
 
 type Edition struct {
@@ -217,6 +236,7 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	return Book{
 		ID:        bookID,
 		Title:     title,
+		Authors:   []string{},
 		CreatedBy: input.CreatedBy,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -229,7 +249,8 @@ func (s *Store) List(ctx context.Context, limit int) ([]Book, error) {
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, created_by, created_at, updated_at
+		SELECT id, title, subtitle, description, authors_json, cover_url,
+			metadata_provider, metadata_provider_id, created_by, created_at, updated_at
 		FROM books
 		ORDER BY created_at DESC, id DESC
 		LIMIT ?
@@ -262,7 +283,8 @@ func (s *Store) List(ctx context.Context, limit int) ([]Book, error) {
 
 func (s *Store) Get(ctx context.Context, bookID string) (Book, error) {
 	book, err := scanBook(s.db.QueryRowContext(ctx, `
-		SELECT id, title, created_by, created_at, updated_at
+		SELECT id, title, subtitle, description, authors_json, cover_url,
+			metadata_provider, metadata_provider_id, created_by, created_at, updated_at
 		FROM books
 		WHERE id = ?
 	`, bookID))
@@ -277,6 +299,63 @@ func (s *Store) Get(ctx context.Context, bookID string) (Book, error) {
 		return Book{}, err
 	}
 	return book, nil
+}
+
+func (s *Store) UpdateMetadata(ctx context.Context, bookID string, update BookUpdate) (Book, error) {
+	book, err := s.Get(ctx, bookID)
+	if err != nil {
+		return Book{}, err
+	}
+	if update.Title != nil {
+		book.Title = strings.TrimSpace(*update.Title)
+		if !validTitle(book.Title) {
+			return Book{}, ErrInvalidTitle
+		}
+	}
+	if update.Subtitle != nil {
+		book.Subtitle = strings.TrimSpace(*update.Subtitle)
+	}
+	if update.Description != nil {
+		book.Description = strings.TrimSpace(*update.Description)
+	}
+	if update.Authors != nil {
+		book.Authors = normalizeAuthors(*update.Authors)
+	}
+	if update.CoverURL != nil {
+		book.CoverURL = strings.TrimSpace(*update.CoverURL)
+	}
+	if update.MetadataProvider != nil {
+		book.MetadataProvider = strings.TrimSpace(*update.MetadataProvider)
+	}
+	if update.MetadataProviderID != nil {
+		book.MetadataProviderID = strings.TrimSpace(*update.MetadataProviderID)
+	}
+	if !validMetadata(book) {
+		return Book{}, ErrInvalidMetadata
+	}
+	authorsJSON, err := json.Marshal(book.Authors)
+	if err != nil {
+		return Book{}, fmt.Errorf("encode book authors: %w", err)
+	}
+	book.UpdatedAt = s.now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE books
+		SET title = ?, subtitle = ?, description = ?, authors_json = ?, cover_url = ?,
+			metadata_provider = ?, metadata_provider_id = ?, updated_at = ?
+		WHERE id = ?
+	`, book.Title, book.Subtitle, book.Description, string(authorsJSON), book.CoverURL,
+		book.MetadataProvider, book.MetadataProviderID, book.UpdatedAt.Format(time.RFC3339Nano), bookID)
+	if err != nil {
+		return Book{}, fmt.Errorf("update book metadata: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return Book{}, fmt.Errorf("read metadata update result: %w", err)
+	}
+	if count != 1 {
+		return Book{}, ErrNotFound
+	}
+	return s.Get(ctx, bookID)
 }
 
 func (s *Store) OpenContent(ctx context.Context, editionID string) (Content, error) {
@@ -321,9 +400,19 @@ type scanner interface {
 
 func scanBook(row scanner) (Book, error) {
 	var book Book
-	var createdAt, updatedAt string
-	if err := row.Scan(&book.ID, &book.Title, &book.CreatedBy, &createdAt, &updatedAt); err != nil {
+	var authorsJSON, createdAt, updatedAt string
+	if err := row.Scan(
+		&book.ID, &book.Title, &book.Subtitle, &book.Description, &authorsJSON,
+		&book.CoverURL, &book.MetadataProvider, &book.MetadataProviderID,
+		&book.CreatedBy, &createdAt, &updatedAt,
+	); err != nil {
 		return Book{}, err
+	}
+	if err := json.Unmarshal([]byte(authorsJSON), &book.Authors); err != nil {
+		return Book{}, fmt.Errorf("decode book authors: %w", err)
+	}
+	if book.Authors == nil {
+		book.Authors = []string{}
 	}
 	var err error
 	book.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
@@ -335,6 +424,50 @@ func scanBook(row scanner) (Book, error) {
 		return Book{}, fmt.Errorf("parse book update time: %w", err)
 	}
 	return book, nil
+}
+
+func normalizeAuthors(authors []string) []string {
+	normalized := make([]string, 0, len(authors))
+	seen := make(map[string]struct{}, len(authors))
+	for _, author := range authors {
+		author = strings.TrimSpace(author)
+		key := strings.ToLower(author)
+		if author == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, author)
+	}
+	return normalized
+}
+
+func validMetadata(book Book) bool {
+	if utf8.RuneCountInString(book.Subtitle) > 300 || utf8.RuneCountInString(book.Description) > 10_000 {
+		return false
+	}
+	if len(book.Authors) > 50 {
+		return false
+	}
+	for _, author := range book.Authors {
+		if utf8.RuneCountInString(author) < 1 || utf8.RuneCountInString(author) > 200 {
+			return false
+		}
+	}
+	if len(book.CoverURL) > 2048 || (book.CoverURL != "" && !validHTTPURL(book.CoverURL)) {
+		return false
+	}
+	if utf8.RuneCountInString(book.MetadataProvider) > 100 || utf8.RuneCountInString(book.MetadataProviderID) > 300 {
+		return false
+	}
+	return (book.MetadataProvider == "") == (book.MetadataProviderID == "")
+}
+
+func validHTTPURL(value string) bool {
+	parsed, err := url.ParseRequestURI(value)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
 func (s *Store) listEditions(ctx context.Context, bookID string) ([]Edition, error) {
