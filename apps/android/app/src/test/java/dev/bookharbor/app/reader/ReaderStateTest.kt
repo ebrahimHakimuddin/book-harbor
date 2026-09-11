@@ -46,4 +46,42 @@ class ReaderStateTest {
         val closed = open.reduce(ReaderAction.CloseSettings)
         assertFalse(closed.settingsOpen)
     }
+
+    @Test
+    fun overallProgressIsWeightedByChapterSize() {
+        val state = ReaderState(
+            bookTitle = "B",
+            chapters = listOf(ReaderChapter("a", "A", 100), ReaderChapter("b", "B", 300)),
+        )
+        assertEquals(0, state.overallPercentage)
+        assertEquals(25, state.reduce(ReaderAction.NextChapter).overallPercentage) // finished the short chapter
+        assertEquals(63, state.reduce(ReaderAction.NextChapter).reduce(ReaderAction.RecordProgress(0.5f)).overallPercentage) // 62.5 rounds up
+    }
+
+    @Test
+    fun contentsJumpsToAnyChapterAndIgnoresInvalidOnes() {
+        val open = ReaderState.preview().reduce(ReaderAction.OpenContents)
+        assertTrue(open.contentsOpen)
+        val jumped = open.reduce(ReaderAction.SelectChapter(2))
+        assertEquals(2, jumped.chapterIndex)
+        assertFalse(jumped.contentsOpen)
+        assertEquals(2, jumped.reduce(ReaderAction.SelectChapter(9)).chapterIndex)
+    }
+
+    @Test
+    fun settingsRoundTripAndTolerateCorruptStoredValues() {
+        val custom = ReaderSettings(theme = ReaderTheme.Sepia, fontScale = 1.2f, alignment = ReaderAlignment.Justified, brightness = 0.4f, showProgress = false)
+        assertEquals(custom, ReaderSettings.fromMap(custom.toMap()))
+        val corrupt = ReaderSettings.fromMap(mapOf("theme" to "Neon", "fontScale" to "huge", "margin" to "999", "brightness" to "9"))
+        assertEquals(ReaderTheme.System, corrupt.theme)
+        assertEquals(1f, corrupt.fontScale)
+        assertEquals(48, corrupt.horizontalMargin)
+        assertEquals(1f, corrupt.brightness)
+    }
+
+    @Test
+    fun resetRestoresDefaults() {
+        val changed = ReaderState.preview().reduce(ReaderAction.SelectTheme(ReaderTheme.Black)).reduce(ReaderAction.SetFontScale(1.4f))
+        assertEquals(ReaderSettings.Default, changed.reduce(ReaderAction.ResetSettings).settings)
+    }
 }

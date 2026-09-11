@@ -2,33 +2,11 @@ package dev.bookharbor.app.reader
 
 import kotlin.math.roundToInt
 
-enum class ReaderTheme(val label: String) {
-    System("System"),
-    Light("Light"),
-    Sepia("Sepia"),
-    Dark("Dark"),
-    Black("Black"),
-}
-
-enum class ReaderTypeface(val label: String) {
-    Publisher("Publisher"),
-    Literata("Literata"),
-    Inter("Inter"),
-}
-
-data class ReaderSettings(
-    val theme: ReaderTheme = ReaderTheme.System,
-    val typeface: ReaderTypeface = ReaderTypeface.Literata,
-    val fontScale: Float = 1f,
-    val lineHeight: Float = 1.55f,
-    val horizontalMargin: Int = 24,
-    val showProgress: Boolean = true,
-)
-
+/** A chapter as the reader chrome sees it. [weight] is its share of the book's text. */
 data class ReaderChapter(
     val id: String,
     val title: String,
-    val paragraphs: List<String>,
+    val weight: Long = 1,
 )
 
 data class ReaderState(
@@ -38,6 +16,7 @@ data class ReaderState(
     val chapterProgress: Map<String, Float> = emptyMap(),
     val settings: ReaderSettings = ReaderSettings(),
     val settingsOpen: Boolean = false,
+    val contentsOpen: Boolean = false,
 ) {
     init {
         require(chapters.isNotEmpty())
@@ -47,28 +26,23 @@ data class ReaderState(
     val chapter: ReaderChapter get() = chapters[chapterIndex]
     val nextChapter: ReaderChapter? get() = chapters.getOrNull(chapterIndex + 1)
     val currentChapterProgress: Float get() = chapterProgress[chapter.id] ?: 0f
-    val overallProgress: Float get() = (chapterIndex + currentChapterProgress) / chapters.size
+
+    /** Weighted by chapter size, so a short preface does not count as much as a long chapter. */
+    val overallProgress: Float
+        get() {
+            val total = chapters.sumOf { it.weight }.coerceAtLeast(1).toDouble()
+            val before = chapters.take(chapterIndex).sumOf { it.weight }
+            return ((before + chapter.weight * currentChapterProgress.toDouble()) / total).toFloat().coerceIn(0f, 1f)
+        }
     val overallPercentage: Int get() = (overallProgress * 100).roundToInt()
 
     companion object {
         fun preview() = ReaderState(
             bookTitle = "The Cartographer's Wake",
             chapters = listOf(
-                ReaderChapter(
-                    id = "chapter-1",
-                    title = "The Map Room",
-                    paragraphs = previewParagraphs,
-                ),
-                ReaderChapter(
-                    id = "chapter-2",
-                    title = "The Sounding Line",
-                    paragraphs = previewParagraphs.reversed(),
-                ),
-                ReaderChapter(
-                    id = "chapter-3",
-                    title = "Where the Water Remembers",
-                    paragraphs = previewParagraphs,
-                ),
+                ReaderChapter("chapter-1", "The Map Room"),
+                ReaderChapter("chapter-2", "The Sounding Line"),
+                ReaderChapter("chapter-3", "Where the Water Remembers"),
             ),
         )
     }
@@ -77,42 +51,43 @@ data class ReaderState(
 sealed interface ReaderAction {
     data class RecordProgress(val fraction: Float) : ReaderAction
     data object NextChapter : ReaderAction
+    data class SelectChapter(val index: Int) : ReaderAction
     data object OpenSettings : ReaderAction
     data object CloseSettings : ReaderAction
+    data object OpenContents : ReaderAction
+    data object CloseContents : ReaderAction
     data class SelectTheme(val theme: ReaderTheme) : ReaderAction
     data class SelectTypeface(val typeface: ReaderTypeface) : ReaderAction
+    data class SelectAlignment(val alignment: ReaderAlignment) : ReaderAction
     data class SetFontScale(val scale: Float) : ReaderAction
     data class SetLineHeight(val scale: Float) : ReaderAction
+    data class SetParagraphSpacing(val scale: Float) : ReaderAction
     data class SetMargin(val dp: Int) : ReaderAction
+    data class SetBrightness(val brightness: Float?) : ReaderAction
     data class SetProgressVisible(val visible: Boolean) : ReaderAction
+    data object ResetSettings : ReaderAction
 }
 
 fun ReaderState.reduce(action: ReaderAction): ReaderState = when (action) {
-    is ReaderAction.RecordProgress -> copy(
-        chapterProgress = chapterProgress + (chapter.id to action.fraction.coerceIn(0f, 1f)),
-    )
+    is ReaderAction.RecordProgress -> copy(chapterProgress = chapterProgress + (chapter.id to action.fraction.coerceIn(0f, 1f)))
     ReaderAction.NextChapter -> if (nextChapter == null) {
         copy(chapterProgress = chapterProgress + (chapter.id to 1f))
     } else {
-        copy(
-            chapterIndex = chapterIndex + 1,
-            chapterProgress = chapterProgress + (chapter.id to 1f),
-        )
+        copy(chapterIndex = chapterIndex + 1, chapterProgress = chapterProgress + (chapter.id to 1f))
     }
+    is ReaderAction.SelectChapter -> if (action.index in chapters.indices) copy(chapterIndex = action.index, contentsOpen = false) else this
     ReaderAction.OpenSettings -> copy(settingsOpen = true)
     ReaderAction.CloseSettings -> copy(settingsOpen = false)
+    ReaderAction.OpenContents -> copy(contentsOpen = true)
+    ReaderAction.CloseContents -> copy(contentsOpen = false)
     is ReaderAction.SelectTheme -> copy(settings = settings.copy(theme = action.theme))
     is ReaderAction.SelectTypeface -> copy(settings = settings.copy(typeface = action.typeface))
+    is ReaderAction.SelectAlignment -> copy(settings = settings.copy(alignment = action.alignment))
     is ReaderAction.SetFontScale -> copy(settings = settings.copy(fontScale = action.scale.coerceIn(0.8f, 1.5f)))
     is ReaderAction.SetLineHeight -> copy(settings = settings.copy(lineHeight = action.scale.coerceIn(1.25f, 2f)))
+    is ReaderAction.SetParagraphSpacing -> copy(settings = settings.copy(paragraphSpacing = action.scale.coerceIn(0.5f, 2f)))
     is ReaderAction.SetMargin -> copy(settings = settings.copy(horizontalMargin = action.dp.coerceIn(16, 48)))
+    is ReaderAction.SetBrightness -> copy(settings = settings.copy(brightness = action.brightness?.coerceIn(0.05f, 1f)))
     is ReaderAction.SetProgressVisible -> copy(settings = settings.copy(showProgress = action.visible))
+    ReaderAction.ResetSettings -> copy(settings = ReaderSettings.Default)
 }
-
-private val previewParagraphs = listOf(
-    "At first light, Mara found the harbor exactly where the old chart said it would not be. The breakwater curved from the mist like a sentence revised in the night, every stone wet with a pale and patient shine.",
-    "She unfolded the map across the wheelhouse table. Its paper had softened along the creases, but the ink remained stubborn: a coast running north, three islands set like dark commas, and beyond them an empty field where the harbor now waited.",
-    "The sounding bell moved somewhere below deck. Each note traveled through the hull before reaching the air, and for a moment the boat seemed less built than remembered—timber, rope, and brass assembled by the water's attention.",
-    "On shore, the lamps were going out one by one. A figure in a blue coat stood at the end of the pier with both hands in his pockets. He did not wave. He only watched the boat approach, as though measuring it against a promise made years ago.",
-    "Mara drew a clean line through the printed coastline. Then she marked the harbor in the margin, writing small enough to leave room for whatever else the morning might reveal.",
-)
