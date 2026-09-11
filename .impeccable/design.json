@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-21T20:30:00+03:00",
+  "title": "Design System: BookHarbor",
+  "extensions": {
+    "colorMeta": {
+      "harbor-navy": { "role": "primary", "displayName": "Harbor Navy", "canonical": "#0f2d46" },
+      "sea-teal": { "role": "secondary", "displayName": "Sea Teal", "canonical": "#2e7d7a" },
+      "mist-cyan": { "role": "secondary", "displayName": "Mist Cyan", "canonical": "#7fb3c3" },
+      "sand": { "role": "neutral", "displayName": "Sand", "canonical": "#f8f6ef" },
+      "sunrise": { "role": "tertiary", "displayName": "Sunrise", "canonical": "#f4a261" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Literary Display", "purpose": "Brand identity and major page headings." },
+      "body": { "displayName": "Product Body", "purpose": "Controls, forms, metadata, and explanatory copy." }
+    },
+    "shadows": [
+      { "name": "ambient-panel", "value": "0 14px 36px rgba(15, 45, 70, .1)", "purpose": "Elevated task panels and notices." },
+      { "name": "quiet-tile", "value": "0 7px 24px rgba(15, 45, 70, .065)", "purpose": "Interactive book entries." }
+    ],
+    "motion": [
+      { "name": "state-standard", "value": "160ms ease", "purpose": "Hover, focus, and selection feedback." }
+    ],
+    "breakpoints": [
+      { "name": "app-stack", "value": "980px" },
+      { "name": "mobile", "value": "700px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The default commit action for one task region.",
+      "html": "<button class=\"button primary\">Save metadata</button>",
+      "css": ".button.primary { min-height: 42px; border-radius: 9px; padding: 9px 16px; background: #0f2d46; color: #fffefb; font-weight: 750; }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Labeled product field with visible focus and error support.",
+      "html": "<label>Title<input name=\"title\" required></label>",
+      "css": "input { border: 1px solid #b8c8d1; border-radius: 9px; background: #fffefb; color: #18354d; padding: 11px 13px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Calm Harbor",
+    "overview": "A dependable, literary self-hosted product surface with quiet maritime color and conventional controls.",
+    "keyCharacteristics": ["Light calm surfaces", "Editorial headings", "Familiar product controls", "Responsive single-column fallback"],
+    "rules": [
+      { "name": "The Navigation Rule", "body": "Accent color communicates action or current state.", "section": "colors" },
+      { "name": "The Two-Voice Rule", "body": "Serif is for identity and hierarchy, never controls.", "section": "typography" },
+      { "name": "The Flat-First Rule", "body": "Elevation must explain interaction or layering.", "section": "elevation" }
+    ],
+    "dos": ["Use Harbor Navy for strongest hierarchy and action.", "Collapse work areas into one clear mobile reading order."],
+    "donts": ["Do not use decorative gradients or glow.", "Do not expose storage internals in interface language."]
+  }
+}
