@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
@@ -133,7 +134,14 @@ func (s *server) withSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' blob: https: data:; script-src 'self'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		// The admin console's UI components set inline styles at runtime (positioning,
+		// injected toast CSS), so only that page may use 'unsafe-inline' for styles.
+		// Scripts stay limited to this origin everywhere.
+		styleSource := "'self'"
+		if strings.HasPrefix(r.URL.Path, "/admin") {
+			styleSource = "'self' 'unsafe-inline'"
+		}
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' blob: https: data:; script-src 'self'; style-src "+styleSource+"; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }

@@ -109,7 +109,9 @@ The default metadata store is SQLite in WAL mode. This preserves the one-process
 one-directory deployment model and provides transactional state without another
 required container. See [decision 0003](decisions/0003-sqlite-metadata-store.md).
 
-The first administration frontend is a dependency-free, responsive web app
-embedded in the server binary. Client/server types should eventually be
+The administration frontend (`apps/admin`) is a responsive React app using
+TypeScript, Tailwind, shadcn/ui, and TanStack Query. It is built to static files
+that the server binary embeds, so a deployment is still one Go binary with no
+Node runtime. Client/server types should eventually be
 generated from the versioned contract rather than maintained by hand in two
 languages. See [decision 0002](decisions/0002-go-server-kotlin-android.md).

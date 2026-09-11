@@ -1,0 +1,97 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/literata";
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Literata Variable", Georgia, serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* BookHarbor brand palette (brandkit/color-palette.png, DESIGN.md) */
+  --color-navy: #0f2d46;
+  --color-navy-deep: #092238;
+  --color-teal: #2e7d7a;
+  --color-teal-dark: #23635f;
+  --color-cyan: #7fb3c3;
+  --color-sand: #f8f6ef;
+  --color-sunrise: #f4a261;
+  --color-mist: #eef4f4;
+  --color-success: #236b52;
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+}
+
+:root {
+  --radius: 9px;
+  --background: #fffefb;
+  --foreground: #18354d;
+  --card: #fffefb;
+  --card-foreground: #18354d;
+  --popover: #fffefb;
+  --popover-foreground: #18354d;
+  --primary: #0f2d46;
+  --primary-foreground: #fdfcf7;
+  --secondary: #eef4f4;
+  --secondary-foreground: #0f2d46;
+  --muted: #eef4f4;
+  --muted-foreground: #60768a;
+  --accent: #e5eff0;
+  --accent-foreground: #0f2d46;
+  --destructive: #a43f3f;
+  --border: #d9e2e5;
+  --input: #b8c8d1;
+  --ring: #f4a261;
+  --sidebar: #fffefb;
+  --sidebar-foreground: #18354d;
+  --sidebar-primary: #0f2d46;
+  --sidebar-primary-foreground: #fdfcf7;
+  --sidebar-accent: #e5eff0;
+  --sidebar-accent-foreground: #0f2d46;
+  --sidebar-border: #d9e2e5;
+  --sidebar-ring: #f4a261;
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans bg-sand; scroll-behavior: smooth; }
+  body { @apply bg-background text-foreground min-h-dvh min-w-80 antialiased; }
+  h1, h2, h3 { @apply font-heading tracking-tight; }
+  ::selection { background: rgb(127 179 195 / 0.45); color: var(--color-navy-deep); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
