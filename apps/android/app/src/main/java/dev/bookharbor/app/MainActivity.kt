@@ -19,10 +19,11 @@ class MainActivity : ComponentActivity() { override fun onCreate(state: Bundle?)
 
 @Composable fun BookHarborApp() {
     val context = LocalContext.current
-    val store = remember { SessionStore(context.getSharedPreferences("bookharbor", 0)) }
-    val downloadStore = remember { DownloadStore(context.getSharedPreferences("bookharbor", 0), java.io.File(context.filesDir, "downloads")) }
-    val client = remember { LibraryClient(store) }
-    val downloader = remember { EditionDownloader(store, downloadStore) }
+    val graph = remember { AppGraph.get(context) }
+    val store = graph.session
+    val downloadStore = graph.downloads
+    val client = graph.library
+    val downloader = graph.downloader
     val scope = rememberCoroutineScope()
     var uiState by remember { mutableStateOf<LibraryUiState>(if (store.serverUrl.isBlank()) LibraryUiState.Setup else LibraryUiState.Loading) }
     fun updateCatalog(update: (LibraryUiState.Catalog) -> LibraryUiState.Catalog) { val current = uiState; if (current is LibraryUiState.Catalog) uiState = update(current) }

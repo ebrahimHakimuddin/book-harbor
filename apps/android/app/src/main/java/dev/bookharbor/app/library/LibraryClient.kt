@@ -20,23 +20,45 @@ data class InstanceInfo(val name: String, val version: String, val setupRequired
 }
 
 data class Edition(val id: String, val format: String, val mediaType: String, val originalFilename: String, val contentUrl: String, val byteLength: Long = 0, val sha256: String = "")
-data class Book(val id: String, val title: String, val editions: List<Edition>)
+data class Book(
+    val id: String,
+    val title: String,
+    val editions: List<Edition>,
+    val subtitle: String = "",
+    val authors: List<String> = emptyList(),
+    val coverUrl: String = "",
+    val updatedAt: String = "",
+)
+data class BookPage(val books: List<Book>, val nextCursor: String?)
 
 data class SessionTokens(val accessToken: String, val refreshToken: String, val tokenType: String = "Bearer") {
     companion object { fun fromJson(json: String) = JSONObject(json).let { SessionTokens(it.getString("accessToken"), it.getString("refreshToken"), it.optString("tokenType", "Bearer")) } }
 }
 
-fun parseBooks(json: String): List<Book> {
-    val items = JSONObject(json).optJSONArray("items") ?: JSONArray()
-    return (0 until items.length()).map { index ->
+fun parseBookPage(json: String): BookPage {
+    val root = JSONObject(json)
+    val items = root.optJSONArray("items") ?: JSONArray()
+    val books = (0 until items.length()).map { index ->
         val book = items.getJSONObject(index)
         val editions = book.optJSONArray("editions") ?: JSONArray()
-        Book(book.getString("id"), book.optString("title"), (0 until editions.length()).map { editionIndex ->
-            val edition = editions.getJSONObject(editionIndex)
-            Edition(edition.getString("id"), edition.optString("format"), edition.optString("mediaType"), edition.optString("originalFilename"), edition.optString("contentUrl"), edition.optLong("byteLength", 0), edition.optString("sha256"))
-        })
+        val authors = book.optJSONArray("authors") ?: JSONArray()
+        Book(
+            id = book.getString("id"),
+            title = book.optString("title"),
+            subtitle = book.optString("subtitle"),
+            authors = (0 until authors.length()).map { authors.getString(it) },
+            coverUrl = book.optString("coverUrl"),
+            updatedAt = book.optString("updatedAt"),
+            editions = (0 until editions.length()).map { editionIndex ->
+                val edition = editions.getJSONObject(editionIndex)
+                Edition(edition.getString("id"), edition.optString("format"), edition.optString("mediaType"), edition.optString("originalFilename"), edition.optString("contentUrl"), edition.optLong("byteLength", 0), edition.optString("sha256"))
+            },
+        )
     }
+    return BookPage(books, root.optString("nextCursor").ifEmpty { null })
 }
+
+fun parseBooks(json: String): List<Book> = parseBookPage(json).books
 
 class SessionStore(private val preferences: SharedPreferences) {
     var serverUrl: String get() = preferences.getString("server_url", "") ?: ""; set(value) { preferences.edit().putString("server_url", value.trim().trimEnd('/')).apply() }
@@ -81,10 +103,12 @@ class DownloadVerificationError(message: String) : Exception(message)
 
 /** Downloads synchronously; callers must invoke this from Dispatchers.IO. */
 class EditionDownloader(
-    private val session: SessionStore,
+    private val api: ApiClient,
     private val downloads: DownloadStore,
     private val openConnection: (String) -> HttpURLConnection = { URL(it).openConnection() as HttpURLConnection },
 ) {
+    private val session get() = api.session
+
     fun download(edition: Edition): LocalDownload {
         var token = session.tokens ?: error("sign in required")
         val directory = downloads.directory
@@ -106,7 +130,7 @@ class EditionDownloader(
                 opened.readTimeout = 30_000
                 opened.setRequestProperty("Authorization", "Bearer ${token.accessToken}")
                 status = opened.responseCode
-                if (status == 401 && !refreshed) { opened.disconnect(); token = session.refresh(); refreshed = true; continue }
+                if (status == 401 && !refreshed) { opened.disconnect(); token = api.refreshIfStale(token.accessToken); refreshed = true; continue }
                 break
             }
             val connection = activeConnection ?: error("download connection unavailable")
@@ -150,36 +174,33 @@ class EditionDownloader(
     }
 }
 
-class LibraryClient(private val store: SessionStore, private val openConnection: (String) -> HttpURLConnection = { URL(it).openConnection() as HttpURLConnection }) {
-    fun signOut() { val token = store.tokens ?: return; runCatching { request(store.serverUrl + "/api/v1/sessions/current", "DELETE", authorization = token.accessToken) } }
-    fun instance(url: String): InstanceInfo = request(url.trimEnd('/') + "/api/v1/instance").let(InstanceInfo::fromJson)
-    fun signIn(url: String, email: String, password: String): SessionTokens = request(url.trimEnd('/') + "/api/v1/sessions", "POST", "{\"email\":${JSONObject.quote(email)},\"password\":${JSONObject.quote(password)}}").let(SessionTokens::fromJson).also { store.serverUrl = url; store.tokens = it }
-    fun refresh(): SessionTokens = request(store.serverUrl + "/api/v1/sessions/refresh", "POST", "{\"refreshToken\":${JSONObject.quote(store.tokens?.refreshToken ?: "")}}").let(SessionTokens::fromJson).also { store.tokens = it }
-    fun books(): List<Book> {
-        val token = store.tokens ?: error("sign in required")
-        val url = store.serverUrl + "/api/v1/books"
-        return try { parseBooks(request(url, authorization = token.accessToken)) } catch (error: HttpError) {
-            if (error.status != 401) throw error
-            parseBooks(request(url, authorization = refresh().accessToken))
-        }
+
+class LibraryClient(private val api: ApiClient) {
+    private val store get() = api.session
+
+    fun instance(url: String): InstanceInfo = api.request(url.trimEnd('/') + "/api/v1/instance").let(InstanceInfo::fromJson)
+
+    fun signIn(url: String, email: String, password: String): SessionTokens {
+        val body = "{\"email\":${JSONObject.quote(email)},\"password\":${JSONObject.quote(password)}}"
+        return SessionTokens.fromJson(api.request(url.trimEnd('/') + "/api/v1/sessions", "POST", body))
+            .also { store.serverUrl = url; store.tokens = it }
     }
 
-    private fun request(url: String, method: String = "GET", body: String? = null, authorization: String? = null): String {
-        val connection = openConnection(url)
-        try {
-            connection.requestMethod = method
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 15_000
-            connection.setRequestProperty("Accept", "application/json")
-            if (authorization != null) connection.setRequestProperty("Authorization", "Bearer $authorization")
-            if (body != null) { connection.doOutput = true; connection.setRequestProperty("Content-Type", "application/json"); connection.outputStream.use { it.write(body.toByteArray()) } }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = stream?.let { BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() } } ?: ""
-            if (status !in 200..299) throw HttpError(status, response)
-            return response
-        } finally { connection.disconnect() }
+    fun signOut() {
+        val token = store.tokens ?: return
+        runCatching { api.request(store.serverUrl + "/api/v1/sessions/current", "DELETE", token = token.accessToken) }
+    }
+
+    /** Every book, following the server's pagination cursor. */
+    fun books(): List<Book> {
+        val all = mutableListOf<Book>()
+        var cursor: String? = null
+        do {
+            val query = "?limit=100" + (cursor?.let { "&cursor=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")
+            val page = parseBookPage(api.authorized("/api/v1/books$query"))
+            all += page.books
+            cursor = page.nextCursor
+        } while (cursor != null)
+        return all
     }
 }
-
-class HttpError(val status: Int, message: String) : Exception(message)
