@@ -38,6 +38,7 @@ class MemoryProgressStore : ProgressStore {
         this.cursor = cursor
     }
     override fun reject(eventId: String, reason: String) { outbox[eventId]?.let { outbox[eventId] = it.first to "rejected" } }
+    override fun clear() { positions.clear(); outbox.clear(); cursor = 0 }
 }
 
 class SyncEngineTest {
@@ -141,5 +142,13 @@ class SyncEngineTest {
         assertEquals(12L, decoded.cursor)
         assertTrue(decoded.acknowledgements.single().duplicate)
         assertEquals(9, decoded.progress.single().locator.page)
+    }
+
+    @Test fun clearForgetsEverythingSoAnotherAccountStartsClean() {
+        val store = MemoryProgressStore().apply { record(event("e1")); applySync(emptySet(), emptyList(), 9) }
+        store.clear()
+        assertEquals(0, store.pendingCount())
+        assertNull(store.position("book1"))
+        assertEquals(0L, store.cursor())
     }
 }

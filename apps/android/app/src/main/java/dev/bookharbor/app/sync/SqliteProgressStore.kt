@@ -88,6 +88,17 @@ class SqliteProgressStore(context: Context) : SQLiteOpenHelper(context.applicati
         writableDatabase.update("outbox", ContentValues().apply { put("status", "rejected"); put("reason", reason.take(300)) }, "event_id = ?", arrayOf(eventId))
     }
 
+    override fun clear() {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            listOf("position", "outbox", "meta").forEach { db.delete(it, null, null) }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     private fun unsentCount(db: SQLiteDatabase, bookId: String): Long =
         db.rawQuery("SELECT COUNT(*) FROM outbox WHERE book_id = ? AND status = 'pending'", arrayOf(bookId)).use { it.moveToFirst(); it.getLong(0) }
 

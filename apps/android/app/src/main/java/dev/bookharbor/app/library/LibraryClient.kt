@@ -62,6 +62,7 @@ fun parseBooks(json: String): List<Book> = parseBookPage(json).books
 
 class SessionStore(private val preferences: SharedPreferences) {
     var serverUrl: String get() = preferences.getString("server_url", "") ?: ""; set(value) { preferences.edit().putString("server_url", value.trim().trimEnd('/')).apply() }
+    var displayName: String get() = preferences.getString("display_name", "") ?: ""; set(value) { preferences.edit().putString("display_name", value).apply() }
     var tokens: SessionTokens? get() = preferences.getString("access_token", null)?.let { SessionTokens(it, preferences.getString("refresh_token", "") ?: "") }; set(value) { preferences.edit().apply { if (value == null) { remove("access_token"); remove("refresh_token") } else { putString("access_token", value.accessToken); putString("refresh_token", value.refreshToken) } }.apply() }
 }
 
@@ -182,8 +183,12 @@ class LibraryClient(private val api: ApiClient) {
 
     fun signIn(url: String, email: String, password: String): SessionTokens {
         val body = "{\"email\":${JSONObject.quote(email)},\"password\":${JSONObject.quote(password)}}"
-        return SessionTokens.fromJson(api.request(url.trimEnd('/') + "/api/v1/sessions", "POST", body))
-            .also { store.serverUrl = url; store.tokens = it }
+        val json = api.request(url.trimEnd('/') + "/api/v1/sessions", "POST", body)
+        return SessionTokens.fromJson(json).also {
+            store.serverUrl = url
+            store.tokens = it
+            store.displayName = runCatching { JSONObject(json).getJSONObject("user").getString("displayName") }.getOrDefault("")
+        }
     }
 
     fun signOut() {
@@ -204,3 +209,32 @@ class LibraryClient(private val api: ApiClient) {
         return all
     }
 }
+
+/** The catalog as last fetched, so the library still opens with no network. */
+class CatalogCache(private val preferences: SharedPreferences) {
+    fun save(instanceName: String, books: List<Book>) {
+        preferences.edit().putString("catalog_books", encodeBooks(books)).putString("catalog_instance", instanceName).apply()
+    }
+
+    fun load(): Pair<String, List<Book>>? {
+        val json = preferences.getString("catalog_books", null) ?: return null
+        return runCatching { (preferences.getString("catalog_instance", "BookHarbor") ?: "BookHarbor") to parseBooks(json) }.getOrNull()
+    }
+
+    fun clear() { preferences.edit().remove("catalog_books").remove("catalog_instance").apply() }
+}
+
+/** Same shape the server sends, so parseBooks reads it back. */
+fun encodeBooks(books: List<Book>): String = JSONObject().put("items", JSONArray().also { items ->
+    books.forEach { book ->
+        items.put(JSONObject().apply {
+            put("id", book.id); put("title", book.title); put("subtitle", book.subtitle); put("coverUrl", book.coverUrl); put("updatedAt", book.updatedAt)
+            put("authors", JSONArray(book.authors))
+            put("editions", JSONArray().also { editions ->
+                book.editions.forEach { e ->
+                    editions.put(JSONObject().put("id", e.id).put("format", e.format).put("mediaType", e.mediaType).put("originalFilename", e.originalFilename).put("contentUrl", e.contentUrl).put("byteLength", e.byteLength).put("sha256", e.sha256))
+                }
+            })
+        })
+    }
+}).toString()

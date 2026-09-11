@@ -1,0 +1,53 @@
+package dev.bookharbor.app.library
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class LibraryModelTest {
+    private fun edition(id: String, format: String) = Edition(id, format, "", "$id.$format", "/c/$id")
+    private val dune = Book("b1", "Dune", listOf(edition("e1", "epub")), authors = listOf("Frank Herbert"))
+    private val hail = Book("b2", "Project Hail Mary", listOf(edition("e2", "pdf"), edition("e3", "epub")), authors = listOf("Andy Weir"))
+    private val anon = Book("b3", "Anonymous Tales", listOf(edition("e4", "pdf")))
+    private val books = listOf(dune, hail, anon)
+    private fun show(query: String = "", filter: ShelfFilter = ShelfFilter.All, sort: BookSort = BookSort.Recent, progress: Map<String, Double> = emptyMap(), downloaded: Set<String> = emptySet()) =
+        visibleBooks(books, query, filter, sort, progress, downloaded).map { it.id }
+
+    @Test fun searchMatchesTitleAndAuthorIgnoringCase() {
+        assertEquals(listOf("b1"), show("HERB"))
+        assertEquals(listOf("b2"), show("hail mary"))
+        assertEquals(emptyList<String>(), show("zzz"))
+    }
+
+    @Test fun shelvesUseLocalProgressAndDownloads() {
+        val progress = mapOf("b1" to 0.4, "b2" to 0.99)
+        assertEquals(listOf("b1"), show(filter = ShelfFilter.Reading, progress = progress))
+        assertEquals(listOf("b2"), show(filter = ShelfFilter.Finished, progress = progress))
+        assertEquals(listOf("b3"), show(filter = ShelfFilter.Downloaded, downloaded = setOf("e4")))
+        assertEquals(3, show(filter = ShelfFilter.All).size)
+    }
+
+    @Test fun sortsByTitleAndAuthorWithUnknownAuthorsLast() {
+        assertEquals(listOf("b3", "b1", "b2"), show(sort = BookSort.Title))
+        assertEquals(listOf("b2", "b1", "b3"), show(sort = BookSort.Author))
+        assertEquals(listOf("b1", "b2", "b3"), show(sort = BookSort.Recent))
+    }
+
+    @Test fun opensADownloadedEditionFirstThenPrefersEpub() {
+        assertEquals("e3", preferredEdition(hail) { false }!!.id)
+        assertEquals("e2", preferredEdition(hail) { it.id == "e2" }!!.id)
+        assertEquals(null, preferredEdition(Book("x", "X", emptyList())) { true })
+    }
+
+    @Test fun catalogSurvivesTheOfflineCacheRoundTrip() {
+        val full = Book("b9", "Cached", listOf(edition("e9", "epub").copy(byteLength = 12, sha256 = "ab")), "Sub", listOf("A", "B"), "/api/v1/books/b9/cover", "2026-01-01T00:00:00Z")
+        val page = parseBookPage(encodeBooks(listOf(full)))
+        assertEquals(listOf(full), page.books)
+        assertEquals(null, page.nextCursor)
+    }
+
+    @Test fun initialsFromNames() {
+        assertEquals("HM", initialsOf("Harbor Master"))
+        assertEquals("M", initialsOf("mira"))
+        assertEquals("BH", initialsOf("   "))
+    }
+}

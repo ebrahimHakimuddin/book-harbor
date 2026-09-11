@@ -27,4 +27,7 @@ interface ProgressStore {
 
     /** Parks an event the server will never accept, so it stops blocking the queue. */
     fun reject(eventId: String, reason: String)
+
+    /** Forgets all local progress, the outbox, and the cursor (used when signing out). */
+    fun clear()
 }

@@ -17,7 +17,9 @@ import java.util.UUID
 /** Application-wide singletons, shared by the UI and the background sync worker. */
 class AppGraph private constructor(context: Context) {
     private val app = context.applicationContext
-    private val prefs = app.getSharedPreferences("bookharbor", Context.MODE_PRIVATE)
+    val context: Context get() = app
+    val prefs = app.getSharedPreferences("bookharbor", Context.MODE_PRIVATE)
+    val cacheDir: File get() = app.cacheDir
 
     val session = SessionStore(prefs)
     val api = ApiClient(session)
