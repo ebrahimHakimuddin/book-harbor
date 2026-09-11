@@ -45,7 +45,7 @@ func TestImportEPUBAndReadLibrary(t *testing.T) {
 		t.Fatalf("edition integrity = %s/%d", edition.SHA256, edition.ByteLength)
 	}
 
-	books, err := store.List(context.Background(), 50)
+	books, _, err := store.List(context.Background(), 50, "")
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}

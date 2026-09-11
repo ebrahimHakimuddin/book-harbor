@@ -77,6 +77,23 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string) error {
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate editions: %w", err)
 	}
+	covers, err := db.QueryContext(ctx, `SELECT id FROM books WHERE cover_url = '/api/v1/books/' || id || '/cover'`)
+	if err != nil {
+		return fmt.Errorf("list covers: %w", err)
+	}
+	defer covers.Close()
+	for covers.Next() {
+		var bookID string
+		if err := covers.Scan(&bookID); err != nil {
+			return fmt.Errorf("scan cover: %w", err)
+		}
+		if err := addFile(archive, "covers/"+bookID, filepath.Join(dataDir, "books", bookID, "cover"), zip.Store); err != nil {
+			return err
+		}
+	}
+	if err := covers.Err(); err != nil {
+		return fmt.Errorf("iterate covers: %w", err)
+	}
 	if err := addFile(archive, "bookharbor.db", snapshot, zip.Deflate); err != nil {
 		return err
 	}

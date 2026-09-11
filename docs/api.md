@@ -88,14 +88,32 @@ metadata database with sessions removed. Password hashes remain in the snapshot.
 ## Library
 
 ```text
-GET    /books?limit=
+GET    /books?limit=&cursor=
 GET    /books/{bookId}
 POST   /books                         administrator only
 PATCH  /books/{bookId}                administrator only
 DELETE /books/{bookId}                administrator only
-POST   /books/{bookId}/editions       planned; administrator only
+POST   /books/{bookId}/editions       administrator only
+GET    /books/{bookId}/cover
+PUT    /books/{bookId}/cover          administrator only
+DELETE /books/{bookId}/cover          administrator only
 GET    /editions/{editionId}/content
 ```
+
+`GET /books` returns up to `limit` books (default 50, maximum 100), newest
+first, plus `nextCursor` when more remain. Pass it back as `cursor` to fetch the
+next page; a malformed cursor returns `400 invalid_cursor`.
+
+`POST /books/{bookId}/editions` takes the same single-`file` multipart body as
+`POST /books` and adds an EPUB or PDF to an existing book. A book holds one
+edition per format; a second edition in the same format returns `409
+edition_exists`.
+
+`PUT /books/{bookId}/cover` takes a raw PNG, JPEG, or WebP body of at most
+2 MiB and sets the book's `coverUrl` to the server-relative
+`/api/v1/books/{bookId}/cover`. Clients resolve it against the server address
+and send their bearer token, so uploaded covers are never public. `DELETE`
+removes it. Covers from other sites keep their absolute `https` URL.
 
 `POST /books` accepts `multipart/form-data` with exactly one `file` part and an
 optional `title` field. The server validates the file contents rather than its

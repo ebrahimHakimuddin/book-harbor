@@ -108,6 +108,25 @@
                 <p>Removes the book, its files, and every reader's progress from this server. Downloaded copies on devices are not affected.</p>
                 <button id="delete-book" class="button danger-outline" type="button">Delete book</button>
               </div>
+              <div class="media-section">
+                <h3>Cover</h3>
+                <div class="media-row">
+                  <span id="editor-cover" class="book-cover" aria-hidden="true"></span>
+                  <div>
+                    <label>Upload an image<input id="cover-file" type="file" accept="image/png,image/jpeg,image/webp"></label>
+                    <p class="field-help">PNG, JPEG, or WebP up to 2 MiB.</p>
+                    <button id="remove-cover" class="text-button" type="button" hidden>Remove uploaded cover</button>
+                  </div>
+                </div>
+                <p class="form-error" data-error="cover" role="alert"></p>
+              </div>
+              <div class="media-section">
+                <h3>Formats</h3>
+                <ul id="edition-list" class="edition-list"></ul>
+                <label>Add another format<input id="edition-file" type="file" accept=".epub,.pdf,application/epub+zip,application/pdf"></label>
+                <p class="field-help">A book can have one EPUB and one PDF.</p>
+                <p class="form-error" data-error="edition" role="alert"></p>
+              </div>
               <div class="provider-search">
                 <h3>Find details on Hardcover</h3>
                 <p>Search results are suggestions. Review them before saving.</p>

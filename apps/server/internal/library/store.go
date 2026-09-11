@@ -112,6 +112,59 @@ func NewStore(db *sql.DB, dataDir string, maxBytes int64) (*Store, error) {
 	return &Store{db: db, dataDir: dataDir, maxBytes: maxBytes, now: time.Now}, nil
 }
 
+// stagedUpload is a validated upload waiting in the temporary directory.
+type stagedUpload struct {
+	path           string
+	format         string
+	mediaType      string
+	extractedTitle string
+	checksum       string
+	size           int64
+}
+
+// stageUpload copies content to a private temporary file, enforcing the size
+// limit and checking the file really is an EPUB or PDF. The caller owns
+// (and must remove) the returned file.
+func (s *Store) stageUpload(content io.Reader) (stagedUpload, error) {
+	temporary, err := os.CreateTemp(filepath.Join(s.dataDir, "tmp"), "import-*")
+	if err != nil {
+		return stagedUpload{}, fmt.Errorf("create import file: %w", err)
+	}
+	staged := stagedUpload{path: temporary.Name()}
+	fail := func(err error) (stagedUpload, error) {
+		temporary.Close()
+		os.Remove(staged.path)
+		return stagedUpload{}, err
+	}
+	if err := temporary.Chmod(0o600); err != nil {
+		return fail(fmt.Errorf("secure import file: %w", err))
+	}
+	digest := sha256.New()
+	written, err := io.Copy(io.MultiWriter(temporary, digest), io.LimitReader(content, s.maxBytes+1))
+	if err != nil {
+		return fail(fmt.Errorf("copy uploaded book: %w", err))
+	}
+	if written > s.maxBytes {
+		return fail(ErrTooLarge)
+	}
+	if written == 0 {
+		return fail(ErrInvalidBook)
+	}
+	if err := temporary.Sync(); err != nil {
+		return fail(fmt.Errorf("sync uploaded book: %w", err))
+	}
+	staged.size = written
+	staged.checksum = hex.EncodeToString(digest.Sum(nil))
+	if staged.format, staged.mediaType, staged.extractedTitle, err = inspectBook(temporary, written); err != nil {
+		return fail(err)
+	}
+	if err := temporary.Close(); err != nil {
+		os.Remove(staged.path)
+		return stagedUpload{}, fmt.Errorf("close uploaded book: %w", err)
+	}
+	return staged, nil
+}
+
 func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	filename, err := normalizeFilename(input.Filename)
 	if err != nil {
@@ -120,55 +173,21 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	if strings.TrimSpace(input.CreatedBy) == "" {
 		return Book{}, fmt.Errorf("created-by user is required")
 	}
-
-	temporary, err := os.CreateTemp(filepath.Join(s.dataDir, "tmp"), "import-*")
+	staged, err := s.stageUpload(input.Content)
 	if err != nil {
-		return Book{}, fmt.Errorf("create import file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
-		return Book{}, fmt.Errorf("secure import file: %w", err)
-	}
-
-	digest := sha256.New()
-	written, err := io.Copy(io.MultiWriter(temporary, digest), io.LimitReader(input.Content, s.maxBytes+1))
-	if err != nil {
-		temporary.Close()
-		return Book{}, fmt.Errorf("copy uploaded book: %w", err)
-	}
-	if written > s.maxBytes {
-		temporary.Close()
-		return Book{}, ErrTooLarge
-	}
-	if written == 0 {
-		temporary.Close()
-		return Book{}, ErrInvalidBook
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return Book{}, fmt.Errorf("sync uploaded book: %w", err)
-	}
-
-	format, mediaType, extractedTitle, err := inspectBook(temporary, written)
-	if err != nil {
-		temporary.Close()
 		return Book{}, err
 	}
+	temporaryPath, format, mediaType, written := staged.path, staged.format, staged.mediaType, staged.size
+	defer os.Remove(temporaryPath)
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
-		title = strings.TrimSpace(extractedTitle)
+		title = strings.TrimSpace(staged.extractedTitle)
 	}
 	if title == "" {
 		title = titleFromFilename(filename)
 	}
 	if !validTitle(title) {
-		temporary.Close()
 		return Book{}, ErrInvalidTitle
-	}
-	if err := temporary.Close(); err != nil {
-		return Book{}, fmt.Errorf("close uploaded book: %w", err)
 	}
 
 	bookID, err := newID("book_")
@@ -204,7 +223,7 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	`, bookID, title, input.CreatedBy, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return Book{}, fmt.Errorf("create book: %w", err)
 	}
-	checksum := hex.EncodeToString(digest.Sum(nil))
+	checksum := staged.checksum
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO editions (
 			id, book_id, format, media_type, original_filename,
@@ -245,41 +264,57 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	}, nil
 }
 
-func (s *Store) List(ctx context.Context, limit int) ([]Book, error) {
+// List returns books newest first. Pass the returned next cursor to fetch the
+// following page; next is empty when there are no more books.
+func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Book, next string, err error) {
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	query := `
 		SELECT id, title, subtitle, description, authors_json, cover_url,
 			metadata_provider, metadata_provider_id, created_by, created_at, updated_at
-		FROM books
-		ORDER BY created_at DESC, id DESC
-		LIMIT ?
-	`, limit)
+		FROM books`
+	args := []any{}
+	if cursor != "" {
+		createdAt, id, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += ` WHERE created_at < ? OR (created_at = ? AND id < ?)`
+		args = append(args, createdAt, createdAt, id)
+	}
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list books: %w", err)
+		return nil, "", fmt.Errorf("list books: %w", err)
 	}
 	defer rows.Close()
 
-	books := make([]Book, 0)
+	books = make([]Book, 0)
 	for rows.Next() {
 		book, err := scanBook(rows)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		books = append(books, book)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate books: %w", err)
+		return nil, "", fmt.Errorf("iterate books: %w", err)
+	}
+	if len(books) > limit {
+		books = books[:limit]
+		last := books[limit-1]
+		next = encodeCursor(last.CreatedAt.Format(time.RFC3339Nano), last.ID)
 	}
 	for index := range books {
 		editions, err := s.listEditions(ctx, books[index].ID)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		books[index].Editions = editions
 	}
-	return books, nil
+	return books, next, nil
 }
 
 func (s *Store) Get(ctx context.Context, bookID string) (Book, error) {
@@ -673,24 +708,6 @@ func (s *Store) Delete(ctx context.Context, bookID string) (Book, error) {
 	if err != nil {
 		return Book{}, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT storage_path FROM editions WHERE book_id = ?`, bookID)
-	if err != nil {
-		return Book{}, fmt.Errorf("list edition files: %w", err)
-	}
-	var paths []string
-	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
-			rows.Close()
-			return Book{}, fmt.Errorf("scan edition file: %w", err)
-		}
-		paths = append(paths, path)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return Book{}, fmt.Errorf("iterate edition files: %w", err)
-	}
-	rows.Close()
 	result, err := s.db.ExecContext(ctx, `DELETE FROM books WHERE id = ?`, bookID)
 	if err != nil {
 		return Book{}, fmt.Errorf("delete book: %w", err)
@@ -698,18 +715,9 @@ func (s *Store) Delete(ctx context.Context, bookID string) (Book, error) {
 	if n, _ := result.RowsAffected(); n == 0 {
 		return Book{}, ErrNotFound
 	}
-	var removeErr error
-	for _, path := range paths {
-		clean := filepath.Clean(path)
-		if filepath.IsAbs(clean) || !strings.HasPrefix(clean, "books"+string(filepath.Separator)) {
-			continue
-		}
-		if err := os.Remove(filepath.Join(s.dataDir, clean)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			removeErr = errors.Join(removeErr, err)
-		}
-	}
-	if removeErr != nil {
-		return book, fmt.Errorf("book deleted but files remain: %w", removeErr)
+	// Every file for a book lives in books/<id>/, including its cover.
+	if err := os.RemoveAll(filepath.Join(s.dataDir, "books", bookID)); err != nil {
+		return book, fmt.Errorf("book deleted but files remain: %w", err)
 	}
 	return book, nil
 }

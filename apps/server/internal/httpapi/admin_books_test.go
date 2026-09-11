@@ -96,3 +96,75 @@ func TestAdminExportContainsBooksAndScrubbedDatabase(t *testing.T) {
 		t.Fatalf("manifest = %#v, err = %v", manifest, err)
 	}
 }
+
+func TestHTTPCoverEditionAndPagination(t *testing.T) {
+	handler := testHandler(t)
+	bootstrapAdministrator(t, handler)
+	admin := login(t, handler, "admin@example.com", "a secure first password")
+	first := uploadProgressTestBook(t, handler, admin.AccessToken)
+	uploadProgressTestBook(t, handler, admin.AccessToken)
+
+	// Pagination: one book per page, then the cursor runs out.
+	page := adminCall(t, handler, admin.AccessToken, http.MethodGet, "/api/v1/books?limit=1", "")
+	var listed struct {
+		Items      []bookResponse `json:"items"`
+		NextCursor string         `json:"nextCursor"`
+	}
+	json.NewDecoder(page.Body).Decode(&listed)
+	if len(listed.Items) != 1 || listed.NextCursor == "" {
+		t.Fatalf("first page = %#v", listed)
+	}
+	page = adminCall(t, handler, admin.AccessToken, http.MethodGet, "/api/v1/books?limit=1&cursor="+listed.NextCursor, "")
+	var second struct {
+		Items      []bookResponse `json:"items"`
+		NextCursor string         `json:"nextCursor"`
+	}
+	json.NewDecoder(page.Body).Decode(&second)
+	if len(second.Items) != 1 || second.Items[0].ID == listed.Items[0].ID || second.NextCursor != "" {
+		t.Fatalf("second page = %#v", second)
+	}
+	if r := adminCall(t, handler, admin.AccessToken, http.MethodGet, "/api/v1/books?cursor=%25%25", ""); r.Code != http.StatusBadRequest {
+		t.Fatalf("bad cursor status = %d", r.Code)
+	}
+
+	// Cover: PNG accepted, HTML rejected, readable only when signed in.
+	coverPath := "/api/v1/books/" + first.ID + "/cover"
+	if r := adminCall(t, handler, admin.AccessToken, http.MethodPut, coverPath, "<html>"); r.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("bad cover status = %d", r.Code)
+	}
+	if r := adminCall(t, handler, admin.AccessToken, http.MethodPut, coverPath, string(testPNG)); r.Code != http.StatusOK {
+		t.Fatalf("cover status = %d; %s", r.Code, r.Body)
+	}
+	got := adminCall(t, handler, admin.AccessToken, http.MethodGet, coverPath, "")
+	if got.Code != http.StatusOK || !bytes.Equal(got.Body.Bytes(), testPNG) || got.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("cover download = %d %q", got.Code, got.Header().Get("Content-Type"))
+	}
+	if r := httptest.NewRecorder(); true {
+		handler.ServeHTTP(r, httptest.NewRequest(http.MethodGet, coverPath, nil))
+		if r.Code != http.StatusUnauthorized {
+			t.Fatalf("anonymous cover status = %d", r.Code)
+		}
+	}
+
+	// Second edition: an EPUB joins the PDF; a second PDF conflicts.
+	epubBody, contentType := multipartBook(t, "file", "b.epub", "", []byte("not an epub"))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/books/"+first.ID+"/editions", epubBody)
+	request.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	request.Header.Set("Content-Type", contentType)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("invalid edition status = %d; %s", response.Code, response.Body)
+	}
+	pdfBody, contentType := multipartBook(t, "file", "again.pdf", "", testPDF)
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/books/"+first.ID+"/editions", pdfBody)
+	request.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	request.Header.Set("Content-Type", contentType)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("duplicate edition status = %d; %s", response.Code, response.Body)
+	}
+}
+
+var testPNG = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x00IEND\xaeB`\x82")

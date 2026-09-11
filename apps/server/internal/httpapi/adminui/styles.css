@@ -160,6 +160,15 @@ main { min-width: 0; padding: clamp(28px, 5vw, 64px); }
 .library-tools { display: flex; align-items: center; gap: 18px; margin: 20px 0 12px; }
 .library-tools input { max-width: 360px; }
 .library-tools .status-line { margin: 0; white-space: nowrap; }
+.media-section { margin-top: 30px; border-top: 1px solid var(--line); padding-top: 24px; }
+.media-section h3 { margin: 0 0 14px; color: var(--navy); font-size: 1rem; }
+.media-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 16px; align-items: start; }
+.media-row .field-help { margin: 6px 0 0; }
+.media-row .text-button { margin-top: 8px; color: var(--danger); }
+.edition-list { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
+.edition-list li { display: flex; align-items: baseline; gap: 12px; border-radius: 10px; background: var(--soft); padding: 9px 12px; }
+.edition-list strong { color: var(--teal-dark); font-size: .74rem; letter-spacing: .04em; }
+.edition-list span { overflow: hidden; color: var(--muted); font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
 .danger-zone { margin-top: 30px; border-top: 1px solid var(--line); padding-top: 24px; }
 .danger-zone h3 { margin: 0; color: var(--navy); font-size: 1rem; }
 .danger-zone p { margin: 5px 0 14px; color: var(--muted); font-size: .88rem; }

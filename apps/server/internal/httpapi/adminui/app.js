@@ -53,6 +53,9 @@ function bindEvents() {
   $("#close-editor").addEventListener("click", closeEditor);
   $("#reader-form").addEventListener("submit", createReader);
   $("#book-search").addEventListener("input", renderBooks);
+  $("#cover-file").addEventListener("change", uploadCover);
+  $("#remove-cover").addEventListener("click", removeCover);
+  $("#edition-file").addEventListener("change", addEdition);
   $("#delete-book").addEventListener("click", deleteBook);
   $("#export-button").addEventListener("click", exportArchive);
   $("#refresh-activity").addEventListener("click", loadActivity);
@@ -140,8 +143,13 @@ function changeView(name) {
 async function loadBooks() {
   $("#library-status").textContent = "Loading library...";
   try {
-    const response = await request("/api/v1/books?limit=100");
-    state.books = response.items;
+    let books = [], cursor = "";
+    do {
+      const page = await request(`/api/v1/books?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+      books = books.concat(page.items);
+      cursor = page.nextCursor || "";
+    } while (cursor);
+    state.books = books;
     renderBooks();
   } catch (error) {
     $("#library-status").textContent = readableError(error, "The library could not be loaded.");
@@ -170,11 +178,7 @@ function renderBooks() {
     button.addEventListener("click", () => openEditor(book));
     const cover = node("span", "book-cover");
     if (book.coverUrl) {
-      const image = document.createElement("img");
-      image.src = book.coverUrl;
-      image.alt = "";
-      image.loading = "lazy";
-      cover.append(image);
+      cover.append(coverImage(book.coverUrl));
     } else {
       cover.textContent = initials(book.title);
     }
@@ -202,9 +206,87 @@ function openEditor(book) {
   $("#hardcover-results").replaceChildren();
   setError("metadata", "");
   setError("hardcover", "");
+  renderMedia(book);
   $("#book-editor").hidden = false;
   renderBooks();
   if (window.innerWidth < 981) $("#book-editor").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Covers uploaded to this server need the session token, so they load through
+// fetch and show as blob URLs. Covers from other sites load directly.
+const coverCache = new Map();
+function coverImage(url) {
+  const image = document.createElement("img");
+  image.alt = "";
+  if (!url.startsWith("/")) { image.src = url; image.loading = "lazy"; return image; }
+  if (!coverCache.has(url)) {
+    coverCache.set(url, request(url, { raw: true }).then((response) => response.blob()).then((blob) => URL.createObjectURL(blob)).catch(() => { coverCache.delete(url); return ""; }));
+  }
+  coverCache.get(url).then((objectUrl) => { if (objectUrl) image.src = objectUrl; });
+  return image;
+}
+
+function renderMedia(book) {
+  const cover = $("#editor-cover");
+  cover.replaceChildren(book.coverUrl ? coverImage(book.coverUrl) : document.createTextNode(initials(book.title)));
+  $("#remove-cover").hidden = !(book.coverUrl || "").startsWith("/");
+  setError("cover", "");
+  setError("edition", "");
+  const list = $("#edition-list");
+  list.replaceChildren();
+  const size = (bytes) => bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  book.editions.forEach((edition) => {
+    const item = document.createElement("li");
+    item.append(textNode("strong", edition.format.toUpperCase()), textNode("span", `${edition.originalFilename} · ${size(edition.byteLength)}`));
+    list.append(item);
+  });
+}
+
+function replaceBook(book) {
+  state.books = state.books.map((item) => item.id === book.id ? book : item);
+  coverCache.delete(`/api/v1/books/${book.id}/cover`);
+  state.selectedBook = book;
+  renderMedia(book);
+  renderBooks();
+}
+
+async function uploadCover(event) {
+  const input = event.currentTarget;
+  const file = input.files[0];
+  if (!file || !state.selectedBook) return;
+  setError("cover", "");
+  try {
+    replaceBook(await request(`/api/v1/books/${state.selectedBook.id}/cover`, { method: "PUT", body: file, headers: { "Content-Type": file.type } }));
+    $("#metadata-form").elements.coverUrl.value = state.selectedBook.coverUrl;
+    showToast("Cover updated.");
+  } catch (error) {
+    setError("cover", readableError(error, "The cover could not be uploaded."));
+  } finally { input.value = ""; }
+}
+
+async function removeCover() {
+  try {
+    replaceBook(await request(`/api/v1/books/${state.selectedBook.id}/cover`, { method: "DELETE" }));
+    $("#metadata-form").elements.coverUrl.value = "";
+    showToast("Cover removed.");
+  } catch (error) {
+    setError("cover", readableError(error, "The cover could not be removed."));
+  }
+}
+
+async function addEdition(event) {
+  const input = event.currentTarget;
+  const file = input.files[0];
+  if (!file || !state.selectedBook) return;
+  setError("edition", "");
+  const data = new FormData();
+  data.append("file", file);
+  try {
+    replaceBook(await request(`/api/v1/books/${state.selectedBook.id}/editions`, { method: "POST", body: data }));
+    showToast(`${file.name} was added.`);
+  } catch (error) {
+    setError("edition", readableError(error, "The file could not be added."));
+  } finally { input.value = ""; }
 }
 
 function closeEditor() {
@@ -252,13 +334,14 @@ async function exportArchive(event) {
 async function uploadBook(event) {
   event.preventDefault();
   setError("upload", "");
+  const form = event.currentTarget; // currentTarget is null after the first await
   await withButton(event.submitter, "Importing...", async () => {
-    const data = new FormData(event.currentTarget);
+    const data = new FormData(form);
     if (!data.get("title")) data.delete("title");
     try {
       const book = await request("/api/v1/books", { method: "POST", body: data });
-      event.currentTarget.reset();
-      event.currentTarget.hidden = true;
+      form.reset();
+      form.hidden = true;
       state.books.unshift(book);
       renderBooks();
       openEditor(book);
@@ -503,10 +586,11 @@ const ACTIONS = {
 async function createReader(event) {
   event.preventDefault();
   setError("reader", "");
+  const form = event.currentTarget;
   await withButton(event.submitter, "Creating...", async () => {
     try {
-      const reader = await request("/api/v1/admin/users", { method: "POST", body: formObject(event.currentTarget) });
-      event.currentTarget.reset();
+      const reader = await request("/api/v1/admin/users", { method: "POST", body: formObject(form) });
+      form.reset();
       state.readers.push(reader);
       renderReaders();
       showToast(`${reader.displayName} can now sign in.`);
@@ -521,7 +605,7 @@ async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
   const useAuth = options.auth !== false;
   let body = options.body;
-  if (body && !(body instanceof FormData)) {
+  if (body && !(body instanceof FormData) && !(body instanceof Blob)) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
   }
@@ -534,6 +618,7 @@ async function request(path, options = {}) {
     }
   }
   if (response.status === 204) return null;
+  if (options.raw && response.ok) return response;
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new APIError(response.status, payload.code, payload.message || `Request failed with status ${response.status}.`);
   return payload;

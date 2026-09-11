@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -65,6 +66,10 @@ func (s *server) books(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) book(w http.ResponseWriter, r *http.Request) {
+	if id, sub, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/books/"), "/"); ok {
+		s.bookSubresource(w, r, id, sub)
+		return
+	}
 	switch r.Method {
 	case http.MethodPatch:
 		s.patchBook(w, r)
@@ -201,7 +206,11 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
-	books, err := s.library.List(r.Context(), limit)
+	books, next, err := s.library.List(r.Context(), limit, r.URL.Query().Get("cursor"))
+	if errors.Is(err, library.ErrInvalidCursor) {
+		writeError(w, http.StatusBadRequest, "invalid_cursor", "cursor is not valid")
+		return
+	}
 	if err != nil {
 		s.logger.Error("list books", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to list books")
@@ -212,11 +221,15 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 		items = append(items, newBookResponse(book))
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Items []bookResponse `json:"items"`
-	}{Items: items})
+		Items      []bookResponse `json:"items"`
+		NextCursor string         `json:"nextCursor,omitempty"`
+	}{Items: items, NextCursor: next})
 }
 
-func (s *server) importBook(w http.ResponseWriter, r *http.Request, createdBy string) {
+// parseBookUpload reads a multipart body holding exactly one "file" part and,
+// when allowTitle is set, an optional "title". It writes the error response
+// itself and reports whether the caller may continue.
+func (s *server) parseBookUpload(w http.ResponseWriter, r *http.Request, allowTitle bool) (file multipart.File, filename, title string, ok bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.config.MaxUploadBytes+multipartOverheadAllowance)
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		var maxBytesError *http.MaxBytesError
@@ -227,10 +240,8 @@ func (s *server) importBook(w http.ResponseWriter, r *http.Request, createdBy st
 		writeError(w, http.StatusBadRequest, "invalid_multipart", "request must contain one multipart book file")
 		return
 	}
-	defer r.MultipartForm.RemoveAll()
-
 	for key := range r.MultipartForm.Value {
-		if key != "title" {
+		if key != "title" || !allowTitle {
 			writeError(w, http.StatusBadRequest, "invalid_multipart", "unexpected multipart field")
 			return
 		}
@@ -246,7 +257,6 @@ func (s *server) importBook(w http.ResponseWriter, r *http.Request, createdBy st
 		writeError(w, http.StatusBadRequest, "invalid_multipart", "title must be provided at most once")
 		return
 	}
-	var title string
 	if len(titles) == 1 {
 		title = titles[0]
 	}
@@ -260,11 +270,20 @@ func (s *server) importBook(w http.ResponseWriter, r *http.Request, createdBy st
 		writeError(w, http.StatusBadRequest, "invalid_multipart", "unable to read uploaded book")
 		return
 	}
+	return file, files[0].Filename, title, true
+}
+
+func (s *server) importBook(w http.ResponseWriter, r *http.Request, createdBy string) {
+	file, filename, title, ok := s.parseBookUpload(w, r, true)
+	if !ok {
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
 	defer file.Close()
 
 	book, err := s.library.Import(r.Context(), library.ImportInput{
 		Title:     title,
-		Filename:  files[0].Filename,
+		Filename:  filename,
 		Content:   file,
 		CreatedBy: createdBy,
 	})
@@ -360,5 +379,106 @@ func (s *server) exportArchive(w http.ResponseWriter, r *http.Request) {
 	if err := s.library.WriteExport(r.Context(), w); err != nil {
 		// Headers are already sent; the truncated archive fails to open, which is the signal.
 		s.logger.Error("write export", "error", err)
+	}
+}
+
+// bookSubresource routes /books/{id}/cover and /books/{id}/editions.
+func (s *server) bookSubresource(w http.ResponseWriter, r *http.Request, id, sub string) {
+	if id == "" {
+		notFound(w, r)
+		return
+	}
+	switch {
+	case sub == "cover" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+		s.serveCover(w, r, id)
+	case sub == "cover" && r.Method == http.MethodPut:
+		s.requireAdmin(func(w http.ResponseWriter, r *http.Request) { s.putCover(w, r, id) }).ServeHTTP(w, r)
+	case sub == "cover" && r.Method == http.MethodDelete:
+		s.requireAdmin(func(w http.ResponseWriter, r *http.Request) { s.deleteCover(w, r, id) }).ServeHTTP(w, r)
+	case sub == "cover":
+		writeMethodNotAllowed(w, "GET, HEAD, PUT, DELETE")
+	case sub == "editions" && r.Method == http.MethodPost:
+		s.requireAdmin(func(w http.ResponseWriter, r *http.Request) { s.addEdition(w, r, id) }).ServeHTTP(w, r)
+	case sub == "editions":
+		writeMethodNotAllowed(w, "POST")
+	default:
+		notFound(w, r)
+	}
+}
+
+func (s *server) serveCover(w http.ResponseWriter, r *http.Request, bookID string) {
+	file, info, err := s.library.OpenCover(r.Context(), bookID)
+	if errors.Is(err, library.ErrNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		s.logger.Error("open cover", "error", err, "bookId", bookID)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to open cover")
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, "", info.ModTime(), file)
+}
+
+func (s *server) putCover(w http.ResponseWriter, r *http.Request, bookID string) {
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20+1)
+	book, err := s.library.SetCover(r.Context(), bookID, r.Body)
+	switch {
+	case errors.Is(err, library.ErrNotFound):
+		notFound(w, r)
+	case errors.Is(err, library.ErrInvalidCover):
+		writeError(w, http.StatusUnsupportedMediaType, "invalid_cover", "cover must be a PNG, JPEG, or WebP image")
+	case errors.Is(err, library.ErrCoverTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "cover_too_large", "cover must be 2 MiB or smaller")
+	case err != nil:
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge, "cover_too_large", "cover must be 2 MiB or smaller")
+			return
+		}
+		s.logger.Error("set cover", "error", err, "bookId", bookID)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to save cover")
+	default:
+		s.record(r, "book.update", "book", book.ID, book.Title+": cover uploaded")
+		writeJSON(w, http.StatusOK, newBookResponse(book))
+	}
+}
+
+func (s *server) deleteCover(w http.ResponseWriter, r *http.Request, bookID string) {
+	book, err := s.library.RemoveCover(r.Context(), bookID)
+	if errors.Is(err, library.ErrNotFound) {
+		notFound(w, r)
+		return
+	}
+	if err != nil {
+		s.logger.Error("remove cover", "error", err, "bookId", bookID)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to remove cover")
+		return
+	}
+	s.record(r, "book.update", "book", book.ID, book.Title+": cover removed")
+	writeJSON(w, http.StatusOK, newBookResponse(book))
+}
+
+func (s *server) addEdition(w http.ResponseWriter, r *http.Request, bookID string) {
+	file, filename, _, ok := s.parseBookUpload(w, r, false)
+	if !ok {
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+	defer file.Close()
+	book, err := s.library.AddEdition(r.Context(), bookID, filename, file)
+	switch {
+	case errors.Is(err, library.ErrNotFound):
+		notFound(w, r)
+	case errors.Is(err, library.ErrEditionExists):
+		writeError(w, http.StatusConflict, "edition_exists", "this book already has an edition in that format")
+	case err != nil:
+		s.writeImportError(w, err)
+	default:
+		s.record(r, "book.update", "book", book.ID, book.Title+": edition added")
+		writeJSON(w, http.StatusCreated, newBookResponse(book))
 	}
 }
