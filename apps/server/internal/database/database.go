@@ -91,6 +91,17 @@ var migrations = []string{
 	ALTER TABLE books ADD COLUMN cover_url TEXT NOT NULL DEFAULT '';
 	ALTER TABLE books ADD COLUMN metadata_provider TEXT NOT NULL DEFAULT '';
 	ALTER TABLE books ADD COLUMN metadata_provider_id TEXT NOT NULL DEFAULT '';`,
+	`ALTER TABLE users ADD COLUMN disabled_at TEXT;
+	CREATE TABLE audit_log (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		actor_id TEXT NOT NULL,
+		actor_email TEXT NOT NULL,
+		action TEXT NOT NULL,
+		target_type TEXT NOT NULL,
+		target_id TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	) STRICT;`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
@@ -204,6 +205,7 @@ func testHandlerWithMetadata(t *testing.T, metadataProvider metadata.Provider) (
 		config.Config{Addr: ":0", DataDir: "testdata", Name: "Test Harbor", MaxUploadBytes: 2 << 20},
 		BuildInfo{Version: "test", Commit: "abc123"},
 		identity.NewStore(db),
+		audit.NewStore(db),
 		bookLibrary,
 		reading.NewStore(db),
 		metadataProvider,

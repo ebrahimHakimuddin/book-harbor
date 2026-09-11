@@ -57,10 +57,10 @@ func (s *Store) CreateSession(ctx context.Context, email, password string) (Sess
 	var user User
 	var passwordHash, createdAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, email, display_name, role, created_at, password_hash
+		SELECT id, email, display_name, role, created_at, password_hash, disabled_at IS NOT NULL
 		FROM users
 		WHERE email = ?
-	`, email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &createdAt, &passwordHash)
+	`, email).Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &createdAt, &passwordHash, &user.Disabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		consumePasswordWork(password)
 		return SessionResult{}, ErrInvalidCredentials
@@ -73,7 +73,7 @@ func (s *Store) CreateSession(ctx context.Context, email, password string) (Sess
 	if err != nil {
 		return SessionResult{}, fmt.Errorf("verify stored password: %w", err)
 	}
-	if !valid {
+	if !valid || user.Disabled {
 		return SessionResult{}, ErrInvalidCredentials
 	}
 	user.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)

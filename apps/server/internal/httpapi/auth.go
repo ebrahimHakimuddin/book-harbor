@@ -17,6 +17,7 @@ type userResponse struct {
 	DisplayName string    `json:"displayName"`
 	Email       string    `json:"email"`
 	Role        string    `json:"role"`
+	Disabled    bool      `json:"disabled"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
@@ -130,6 +131,7 @@ func (s *server) adminUsers(w http.ResponseWriter, r *http.Request) {
 			s.writeCreateReaderError(w, err)
 			return
 		}
+		s.record(r, "user.create", "user", user.ID, user.Email)
 		writeJSON(w, http.StatusCreated, newUserResponse(user))
 	default:
 		writeMethodNotAllowed(w, "GET, POST")
@@ -226,6 +228,7 @@ func newUserResponse(user identity.User) userResponse {
 		DisplayName: user.DisplayName,
 		Email:       user.Email,
 		Role:        user.Role,
+		Disabled:    user.Disabled,
 		CreatedAt:   user.CreatedAt,
 	}
 }

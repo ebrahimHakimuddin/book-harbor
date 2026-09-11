@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
@@ -26,18 +27,19 @@ type server struct {
 	config   config.Config
 	build    BuildInfo
 	users    *identity.Store
+	audit    *audit.Store
 	library  *library.Store
 	metadata metadata.Provider
 	reading  *reading.Store
 	logger   *slog.Logger
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, bookLibrary *library.Store, readingProgress *reading.Store, metadataProvider metadata.Provider, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, metadataProvider metadata.Provider, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, logger: logger}
+	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", adminUI())
 	mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusPermanentRedirect))
@@ -49,6 +51,8 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, bookLibrary 
 	mux.Handle("/api/v1/sessions/current", requireMethod(http.MethodDelete, s.requireAuthentication(s.deleteCurrentSession)))
 	mux.Handle("/api/v1/me", requireMethod(http.MethodGet, s.requireAuthentication(s.me)))
 	mux.Handle("/api/v1/admin/users", s.requireAuthentication(s.adminUsers))
+	mux.Handle("/api/v1/admin/users/", s.requireAdmin(s.adminUser))
+	mux.Handle("/api/v1/admin/audit", requireMethod(http.MethodGet, s.requireAdmin(s.auditLog)))
 	mux.Handle("/api/v1/admin/metadata/search", requireMethod(http.MethodGet, s.requireAuthentication(s.searchMetadata)))
 	mux.Handle("/api/v1/books", s.requireAuthentication(s.books))
 	mux.Handle("/api/v1/books/", s.requireAuthentication(s.book))

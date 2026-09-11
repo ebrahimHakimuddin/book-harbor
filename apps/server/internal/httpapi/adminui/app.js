@@ -3,6 +3,7 @@ const state = {
   session: readSession(),
   books: [],
   readers: [],
+  me: null,
   selectedBook: null,
 };
 
@@ -23,7 +24,7 @@ async function start() {
     }
     if (state.session) {
       try {
-        const user = await request("/api/v1/me");
+        const user = state.me = await request("/api/v1/me");
         if (user.role !== "admin") throw new APIError(403, "forbidden", "Administrator access is required.");
         await openConsole();
         return;
@@ -51,6 +52,8 @@ function bindEvents() {
   $("#hardcover-form").addEventListener("submit", searchHardcover);
   $("#close-editor").addEventListener("click", closeEditor);
   $("#reader-form").addEventListener("submit", createReader);
+  $("#refresh-activity").addEventListener("click", loadActivity);
+  $$("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
 }
 
 function showLogin() {
@@ -74,6 +77,7 @@ function showBootstrap() {
 async function openConsole() {
   $("#entry").hidden = true;
   $("#console").hidden = false;
+  $("#account-avatar").textContent = initials(state.me?.displayName);
   await Promise.all([loadBooks(), loadReaders()]);
 }
 
@@ -88,6 +92,7 @@ async function login(event) {
         clearSession();
         throw new APIError(403, "forbidden", "This console is available to administrators only.");
       }
+      state.me = state.session.user;
       saveSession();
       await openConsole();
     } catch (error) {
@@ -123,6 +128,8 @@ function changeView(name) {
   $$(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === name));
   $("#library-view").hidden = name !== "library";
   $("#readers-view").hidden = name !== "readers";
+  $("#activity-view").hidden = name !== "activity";
+  if (name === "activity") loadActivity();
   $("#main").focus();
 }
 
@@ -318,20 +325,133 @@ function renderReaders() {
   list.replaceChildren();
   $("#reader-status").textContent = state.readers.length === 1 ? "1 account" : `${state.readers.length} accounts`;
   state.readers.forEach((reader) => {
-    const row = node("div", "reader-row");
+    const isSelf = reader.id === state.me?.id;
+    const row = node("div", "reader-row" + (reader.disabled ? " disabled" : ""));
     const avatar = textNode("span", initials(reader.displayName), "reader-avatar");
-    const identity = document.createElement("div");
-    identity.append(textNode("strong", reader.displayName), textNode("span", reader.email));
+    const who = document.createElement("div");
+    who.append(textNode("strong", reader.displayName + (isSelf ? " (you)" : "")), textNode("span", reader.email));
     const meta = document.createElement("div");
-    meta.append(textNode("span", reader.role, "role"));
+    meta.className = "reader-meta";
+    meta.append(textNode("span", reader.disabled ? `${reader.role} · disabled` : reader.role, "role"));
     const time = document.createElement("time");
     time.dateTime = reader.createdAt;
-    time.textContent = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(reader.createdAt));
+    time.textContent = "Joined " + new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(reader.createdAt));
     meta.append(time);
-    row.append(avatar, identity, meta);
+    const actions = node("div", "row-actions");
+    const label = (verb) => `${verb} ${reader.displayName}`;
+    const add = (text, handler, className = "text-button") => {
+      const button = textNode("button", text, className);
+      button.type = "button";
+      button.setAttribute("aria-label", label(text));
+      button.addEventListener("click", handler);
+      actions.append(button);
+    };
+    add("Reset password", () => askPassword(reader));
+    if (!isSelf) {
+      add(reader.role === "admin" ? "Make reader" : "Make admin", () => changeRole(reader));
+      add(reader.disabled ? "Enable" : "Disable", () => toggleDisabled(reader));
+      add("Remove", () => removeReader(reader), "text-button danger-text");
+    }
+    row.append(avatar, who, meta, actions);
     list.append(row);
   });
 }
+
+async function patchReader(reader, body, message) {
+  try {
+    const updated = await request(`/api/v1/admin/users/${reader.id}`, { method: "PATCH", body });
+    state.readers = state.readers.map((item) => item.id === updated.id ? updated : item);
+    renderReaders();
+    showToast(message);
+    return true;
+  } catch (error) {
+    showToast(readableError(error, "The change could not be saved."), true);
+    return false;
+  }
+}
+
+function changeRole(reader) {
+  const role = reader.role === "admin" ? "reader" : "admin";
+  return confirmAction(`Make ${reader.displayName} ${role === "admin" ? "an administrator" : "a reader"}?`,
+    role === "admin" ? "Administrators can manage books, accounts, and settings." : "They will lose access to administration.",
+    "Change role", () => patchReader(reader, { role }, `${reader.displayName} is now ${role === "admin" ? "an administrator" : "a reader"}.`));
+}
+
+function toggleDisabled(reader) {
+  const disabled = !reader.disabled;
+  const run = () => patchReader(reader, { disabled }, disabled ? `${reader.displayName} is disabled.` : `${reader.displayName} can sign in again.`);
+  if (!disabled) return run();
+  return confirmAction(`Disable ${reader.displayName}?`, "They are signed out everywhere and cannot sign in until you enable them again. Reading progress is kept.", "Disable", run);
+}
+
+function removeReader(reader) {
+  return confirmAction(`Remove ${reader.displayName}?`, "This deletes the account and its reading progress. Book files are not affected. This cannot be undone.", "Remove reader", async () => {
+    try {
+      await request(`/api/v1/admin/users/${reader.id}`, { method: "DELETE" });
+      state.readers = state.readers.filter((item) => item.id !== reader.id);
+      renderReaders();
+      showToast(`${reader.displayName} was removed.`);
+    } catch (error) {
+      showToast(readableError(error, "The reader could not be removed."), true);
+    }
+  });
+}
+
+function askPassword(reader) {
+  const dialog = $("#password-dialog");
+  const form = $("#password-form");
+  form.reset();
+  setError("password", "");
+  $("#password-help").textContent = `Set a new password for ${reader.displayName}. They will be signed out on every device.`;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    setError("password", "");
+    await withButton(event.submitter, "Saving...", async () => {
+      const ok = await patchReader(reader, { password: form.password.value }, `Password reset for ${reader.displayName}.`);
+      if (ok) dialog.close();
+      else setError("password", "The password could not be reset. Use 12 or more characters.");
+    });
+  };
+  dialog.showModal();
+}
+
+function confirmAction(title, body, acceptLabel, action) {
+  const dialog = $("#confirm-dialog");
+  $("#confirm-title").textContent = title;
+  $("#confirm-body").textContent = body;
+  $("#confirm-accept").textContent = acceptLabel;
+  dialog.onclose = () => { if (dialog.returnValue === "accept") action(); };
+  dialog.returnValue = "";
+  dialog.showModal();
+}
+
+async function loadActivity() {
+  $("#activity-status").textContent = "Loading activity...";
+  try {
+    const { items } = await request("/api/v1/admin/audit?limit=100");
+    const list = $("#activity-list");
+    list.replaceChildren();
+    $("#activity-status").textContent = items.length ? `${items.length} most recent` : "";
+    if (!items.length) { list.append(emptyState("Nothing yet.", "Account and book changes will appear here.")); return; }
+    const format = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+    items.forEach((entry) => {
+      const item = document.createElement("li");
+      const time = document.createElement("time");
+      time.dateTime = entry.createdAt;
+      time.textContent = format.format(new Date(entry.createdAt));
+      item.append(textNode("strong", ACTIONS[entry.action] || entry.action), textNode("span", entry.summary), textNode("span", `by ${entry.actorEmail}`, "by"), time);
+      list.append(item);
+    });
+  } catch (error) {
+    $("#activity-status").textContent = readableError(error, "Activity could not be loaded.");
+  }
+}
+
+const ACTIONS = {
+  "user.create": "Reader added", "user.update": "Account changed", "user.delete": "Account removed",
+  "book.import": "Book imported", "book.update": "Book edited", "book.delete": "Book deleted",
+  "export.create": "Export downloaded",
+};
 
 async function createReader(event) {
   event.preventDefault();

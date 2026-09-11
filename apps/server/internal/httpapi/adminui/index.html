@@ -6,6 +6,9 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#0f2d46">
   <title>BookHarbor administration</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="preload" href="assets/literata.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
 </head>
@@ -14,12 +17,13 @@
 
   <section id="entry" class="entry-shell" aria-labelledby="entry-title">
     <div class="entry-brand" aria-label="BookHarbor">
-      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <img class="brand-mark" src="assets/mark.png" alt="" width="56" height="60">
       <span>BookHarbor</span>
     </div>
     <div class="entry-copy">
-      <p class="entry-message">Your library has a home port.</p>
+      <p class="entry-message">Your library. Your harbor.</p>
       <p>Manage the people and books on this private BookHarbor server.</p>
+      <p class="entry-tagline">Your library. Your harbor. Every device.</p>
     </div>
     <div class="entry-panel">
       <h1 id="entry-title">Welcome aboard</h1>
@@ -44,10 +48,11 @@
   <div id="console" class="console" hidden>
     <header class="topbar">
       <a href="/admin/" class="wordmark" aria-label="BookHarbor administration home">
-        <span class="brand-mark small" aria-hidden="true"><i></i><i></i><i></i></span>
+        <img class="brand-mark small" src="assets/mark.png" alt="" width="30" height="32">
         <span>BookHarbor</span>
       </a>
       <div class="instance-chip"><span id="instance-name">BookHarbor</span><small>Self-hosted</small></div>
+      <span id="account-avatar" class="reader-avatar" aria-hidden="true"></span>
       <button id="sign-out" class="button quiet" type="button">Sign out</button>
     </header>
     <div class="app-frame">
@@ -55,9 +60,10 @@
         <p class="nav-label">Manage</p>
         <button class="nav-item active" data-view="library" type="button">Library</button>
         <button class="nav-item" data-view="readers" type="button">Readers</button>
+        <button class="nav-item" data-view="activity" type="button">Activity</button>
         <div class="harbor-note">
           <span class="wave-rule" aria-hidden="true"></span>
-          <p>Open books.<br>Brighter horizons.</p>
+          <p>A brighter tomorrow,<br>one book at a time.</p>
         </div>
       </nav>
 
@@ -118,9 +124,32 @@
             </form>
           </div>
         </section>
+        <section id="activity-view" class="view" hidden>
+          <div class="page-heading"><div><h1>Harbor log.</h1><p>A record of who changed accounts and books, and when.</p></div><button id="refresh-activity" class="button quiet" type="button">Refresh</button></div>
+          <div id="activity-status" class="status-line" role="status">Loading activity...</div>
+          <ol id="activity-list" class="activity-list"></ol>
+        </section>
       </main>
     </div>
   </div>
+
+  <dialog id="password-dialog" class="dialog" aria-labelledby="password-title">
+    <form method="dialog" id="password-form" class="form-stack">
+      <h2 id="password-title">Reset password</h2>
+      <p id="password-help"></p>
+      <label>New temporary password<input name="password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
+      <p class="field-help">Use at least 12 characters. Signing out their devices is automatic.</p>
+      <p class="form-error" data-error="password" role="alert"></p>
+      <div class="button-row"><button class="button primary" type="submit">Reset password</button><button class="button quiet" value="cancel" formnovalidate type="button" data-close-dialog>Cancel</button></div>
+    </form>
+  </dialog>
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-title">
+    <form method="dialog" class="form-stack">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p id="confirm-body"></p>
+      <div class="button-row"><button id="confirm-accept" class="button danger" value="accept">Confirm</button><button class="button quiet" value="cancel" formnovalidate>Cancel</button></div>
+    </form>
+  </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
