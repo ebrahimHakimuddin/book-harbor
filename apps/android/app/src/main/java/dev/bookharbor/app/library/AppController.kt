@@ -51,8 +51,18 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
 
     private val cache = CatalogCache(graph.prefs)
 
-    fun load() {
-        ui = LibraryUiState.Loading
+    /** True while a pull-to-refresh reload is running; the catalog stays on screen meanwhile. */
+    var refreshing by mutableStateOf(false)
+        private set
+
+    fun refresh() {
+        if (refreshing) return
+        refreshing = true
+        load(quiet = true)
+    }
+
+    fun load(quiet: Boolean = false) {
+        if (!quiet) ui = LibraryUiState.Loading
         scope.launch(Dispatchers.IO) {
             try {
                 val instance = graph.library.instance(graph.session.serverUrl)
@@ -73,6 +83,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                     else -> LibraryUiState.Error(error.message?.takeIf { it.isNotBlank() } ?: "Unable to connect", if (graph.session.serverUrl.isBlank()) LibraryUiState.Setup else LibraryUiState.Loading)
                 }
             }
+            refreshing = false
             refreshSync()
         }
     }

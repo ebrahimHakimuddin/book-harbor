@@ -5,10 +5,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import dev.bookharbor.app.library.AppController
 import dev.bookharbor.app.library.LibraryScreen
@@ -48,6 +52,8 @@ fun BookHarborApp() {
             PdfReaderScreen(opened.file, common.first, common.second, common.third, opened.position, graph.recorder, settings, controller::closeReader)
         }
     } else {
-        BookHarborTheme(readerTheme = ReaderTheme.System) { LibraryScreen(controller) }
+        BookHarborTheme(readerTheme = ReaderTheme.System) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LibraryScreen(controller) }
+        }
     }
 }
