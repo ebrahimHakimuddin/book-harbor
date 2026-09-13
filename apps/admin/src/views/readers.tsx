@@ -32,6 +32,10 @@ export function ReadersView({ currentUserId }: { currentUserId: string }) {
           </p>
           {readers.isPending ? (
             <div className="grid gap-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-[72px] rounded-xl" />)}</div>
+          ) : readers.isError ? (
+            <EmptyState icon={<UsersIcon />} title="Readers could not be loaded" action={<Button variant="outline" onClick={() => readers.refetch()}>Try again</Button>}>
+              {errorMessage(readers.error, "Something went wrong.")}
+            </EmptyState>
           ) : readers.data?.length === 0 ? (
             <EmptyState icon={<UsersIcon />} title="No readers yet">Add the first reader with the form.</EmptyState>
           ) : (

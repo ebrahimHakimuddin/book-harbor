@@ -36,15 +36,15 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   /* BookHarbor brand palette (brandkit/color-palette.png, DESIGN.md) */
-  --color-navy: #0f2d46;
+  --color-navy: var(--brand-navy);
   --color-navy-deep: #092238;
-  --color-teal: #2e7d7a;
-  --color-teal-dark: #23635f;
+  --color-teal: var(--brand-teal);
+  --color-teal-dark: var(--brand-teal-dark);
   --color-cyan: #7fb3c3;
-  --color-sand: #f8f6ef;
+  --color-sand: var(--brand-sand);
   --color-sunrise: #f4a261;
-  --color-mist: #eef4f4;
-  --color-success: #236b52;
+  --color-mist: var(--brand-mist);
+  --color-success: var(--brand-success);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -54,6 +54,13 @@
 }
 
 :root {
+  color-scheme: light;
+  --brand-navy: #0f2d46;
+  --brand-sand: #f8f6ef;
+  --brand-teal: #2e7d7a;
+  --brand-teal-dark: #23635f;
+  --brand-mist: #eef4f4;
+  --brand-success: #236b52;
   --radius: 9px;
   --background: #fffefb;
   --foreground: #18354d;
@@ -81,6 +88,42 @@
   --sidebar-accent-foreground: #0f2d46;
   --sidebar-border: #d9e2e5;
   --sidebar-ring: #f4a261;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --brand-navy: #eaf1f3;
+    --brand-sand: #081a29;
+    --brand-teal: #5bb5b0;
+    --brand-teal-dark: #7cc9c4;
+    --brand-mist: #12324a;
+    --brand-success: #6fd0a6;
+    --background: #0c2233;
+    --foreground: #e3ecef;
+    --card: #0c2233;
+    --card-foreground: #e3ecef;
+    --popover: #12324a;
+    --popover-foreground: #e3ecef;
+    --primary: #5bb5b0;
+    --primary-foreground: #082033;
+    --secondary: #12324a;
+    --secondary-foreground: #e3ecef;
+    --muted: #12324a;
+    --muted-foreground: #9db4c2;
+    --accent: #1a4059;
+    --accent-foreground: #eaf1f3;
+    --destructive: #e07a7a;
+    --border: #1f4058;
+    --input: #35586f;
+    --sidebar: #0c2233;
+    --sidebar-foreground: #e3ecef;
+    --sidebar-primary: #5bb5b0;
+    --sidebar-primary-foreground: #082033;
+    --sidebar-accent: #1a4059;
+    --sidebar-accent-foreground: #eaf1f3;
+    --sidebar-border: #1f4058;
+  }
 }
 
 @layer base {

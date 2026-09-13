@@ -42,7 +42,7 @@ export function EntryScreen({ setup, loadError, email, onEmail }: {
         <Wordmark className="text-2xl [&_img]:h-12" />
         <div className="max-w-lg text-navy">
           <h2 className="mb-4 text-5xl leading-none font-bold tracking-tight text-balance lg:text-6xl">Your library. Your harbor.</h2>
-          <p className="max-w-[38ch] text-[#536f84]">Manage the people and books on this private BookHarbor server.</p>
+          <p className="max-w-[38ch] text-muted-foreground">Manage the people and books on this private BookHarbor server.</p>
           <p className="mt-7 font-heading text-lg text-teal-dark italic">Your library. Your harbor. Every device.</p>
         </div>
       </div>

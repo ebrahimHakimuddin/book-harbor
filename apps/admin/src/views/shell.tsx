@@ -50,7 +50,7 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
   const signOut = async () => { await api.logout(); client.clear() }
 
   return (
-    <div className="min-h-dvh bg-[#fbfcf9]">
+    <div className="min-h-dvh bg-background">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-navy focus:px-4 focus:py-2 focus:text-white">Skip to content</a>
       <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur sm:px-7 lg:h-[72px]">
         <a href="#/library" className="mr-auto lg:w-[244px]" aria-label="BookHarbor administration home"><Wordmark /></a>
@@ -84,7 +84,7 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
             <svg viewBox="0 0 44 14" className="mb-3 h-3.5 w-11 fill-none" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
               <path d="M2 5c5-5 9-5 14 0s9 5 14 0 9-5 12-2" stroke="#2e7d7a" /><path d="M2 11c5-5 9-5 14 0s9 5 14 0 9-5 12-2" stroke="#7fb3c3" />
             </svg>
-            <p className="font-heading text-[0.95rem] leading-snug text-[#506f87] italic">A brighter tomorrow,<br />one book at a time.</p>
+            <p className="font-heading text-[0.95rem] leading-snug text-muted-foreground italic">A brighter tomorrow,<br />one book at a time.</p>
           </div>
         </nav>
 
