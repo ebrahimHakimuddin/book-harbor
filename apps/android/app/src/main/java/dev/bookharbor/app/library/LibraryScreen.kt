@@ -1,5 +1,7 @@
 package dev.bookharbor.app.library
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -59,6 +62,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.launch
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -193,7 +202,8 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
     val downloaded = remember(catalog.downloads) { catalog.downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys }
     val shown = remember(catalog.books, query, filter, sort, catalog.progress, downloaded) { visibleBooks(catalog.books, query, filter, sort, catalog.progress, downloaded) }
 
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)) {
+    PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)) {
         item { LibraryHeader(controller, catalog, onOpenSync) }
         item {
             Text("Your library.\nEverywhere with you.", Modifier.padding(top = 18.dp, bottom = 16.dp), fontFamily = LiterataFamily, fontWeight = FontWeight.Normal, fontSize = 27.sp, lineHeight = 33.sp, color = MaterialTheme.colorScheme.onBackground)
@@ -222,6 +232,7 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
         if (shown.isEmpty()) item {
             EmptyShelf(hasBooks = catalog.books.isNotEmpty(), filtering = query.isNotBlank() || filter != ShelfFilter.All)
         } else items(shown, key = { it.id }) { book -> BookRow(controller, catalog, book) }
+    }
     }
 }
 
@@ -420,6 +431,58 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
             Icon(BrandIcons.SignOut, null, Modifier.size(18.dp))
             Text("  Sign out")
         }
+        AboutSection()
         Text("A brighter tomorrow, one book at a time.", fontFamily = LiterataFamily, fontStyle = FontStyle.Italic, fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 12.dp))
+    }
+}
+
+private sealed interface UpdateStatus {
+    data object Idle : UpdateStatus
+    data object Checking : UpdateStatus
+    data object UpToDate : UpdateStatus
+    data class Available(val release: Release) : UpdateStatus
+    data object Failed : UpdateStatus
+}
+
+@Composable
+private fun AboutSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val installed = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty() }
+    var status by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
+    val open = { url: String -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("About", style = MaterialTheme.typography.titleMedium)
+        Text("BookHarbor $installed", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = { open(GITHUB_URL) }, contentPadding = PaddingValues(0.dp)) { Text(GITHUB_URL.removePrefix("https://")) }
+        Text(
+            when (val s = status) {
+                UpdateStatus.Idle -> ""
+                UpdateStatus.Checking -> "Checking for updates…"
+                UpdateStatus.UpToDate -> "You're on the latest version."
+                is UpdateStatus.Available -> "Version ${s.release.version} is available."
+                UpdateStatus.Failed -> "Couldn't check for updates. Try again when you're online."
+            },
+            Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (status == UpdateStatus.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val available = status as? UpdateStatus.Available
+        OutlinedButton(
+            onClick = {
+                if (available != null) open(available.release.pageUrl) else {
+                    status = UpdateStatus.Checking
+                    scope.launch {
+                        status = try {
+                            val latest = withContext(Dispatchers.IO) { latestRelease() }
+                            if (isNewer(latest.version, installed)) UpdateStatus.Available(latest) else UpdateStatus.UpToDate
+                        } catch (e: Exception) { UpdateStatus.Failed }
+                    }
+                }
+            },
+            enabled = status != UpdateStatus.Checking,
+            shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp),
+        ) { Text(if (available != null) "Download update" else "Check for updates") }
     }
 }
