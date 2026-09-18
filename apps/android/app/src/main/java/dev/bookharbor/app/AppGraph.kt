@@ -36,6 +36,10 @@ class AppGraph private constructor(context: Context) {
 
     val recorder = ProgressRecorder(progress, deviceId, onRecorded = { SyncScheduler.schedule(app) })
 
+    init {
+        SyncScheduler.schedulePeriodic(app)
+    }
+
     companion object {
         @Volatile private var instance: AppGraph? = null
         fun get(context: Context): AppGraph = instance ?: synchronized(this) { instance ?: AppGraph(context).also { instance = it } }

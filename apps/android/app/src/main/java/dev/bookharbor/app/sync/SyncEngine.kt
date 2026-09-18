@@ -5,7 +5,7 @@ fun interface SyncApi {
     fun sync(cursor: Long, changes: List<ProgressEvent>): SyncResponse
 }
 
-data class SyncOutcome(val sent: Int, val rejected: Int, val pages: Int)
+data class SyncOutcome(val sent: Int, val rejected: Int, val pages: Int, val pendingRemains: Boolean)
 
 /**
  * Sends the outbox and pulls canonical positions. It never deletes queued work on failure:
@@ -45,7 +45,9 @@ class SyncEngine(
             val more = response.hasMore || store.pending(1).isNotEmpty()
             if (!more || (!response.hasMore && response.acknowledgements.isEmpty())) break
         }
-        return SyncOutcome(sent, rejected, pages)
+        // A page can be force-stopped above while events are still queued (an unacknowledged,
+        // unrejected batch). That is not success: the caller must retry rather than go quiet.
+        return SyncOutcome(sent, rejected, pages, pendingRemains = store.pendingCount() > 0)
     }
 
     private fun isolate(batch: List<ProgressEvent>): Pair<Int, Int> {
