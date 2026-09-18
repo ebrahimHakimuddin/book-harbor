@@ -32,7 +32,7 @@ export function BookEditor({ book, onClose }: { book: Book | null; onClose: () =
   const shown = book ?? last.current
   return (
     <Sheet open={book !== null} onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="w-full gap-0 p-0 sm:max-w-xl">
+      <SheetContent className="data-[side=right]:w-full gap-0 p-0 sm:max-w-xl">
         {shown && <EditorBody key={shown.id} book={shown} onClose={onClose} />}
       </SheetContent>
     </Sheet>
@@ -144,11 +144,11 @@ function MediaTab({ book }: { book: Book }) {
 
   return (
     <div className="grid gap-8">
-      <section>
+      <section className="min-w-0">
         <h3 className="mb-3 text-base font-bold text-navy">Cover</h3>
         <div className="grid grid-cols-[96px_1fr] gap-4">
           <Cover book={book} className="w-24 shadow-md" />
-          <div className="grid content-start gap-3">
+          <div className="grid min-w-0 content-start gap-3">
             <Dropzone compact accept="image/png,image/jpeg,image/webp" icon={cover.upload.isPending ? <Loader2Icon className="animate-spin" /> : <ImageIcon />} title={cover.upload.isPending ? "Uploading…" : "Drop an image"} hint="PNG, JPEG, or WebP up to 2 MiB" disabled={cover.upload.isPending}
               onFile={(file) => { setError((e) => ({ ...e, cover: undefined })); cover.upload.mutate({ id: book.id, file }, { onSuccess: () => toast.success("Cover updated."), onError: (e) => setError((s) => ({ ...s, cover: errorMessage(e, "The cover could not be uploaded.") })) }) }} />
             {uploaded && <Button variant="outline" size="sm" className="w-fit" disabled={cover.remove.isPending}
@@ -158,11 +158,11 @@ function MediaTab({ book }: { book: Book }) {
         <p role="alert" className="mt-2 min-h-5 text-sm text-destructive">{error.cover}</p>
       </section>
 
-      <section>
+      <section className="min-w-0">
         <h3 className="mb-3 text-base font-bold text-navy">Formats</h3>
         <ul className="mb-4 grid gap-2">
           {book.editions.map((edition) => (
-            <li key={edition.id} className="flex items-center gap-3 rounded-lg bg-mist px-3 py-2.5">
+            <li key={edition.id} className="flex min-w-0 items-center gap-3 rounded-lg bg-mist px-3 py-2.5">
               <FileTextIcon className="size-4 text-teal" />
               <span className="text-xs font-bold tracking-wide text-teal-dark uppercase">{edition.format}</span>
               <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{edition.originalFilename}</span>

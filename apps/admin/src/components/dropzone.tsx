@@ -32,7 +32,7 @@ export function Dropzone({ accept, onFile, disabled, icon, title, hint, compact,
         if (file && !disabled && accepts(file)) onFile(file)
       }}
       className={cn(
-        "group flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-[1.5px] border-dashed border-input bg-background text-center transition-all",
+        "group flex min-w-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-[1.5px] border-dashed border-input bg-background text-center transition-all",
         "hover:border-teal hover:bg-mist has-[:focus-visible]:border-ring has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
         compact ? "px-4 py-5" : "px-6 py-10",
         over && "scale-[1.01] border-teal bg-mist",
