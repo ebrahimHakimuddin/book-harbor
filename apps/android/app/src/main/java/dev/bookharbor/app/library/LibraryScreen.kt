@@ -385,7 +385,8 @@ private fun EmptyShelf(hasBooks: Boolean, filtering: Boolean) {
 private fun SyncTab(controller: AppController, catalog: LibraryUiState.Catalog) {
     val sync = controller.sync
     val synced = sync.pending == 0 && !catalog.offline && sync.error == null
-    Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Text("Sync", style = MaterialTheme.typography.headlineLarge)
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(24.dp),
@@ -415,13 +416,15 @@ private fun SyncTab(controller: AppController, catalog: LibraryUiState.Catalog) 
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+    }
 }
 
 // ---- More ------------------------------------------------------------------------------------
 
 @Composable
 private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) {
-    Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Text("More", style = MaterialTheme.typography.headlineLarge)
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
@@ -442,6 +445,7 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
         }
         AboutSection()
         Text("A brighter tomorrow, one book at a time.", fontFamily = LiterataFamily, fontStyle = FontStyle.Italic, fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 12.dp))
+    }
     }
 }
 
