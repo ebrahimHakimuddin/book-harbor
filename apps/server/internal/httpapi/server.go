@@ -15,6 +15,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
+	"github.com/bookharbor/bookharbor/apps/server/internal/social"
 )
 
 const maxJSONBodyBytes = 1 << 20
@@ -32,15 +33,16 @@ type server struct {
 	library  *library.Store
 	metadata metadata.Provider
 	reading  *reading.Store
+	social   *social.Store
 	logger   *slog.Logger
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, metadataProvider metadata.Provider, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, metadataProvider metadata.Provider, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, logger: logger}
+	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", adminUI())
 	mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusPermanentRedirect))
@@ -60,6 +62,11 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/books/", s.requireAuthentication(s.book))
 	mux.Handle("/api/v1/editions/", s.requireAuthentication(s.edition))
 	mux.Handle("/api/v1/progress/sync", requireMethod(http.MethodPost, s.requireAuthentication(s.syncProgress)))
+	mux.Handle("/api/v1/friends", s.requireAuthentication(s.friends))
+	mux.Handle("/api/v1/friends/requests", s.requireAuthentication(s.friendRequests))
+	mux.Handle("/api/v1/friends/requests/", s.requireAuthentication(s.friendRequestAction))
+	mux.Handle("/api/v1/friends/", s.requireAuthentication(s.friend))
+	mux.Handle("/api/v1/me/social-settings", s.requireAuthentication(s.socialSettings))
 	mux.HandleFunc("/", notFound)
 
 	return s.withRequestLogging(s.withSecurityHeaders(mux))

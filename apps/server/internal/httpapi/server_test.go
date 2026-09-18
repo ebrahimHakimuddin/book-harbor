@@ -18,6 +18,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
+	"github.com/bookharbor/bookharbor/apps/server/internal/social"
 )
 
 func TestHealth(t *testing.T) {
@@ -208,6 +209,7 @@ func testHandlerWithMetadata(t *testing.T, metadataProvider metadata.Provider) (
 		audit.NewStore(db),
 		bookLibrary,
 		reading.NewStore(db),
+		social.NewStore(db),
 		metadataProvider,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	), db

@@ -102,6 +102,25 @@ var migrations = []string{
 		summary TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	) STRICT;`,
+	`ALTER TABLE reading_progress ADD COLUMN finished_at TEXT;
+		CREATE TABLE friendships (
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			friend_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			status TEXT NOT NULL CHECK (status IN ('pending', 'accepted')),
+			requested_by TEXT NOT NULL REFERENCES users(id),
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (user_id, friend_id),
+			CHECK (user_id <> friend_id)
+		) STRICT;
+		CREATE INDEX friendships_friend_status_idx ON friendships(friend_id, status);
+		CREATE TABLE user_social_settings (
+			user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			activity_visible INTEGER NOT NULL DEFAULT 0 CHECK (activity_visible IN (0, 1)),
+			annual_goal_year INTEGER,
+			annual_goal_books INTEGER CHECK (annual_goal_books IS NULL OR annual_goal_books > 0),
+			updated_at TEXT NOT NULL
+		) STRICT;`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

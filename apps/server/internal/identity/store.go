@@ -187,6 +187,28 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	return users, nil
 }
 
+// FindByEmail looks up a user by their sign-in email. Matching is case-insensitive,
+// mirroring the users.email column's COLLATE NOCASE unique index.
+func (s *Store) FindByEmail(ctx context.Context, email string) (User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	var user User
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, display_name, email, role, disabled_at IS NOT NULL, created_at
+		FROM users WHERE email = ?
+	`, email).Scan(&user.ID, &user.DisplayName, &user.Email, &user.Role, &user.Disabled, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrUserNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("find user by email: %w", err)
+	}
+	if user.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return User{}, fmt.Errorf("parse user creation time: %w", err)
+	}
+	return user, nil
+}
+
 func validateAndHashUser(displayName, rawEmail, password string) (string, string, string, error) {
 	displayName = strings.TrimSpace(displayName)
 	if utf8.RuneCountInString(displayName) < 1 || utf8.RuneCountInString(displayName) > 100 {
@@ -311,6 +333,24 @@ func (s *Store) DeleteUser(ctx context.Context, id string) (User, error) {
 	}
 	if err := tx.Commit(); err != nil {
 		return User{}, fmt.Errorf("commit user delete: %w", err)
+	}
+	return user, nil
+}
+
+// GetUser looks up a user by ID.
+func (s *Store) GetUser(ctx context.Context, id string) (User, error) {
+	var user User
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `SELECT id, display_name, email, role, disabled_at IS NOT NULL, created_at FROM users WHERE id = ?`, id).
+		Scan(&user.ID, &user.DisplayName, &user.Email, &user.Role, &user.Disabled, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrUserNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("get user: %w", err)
+	}
+	if user.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		return User{}, fmt.Errorf("parse user creation time: %w", err)
 	}
 	return user, nil
 }

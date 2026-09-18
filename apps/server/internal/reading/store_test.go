@@ -253,6 +253,115 @@ func withChange(change Change, update func(*Change)) Change {
 	return change
 }
 
+func TestSyncSetsFinishedAtWhenPercentageCrossesThreshold(t *testing.T) {
+	store, db := testReadingStore(t)
+	defer db.Close()
+	ctx := context.Background()
+	base := time.Date(2026, time.September, 20, 8, 0, 0, 0, time.UTC)
+
+	if _, err := store.Sync(ctx, "usr_reader", 0, []Change{epubChange("event_1", base, 0.50, "epubcfi(/6/2)")}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	assertFinishedAt(t, db, "usr_reader", "book_epub", false)
+
+	if _, err := store.Sync(ctx, "usr_reader", 0, []Change{epubChange("event_2", base.Add(time.Hour), 0.99, "epubcfi(/8/1)")}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	assertFinishedAt(t, db, "usr_reader", "book_epub", true)
+}
+
+func TestSyncClearsFinishedAtOnRegressionBelowThreshold(t *testing.T) {
+	store, db := testReadingStore(t)
+	defer db.Close()
+	ctx := context.Background()
+	base := time.Date(2026, time.September, 20, 8, 0, 0, 0, time.UTC)
+
+	if _, err := store.Sync(ctx, "usr_reader", 0, []Change{epubChange("event_1", base, 1.0, "epubcfi(/9/9)")}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	assertFinishedAt(t, db, "usr_reader", "book_epub", true)
+
+	// A later event (e.g. starting a re-read) drops the percentage back down.
+	if _, err := store.Sync(ctx, "usr_reader", 0, []Change{epubChange("event_2", base.Add(time.Hour), 0.05, "epubcfi(/6/1)")}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	assertFinishedAt(t, db, "usr_reader", "book_epub", false)
+}
+
+func TestFinishedCountCountsOnlyCurrentYear(t *testing.T) {
+	store, db := testReadingStore(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	finishedThisYear := time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
+	finishedLastYear := time.Date(2025, time.March, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := store.Sync(ctx, "usr_reader", 0, []Change{epubChange("event_1", finishedThisYear, 1.0, "epubcfi(/9/9)")}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	if _, err := store.Sync(ctx, "usr_other", 0, []Change{withChange(epubChange("event_2", finishedLastYear, 1.0, "epubcfi(/9/9)"), func(c *Change) {})}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	count, err := store.FinishedCount(ctx, "usr_reader", 2026)
+	if err != nil {
+		t.Fatalf("FinishedCount() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("FinishedCount(usr_reader, 2026) = %d, want 1", count)
+	}
+	count, err = store.FinishedCount(ctx, "usr_other", 2026)
+	if err != nil {
+		t.Fatalf("FinishedCount() error = %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("FinishedCount(usr_other, 2026) = %d, want 0 (finished in 2025)", count)
+	}
+}
+
+func TestSnapshotForUserOrdersByUpdatedAtDescending(t *testing.T) {
+	store, db := testReadingStore(t)
+	defer db.Close()
+	ctx := context.Background()
+	base := time.Date(2026, time.September, 20, 8, 0, 0, 0, time.UTC)
+
+	if _, err := store.Sync(ctx, "usr_reader", 0, []Change{epubChange("event_1", base, 0.10, "epubcfi(/6/1)")}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	if _, err := store.Sync(ctx, "usr_reader", 0, []Change{withChange(epubChange("event_2", base.Add(time.Hour), 0.20, "epubcfi(/6/2)"), func(c *Change) { c.BookID = "book_epub" })}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	snapshot, err := store.SnapshotForUser(ctx, "usr_reader", 10)
+	if err != nil {
+		t.Fatalf("SnapshotForUser() error = %v", err)
+	}
+	if len(snapshot) != 1 {
+		t.Fatalf("snapshot length = %d, want 1 (both events target the same book)", len(snapshot))
+	}
+	if snapshot[0].Percentage != 0.20 {
+		t.Fatalf("snapshot percentage = %v, want the latest (0.20)", snapshot[0].Percentage)
+	}
+
+	empty, err := store.SnapshotForUser(ctx, "usr_other", 10)
+	if err != nil {
+		t.Fatalf("SnapshotForUser() error = %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("snapshot for untouched user = %#v, want empty", empty)
+	}
+}
+
+func assertFinishedAt(t *testing.T, db *sql.DB, userID, bookID string, wantFinished bool) {
+	t.Helper()
+	var finishedAt sql.NullString
+	if err := db.QueryRow(`SELECT finished_at FROM reading_progress WHERE user_id = ? AND book_id = ?`, userID, bookID).Scan(&finishedAt); err != nil {
+		t.Fatalf("read finished_at: %v", err)
+	}
+	if finishedAt.Valid != wantFinished {
+		t.Fatalf("finished_at valid = %v, want %v (value = %q)", finishedAt.Valid, wantFinished, finishedAt.String)
+	}
+}
+
 func stringsContainsPlaceholder(statement string) bool {
 	for _, character := range statement {
 		if character == '?' {

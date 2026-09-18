@@ -20,6 +20,10 @@ const (
 	maxIdentifierRunes = 128
 	maxLocatorRunes    = 4096
 	maxFutureClockSkew = 5 * time.Minute
+
+	// FinishedThreshold matches the Android client's own FINISHED_AT constant
+	// (LibraryModel.kt), so a book counts as finished the same way on both sides.
+	FinishedThreshold = 0.97
 )
 
 var (
@@ -165,6 +169,62 @@ func (s *Store) Sync(ctx context.Context, userID string, cursor int64, changes [
 	return result, nil
 }
 
+// FinishedCount returns how many books the user finished (crossed FinishedThreshold) in the given calendar year.
+func (s *Store) FinishedCount(ctx context.Context, userID string, year int) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM reading_progress
+		WHERE user_id = ? AND finished_at IS NOT NULL AND substr(finished_at, 1, 4) = ?
+	`, userID, strconv.Itoa(year)).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count finished books: %w", err)
+	}
+	return count, nil
+}
+
+// SnapshotForUser returns the user's current progress on every book they have touched,
+// most recently updated first. This is a bounded current-state read, unlike Sync's cursor log.
+func (s *Store) SnapshotForUser(ctx context.Context, userID string, limit int) ([]Progress, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT event_revision, client_event_id, device_id, book_id, edition_id,
+			locator_kind, locator_value, percentage, occurred_at
+		FROM reading_progress
+		WHERE user_id = ?
+		ORDER BY updated_at DESC
+		LIMIT ?
+	`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("read progress snapshot: %w", err)
+	}
+	defer rows.Close()
+
+	snapshot := make([]Progress, 0)
+	for rows.Next() {
+		var progress Progress
+		var locatorValue, occurredAt string
+		if err := rows.Scan(
+			&progress.Revision, &progress.EventID, &progress.DeviceID, &progress.BookID,
+			&progress.EditionID, &progress.Locator.Kind, &locatorValue,
+			&progress.Percentage, &occurredAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan progress snapshot: %w", err)
+		}
+		progress.Locator, err = decodeLocator(progress.Locator.Kind, locatorValue)
+		if err != nil {
+			return nil, err
+		}
+		progress.OccurredAt, err = time.Parse(time.RFC3339Nano, occurredAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse progress snapshot time: %w", err)
+		}
+		snapshot = append(snapshot, progress)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate progress snapshot: %w", err)
+	}
+	return snapshot, nil
+}
+
 func (s *Store) recordChange(ctx context.Context, tx *sql.Tx, userID string, change Change, receivedAt time.Time) (Acknowledgement, error) {
 	locatorValue := encodeLocatorValue(change.Locator)
 	insert, err := tx.ExecContext(ctx, `
@@ -193,11 +253,16 @@ func (s *Store) recordChange(ctx context.Context, tx *sql.Tx, userID string, cha
 	if err != nil {
 		return Acknowledgement{}, fmt.Errorf("read progress revision: %w", err)
 	}
+	var finishedAt sql.NullString
+	if change.Percentage >= FinishedThreshold {
+		finishedAt = sql.NullString{String: change.OccurredAt.Format(time.RFC3339Nano), Valid: true}
+	}
 	canonical, err := tx.ExecContext(ctx, `
 		INSERT INTO reading_progress (
 			user_id, book_id, edition_id, event_revision, client_event_id,
-			device_id, locator_kind, locator_value, percentage, occurred_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			device_id, locator_kind, locator_value, percentage, occurred_at, updated_at,
+			finished_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (user_id, book_id) DO UPDATE SET
 			edition_id = excluded.edition_id,
 			event_revision = excluded.event_revision,
@@ -207,7 +272,12 @@ func (s *Store) recordChange(ctx context.Context, tx *sql.Tx, userID string, cha
 			locator_value = excluded.locator_value,
 			percentage = excluded.percentage,
 			occurred_at = excluded.occurred_at,
-			updated_at = excluded.updated_at
+			updated_at = excluded.updated_at,
+			finished_at = CASE
+				WHEN excluded.finished_at IS NOT NULL AND reading_progress.finished_at IS NOT NULL THEN reading_progress.finished_at
+				WHEN excluded.finished_at IS NOT NULL THEN excluded.finished_at
+				ELSE NULL
+			END
 		WHERE excluded.occurred_at > reading_progress.occurred_at
 			OR (excluded.occurred_at = reading_progress.occurred_at
 				AND excluded.event_revision > reading_progress.event_revision)
@@ -215,6 +285,7 @@ func (s *Store) recordChange(ctx context.Context, tx *sql.Tx, userID string, cha
 		userID, change.BookID, change.EditionID, revision, change.EventID,
 		change.DeviceID, change.Locator.Kind, locatorValue, change.Percentage,
 		change.OccurredAt.Format(time.RFC3339Nano), receivedAt.Format(time.RFC3339Nano),
+		finishedAt,
 	)
 	if err != nil {
 		return Acknowledgement{}, fmt.Errorf("update canonical progress: %w", err)
