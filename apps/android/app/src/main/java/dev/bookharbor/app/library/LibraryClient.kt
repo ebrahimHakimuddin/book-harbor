@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -117,10 +118,14 @@ class EditionDownloader(
         val name = safeName(edition.originalFilename.ifBlank { "${edition.id}.${edition.format.ifBlank { "book" }}" })
         val safeId = safeName(edition.id)
         val finalFile = File(directory, "${safeId}-$name")
-        val temporary = File.createTempFile("edition-${safeId}-", ".part", directory)
+        // A stable name (not File.createTempFile's random suffix) so a retry after a killed
+        // process or a dropped connection finds its own partial data instead of starting over.
+        val temporary = File(directory, "$safeId.part")
         var activeConnection: HttpURLConnection? = null
         try {
             val contentUrl = URL(URL(session.serverUrl.trimEnd('/') + "/"), edition.contentUrl).toString()
+            val digest = MessageDigest.getInstance("SHA-256")
+            var downloadedBytes = if (temporary.isFile) seedDigest(digest, temporary) else 0L
             var status: Int
             var refreshed = false
             while (true) {
@@ -130,15 +135,22 @@ class EditionDownloader(
                 opened.connectTimeout = 15_000
                 opened.readTimeout = 30_000
                 opened.setRequestProperty("Authorization", "Bearer ${token.accessToken}")
+                if (downloadedBytes > 0) opened.setRequestProperty("Range", "bytes=$downloadedBytes-")
                 status = opened.responseCode
                 if (status == 401 && !refreshed) { opened.disconnect(); token = api.refreshIfStale(token.accessToken); refreshed = true; continue }
                 break
             }
             val connection = activeConnection ?: error("download connection unavailable")
+            // Asked to resume but the server sent the whole thing again (no range support):
+            // the partial bytes on disk are actually the start of a fresh copy, not a
+            // continuation, so drop them rather than corrupt the file by appending past them.
+            if (downloadedBytes > 0 && status == 200) {
+                digest.reset()
+                downloadedBytes = 0L
+            }
             if (status !in 200..299) throw HttpError(status, connection.errorStream?.let { BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() } } ?: "download failed")
-            val digest = MessageDigest.getInstance("SHA-256")
-            var downloadedBytes = 0L
-            connection.inputStream.use { input -> temporary.outputStream().use { output ->
+            val append = status == 206
+            connection.inputStream.use { input -> FileOutputStream(temporary, append).use { output ->
                 val buffer = ByteArray(64 * 1024)
                 while (true) { val count = input.read(buffer); if (count < 0) break; output.write(buffer, 0, count); digest.update(buffer, 0, count); downloadedBytes += count }
             } }
@@ -151,7 +163,9 @@ class EditionDownloader(
             downloads.save(result)
             return result
         } catch (error: Exception) {
-            temporary.delete()
+            // A verified-bad file can't be resumed from; anything else (network drop, timeout)
+            // keeps the partial bytes on disk so the next attempt resumes instead of restarting.
+            if (error is DownloadVerificationError) temporary.delete()
             throw error
         } finally {
             activeConnection?.disconnect()
@@ -159,6 +173,13 @@ class EditionDownloader(
     }
 
     fun remove(editionId: String) = downloads.remove(editionId)
+
+    /** Hashes bytes already on disk from a prior attempt so a resumed download's checksum still covers them. */
+    private fun seedDigest(digest: MessageDigest, partial: File): Long {
+        var length = 0L
+        FileInputStream(partial).use { input -> val buffer = ByteArray(64 * 1024); while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count); length += count } }
+        return length
+    }
 
     companion object {
         internal fun verifyAndMove(source: File, destination: File, expectedLength: Long, expectedSha256: String) {
