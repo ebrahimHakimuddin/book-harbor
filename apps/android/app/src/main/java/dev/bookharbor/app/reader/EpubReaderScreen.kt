@@ -63,6 +63,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 private const val HEADER_ITEMS = 1
 
@@ -139,6 +140,8 @@ fun EpubReaderScreen(
         onAction = dispatch,
         onClose = onClose,
         progressLabel = "Chapter ${chapterIndex + 1} of ${state.chapters.size} · ${state.chapter.title}",
+        progress = state.currentChapterProgress,
+        percentage = (state.currentChapterProgress * 100).roundToInt(),
     ) { padding ->
         ChapterList(book, state, blocks, listState, padding) { dispatch(ReaderAction.NextChapter) }
     }

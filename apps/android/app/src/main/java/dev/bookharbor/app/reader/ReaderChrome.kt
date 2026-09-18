@@ -49,6 +49,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.bookharbor.app.ui.theme.BookHarborTheme
@@ -67,6 +68,10 @@ fun ReaderScaffold(
     onAction: (ReaderAction) -> Unit,
     onClose: () -> Unit,
     progressLabel: String,
+    /** The footer bar's fill and percentage. Defaults to the whole book; pass the current
+     * chapter's own fraction where "chapter" is a meaningful sub-unit (e.g. EPUB). */
+    progress: Float = state.overallProgress,
+    percentage: Int = state.overallPercentage,
     fixedLayout: Boolean = false,
     contentsLabel: String = "Contents",
     content: @Composable (PaddingValues) -> Unit,
@@ -81,7 +86,7 @@ fun ReaderScaffold(
             },
             bottomBar = {
                 AnimatedVisibility(visible = state.settings.showProgress, enter = fadeIn(), exit = fadeOut()) {
-                    ReaderProgressBar(progress = state.overallProgress, label = progressLabel, percentage = state.overallPercentage)
+                    ReaderProgressBar(progress = progress, label = progressLabel, percentage = percentage)
                 }
             },
             content = content,
@@ -115,7 +120,7 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
         IconButton(onClick = onClose) {
             Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close reader")
         }
-        Text(bookTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1)
+        Text(bookTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
         TextButton(onClick = onContents, modifier = Modifier.semantics { contentDescription = contentsLabel }) {
             Text(contentsLabel, style = MaterialTheme.typography.labelLarge)
         }
@@ -252,7 +257,7 @@ private fun <T> ChoiceRow(choices: List<T>, selected: T, label: (T) -> String, o
         choices.forEach { choice ->
             TextButton(
                 onClick = { onSelected(choice) },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                 colors = ButtonDefaults.textButtonColors(
                     containerColor = if (choice == selected) MaterialTheme.colorScheme.primary else Color.Transparent,
                     contentColor = if (choice == selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,

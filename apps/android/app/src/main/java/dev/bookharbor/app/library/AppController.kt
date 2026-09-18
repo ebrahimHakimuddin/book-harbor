@@ -14,7 +14,7 @@ import java.io.File
 
 sealed interface LibraryUiState {
     data object Setup : LibraryUiState
-    data class SignIn(val instance: InstanceInfo? = null, val serverUrl: String = "") : LibraryUiState
+    data class SignIn(val instance: InstanceInfo? = null, val serverUrl: String = "", val email: String = "") : LibraryUiState
     data object Loading : LibraryUiState
     data class Catalog(
         val instanceName: String,
@@ -102,7 +102,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 load()
             } catch (error: Exception) {
                 val message = if (error is HttpError && error.status == 401) "That email or password isn't right." else (error.message ?: "Sign in failed")
-                ui = LibraryUiState.Error(message, LibraryUiState.SignIn(serverUrl = graph.session.serverUrl))
+                ui = LibraryUiState.Error(message, LibraryUiState.SignIn(serverUrl = graph.session.serverUrl, email = email))
             }
         }
     }

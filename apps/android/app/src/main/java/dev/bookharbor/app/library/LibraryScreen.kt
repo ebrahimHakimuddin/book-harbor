@@ -98,7 +98,7 @@ fun LibraryScreen(controller: AppController) {
         }
         is LibraryUiState.SignIn -> EntryColumn(subtitle = state.instance?.name) {
             Text(state.serverUrl.removePrefix("https://").removePrefix("http://"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-            SignInForm(controller::signIn)
+            SignInForm(initialEmail = state.email, onSignIn = controller::signIn)
             TextButton(onClick = controller::changeServer) { Text("Use a different server") }
         }
         LibraryUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -146,8 +146,8 @@ private fun ServerForm(initial: String, onConnect: (String) -> Unit) {
 }
 
 @Composable
-private fun SignInForm(onSignIn: (String, String) -> Unit) {
-    var email by remember { mutableStateOf("") }
+private fun SignInForm(initialEmail: String, onSignIn: (String, String) -> Unit) {
+    var email by remember(initialEmail) { mutableStateOf(initialEmail) }
     var password by remember { mutableStateOf("") }
     OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
     OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
@@ -239,12 +239,15 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
 @Composable
 private fun LibraryHeader(controller: AppController, catalog: LibraryUiState.Catalog, onOpenSync: () -> Unit) {
     val sync = controller.sync
-    Box(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+    // Three equal-weight columns instead of a Box overlay: the brand mark and the actions can
+    // never collide, even at large system font sizes, because each is bounded to its own third.
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.weight(1f))
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
             Image(painterResource(R.drawable.brand_mark), contentDescription = null, Modifier.height(38.dp))
-            Text("BookHarbor", fontFamily = LiterataFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = MaterialTheme.colorScheme.onBackground)
+            Text("BookHarbor", fontFamily = LiterataFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = MaterialTheme.colorScheme.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             val (icon, description) = when {
                 catalog.offline -> BrandIcons.CloudOff to "Offline. Open sync status."
                 sync.pending > 0 -> BrandIcons.Cloud to "${sync.pending} updates waiting to sync. Open sync status."
@@ -330,11 +333,16 @@ private fun statusLine(progress: Double?, offline: Boolean): String {
 private fun BookMenu(controller: AppController, catalog: LibraryUiState.Catalog, book: Book) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }) { Icon(BrandIcons.MoreVertical, "More options for ${book.title}", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val hasAction = book.editions.any { catalog.downloads[it.id] != DownloadStatus.DOWNLOADING }
+        IconButton(onClick = { open = true }, enabled = hasAction) { Icon(BrandIcons.MoreVertical, "More options for ${book.title}", tint = if (hasAction) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             book.editions.forEach { edition ->
                 val format = edition.format.uppercase().ifBlank { "Edition" }
-                val available = catalog.downloads[edition.id] == DownloadStatus.AVAILABLE
+                val status = catalog.downloads[edition.id]
+                // Downloading isn't cancellable yet, so don't offer an action that would just
+                // restart the same edition from zero mid-transfer.
+                if (status == DownloadStatus.DOWNLOADING) return@forEach
+                val available = status == DownloadStatus.AVAILABLE
                 DropdownMenuItem(
                     text = { Text(if (available) "Remove $format download" else "Download $format") },
                     leadingIcon = { Icon(if (available) BrandIcons.Trash else BrandIcons.Download, null, Modifier.size(18.dp)) },
