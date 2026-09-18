@@ -66,8 +66,12 @@ Owns locally cached library metadata and browsing behavior.
 
 ### Downloads
 
-Owns a durable download queue, range resumption, integrity verification, local
-file lifecycle, and storage-pressure failures.
+Owns resumable, byte-range downloads, integrity verification, and local file
+lifecycle. A retry after a dropped connection or a killed process continues
+from the bytes already on disk rather than starting over. There is no
+background download queue yet: a download runs only while its screen is open,
+and a storage-pressure failure surfaces as a retryable error rather than a
+dedicated recovery path.
 
 ### Reader
 
