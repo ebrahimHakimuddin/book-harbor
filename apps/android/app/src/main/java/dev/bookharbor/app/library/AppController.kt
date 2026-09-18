@@ -30,6 +30,15 @@ sealed interface LibraryUiState {
 
 data class SyncUiState(val pending: Int = 0, val rejected: Int = 0, val running: Boolean = false, val error: String? = null, val lastSyncMillis: Long = 0)
 
+data class FriendsUiState(
+    val friends: List<Friend> = emptyList(),
+    val incoming: List<FriendRequest> = emptyList(),
+    val outgoing: List<FriendRequest> = emptyList(),
+    val settings: SocialSettings = SocialSettings(activityVisible = false, goalYear = 0, goalBooks = 0),
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
 /** A book that is open in the reader. [epub] is already parsed, so open errors surface before the screen changes. */
 class OpenedBook(val book: Book, val edition: Edition, val file: File, val position: LocalPosition?, val epub: EpubBook?)
 
@@ -40,6 +49,8 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     var opened by mutableStateOf<OpenedBook?>(null)
         private set
     var sync by mutableStateOf(SyncUiState())
+        private set
+    var friendsUi by mutableStateOf(FriendsUiState())
         private set
     /** Set when signing out would discard reading updates that have not reached the server. */
     var unsyncedOnSignOut by mutableStateOf<Int?>(null)
@@ -217,5 +228,80 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
 
     private fun refreshSync() {
         sync = sync.copy(pending = graph.progress.pendingCount(), rejected = graph.progress.rejectedCount(), running = false)
+    }
+
+    fun loadFriends() {
+        friendsUi = friendsUi.copy(loading = true, error = null)
+        scope.launch(Dispatchers.IO) {
+            try {
+                val friends = graph.friends.friends()
+                val requests = graph.friends.requests()
+                val settings = graph.friends.settings()
+                friendsUi = friendsUi.copy(friends = friends, incoming = requests.incoming, outgoing = requests.outgoing, settings = settings, loading = false)
+            } catch (error: Exception) {
+                friendsUi = friendsUi.copy(loading = false, error = error.message ?: "Couldn't load friends")
+            }
+        }
+    }
+
+    fun sendFriendRequest(email: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.friends.sendRequest(email)
+                loadFriends()
+            } catch (error: Exception) {
+                friendsUi = friendsUi.copy(error = error.message ?: "Couldn't send that friend request")
+            }
+        }
+    }
+
+    fun acceptFriendRequest(userId: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.friends.accept(userId)
+                loadFriends()
+            } catch (error: Exception) {
+                friendsUi = friendsUi.copy(error = error.message ?: "Couldn't accept that request")
+            }
+        }
+    }
+
+    /** Declines a request someone sent you. The server call is the same as [cancelFriendRequest]; it tells them apart by who's asking. */
+    fun declineFriendRequest(userId: String) = removeFriendRequest(userId, "Couldn't decline that request")
+
+    /** Withdraws a request you sent. */
+    fun cancelFriendRequest(userId: String) = removeFriendRequest(userId, "Couldn't cancel that request")
+
+    private fun removeFriendRequest(userId: String, errorMessage: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.friends.removeRequest(userId)
+                loadFriends()
+            } catch (error: Exception) {
+                friendsUi = friendsUi.copy(error = error.message ?: errorMessage)
+            }
+        }
+    }
+
+    fun removeFriend(userId: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.friends.removeFriend(userId)
+                loadFriends()
+            } catch (error: Exception) {
+                friendsUi = friendsUi.copy(error = error.message ?: "Couldn't remove that friend")
+            }
+        }
+    }
+
+    fun updateSocialSettings(visible: Boolean, goalYear: Int, goalBooks: Int) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val settings = graph.friends.updateSettings(visible, goalYear, goalBooks)
+                friendsUi = friendsUi.copy(settings = settings)
+            } catch (error: Exception) {
+                friendsUi = friendsUi.copy(error = error.message ?: "Couldn't update your sharing settings")
+            }
+        }
     }
 }

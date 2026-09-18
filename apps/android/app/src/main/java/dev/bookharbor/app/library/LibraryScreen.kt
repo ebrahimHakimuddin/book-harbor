@@ -87,7 +87,7 @@ import java.text.DateFormat
 import java.util.Date
 import kotlin.math.roundToInt
 
-private enum class Tab(val label: String) { Library("Library"), Sync("Sync"), More("More") }
+private enum class Tab(val label: String) { Library("Library"), Sync("Sync"), Friends("Friends"), More("More") }
 
 @Composable
 fun LibraryScreen(controller: AppController) {
@@ -165,7 +165,7 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
                     NavigationBarItem(
                         selected = tab == item,
                         onClick = { tab = item },
-                        icon = { Icon(when (item) { Tab.Library -> BrandIcons.Library; Tab.Sync -> BrandIcons.Sync; Tab.More -> BrandIcons.More }, contentDescription = null) },
+                        icon = { Icon(when (item) { Tab.Library -> BrandIcons.Library; Tab.Sync -> BrandIcons.Sync; Tab.Friends -> BrandIcons.Friends; Tab.More -> BrandIcons.More }, contentDescription = null) },
                         label = { Text(item.label) },
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.onPrimary, selectedTextColor = MaterialTheme.colorScheme.primary, indicatorColor = MaterialTheme.colorScheme.primary),
                     )
@@ -177,6 +177,7 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
             when (tab) {
                 Tab.Library -> LibraryTab(controller, catalog, onOpenSync = { tab = Tab.Sync })
                 Tab.Sync -> SyncTab(controller, catalog)
+                Tab.Friends -> FriendsTab(controller)
                 Tab.More -> MoreTab(controller, catalog)
             }
         }
