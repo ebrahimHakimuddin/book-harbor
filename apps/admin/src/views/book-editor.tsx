@@ -199,7 +199,7 @@ function OnlineTab({ book, onUse }: { book: Book; onUse: (candidate: Candidate) 
       {items?.length === 0 && <EmptyState icon={<SearchIcon />} title="No matches">Try a shorter title or add the author's name.</EmptyState>}
       <ul className="grid gap-2" aria-live="polite">
         {items?.map((c) => (
-          <li key={c.id} className="flex items-center gap-3 rounded-lg bg-mist p-2.5 animate-in fade-in slide-in-from-bottom-1 duration-200">
+          <li key={c.id} className="flex min-w-0 items-center gap-3 rounded-lg bg-mist p-2.5 animate-in fade-in slide-in-from-bottom-1 duration-200">
             {c.coverUrl ? <img src={c.coverUrl} alt="" className="aspect-[2/3] w-11 rounded object-cover" /> : <div className="aspect-[2/3] w-11 rounded bg-border" />}
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-navy">{c.title}</p>
