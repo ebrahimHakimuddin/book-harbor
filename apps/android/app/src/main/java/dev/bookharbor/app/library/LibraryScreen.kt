@@ -225,7 +225,7 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
             }
         }
         if (catalog.offline) item {
-            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(BrandIcons.CloudOff, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Offline. Showing your last saved library; downloaded books open normally.", Modifier.padding(start = 10.dp).weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = controller::load) { Text("Retry") }
@@ -345,9 +345,13 @@ private fun BookMenu(controller: AppController, catalog: LibraryUiState.Catalog,
                 // restart the same edition from zero mid-transfer.
                 if (status == DownloadStatus.DOWNLOADING) return@forEach
                 val available = status == DownloadStatus.AVAILABLE
+                // Removing a download is reversible (just refetch it), so it gets the milder
+                // caution tone rather than colorScheme.error, which is reserved for actions
+                // that lose data or a relationship (e.g. removing a friend, signing out unsynced).
+                val caution = cautionColor()
                 DropdownMenuItem(
-                    text = { Text(if (available) "Remove $format download" else "Download $format") },
-                    leadingIcon = { Icon(if (available) BrandIcons.Trash else BrandIcons.Download, null, Modifier.size(18.dp)) },
+                    text = { Text(if (available) "Remove $format download" else "Download $format", color = if (available) caution else Color.Unspecified) },
+                    leadingIcon = { Icon(if (available) BrandIcons.Trash else BrandIcons.Download, null, Modifier.size(18.dp), tint = if (available) caution else MaterialTheme.colorScheme.onSurfaceVariant) },
                     onClick = { open = false; if (available) controller.removeDownload(edition) else controller.download(edition) },
                 )
             }

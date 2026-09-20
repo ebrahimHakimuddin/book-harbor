@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -262,7 +263,9 @@ private fun <T> ChoiceRow(choices: List<T>, selected: T, label: (T) -> String, o
                     containerColor = if (choice == selected) MaterialTheme.colorScheme.primary else Color.Transparent,
                     contentColor = if (choice == selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                 ),
-                shape = RoundedCornerShape(10.dp),
+                // Pill-shaped, matching the other selector chips in the app (e.g. the library's
+                // shelf filters), rather than a one-off corner radius used nowhere else.
+                shape = CircleShape,
             ) { Text(label(choice), maxLines = 1, fontSize = 12.sp) }
         }
     }

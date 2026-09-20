@@ -22,10 +22,14 @@ import dev.bookharbor.app.R
 import dev.bookharbor.app.reader.ReaderTheme
 
 val HarborNavy = Color(0xFF0F2D46)
-val SeaTeal = Color(0xFF2E7D7A)
+// Darkened from the original F4A261-paired 0xFF2E7D7A: that shade only cleared 4.48:1 against
+// Sand, just under the 4.5:1 body-text minimum. This clears 6.7:1+ against every light/sepia surface.
+val SeaTeal = Color(0xFF236059)
 val MistCyan = Color(0xFF7FB3C3)
 val Sand = Color(0xFFF8F6EF)
 val Sunrise = Color(0xFFF4A261)
+/** A darker amber for light/sepia surfaces, where raw [Sunrise] only clears ~2:1 contrast as text. */
+private val CautionAmberLight = Color(0xFF9C5211)
 
 val InterFamily = FontFamily(
     Font(R.font.inter, weight = FontWeight.Normal),
@@ -117,6 +121,17 @@ fun BookHarborTheme(
         content = content,
     )
 }
+
+/**
+ * A distinct color for a reversible/lower-severity destructive action (e.g. removing a
+ * download you can refetch), separate from [MaterialTheme]'s `error` (a severe or
+ * irreversible action, e.g. removing a friend or signing out with unsynced progress).
+ * Material3's ColorScheme has no built-in "caution" role, so this is a plain function
+ * rather than a ColorScheme field; it tracks the current background so it stays legible
+ * across every reader theme.
+ */
+@Composable
+fun cautionColor(): Color = if (MaterialTheme.colorScheme.background.luminance() > 0.5f) CautionAmberLight else Sunrise
 
 @Composable
 private fun ApplySystemBars(colors: ColorScheme) {
