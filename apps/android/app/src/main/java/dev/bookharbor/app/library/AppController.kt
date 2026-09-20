@@ -22,6 +22,8 @@ sealed interface LibraryUiState {
         val downloads: Map<String, DownloadStatus> = emptyMap(),
         val errors: Map<String, String> = emptyMap(),
         val progress: Map<String, Double> = emptyMap(),
+        /** RFC 3339 UTC instant of each book's most recent local reading event, for the History tab. */
+        val lastReadAt: Map<String, String> = emptyMap(),
         /** True when showing the last saved catalog because the server could not be reached. */
         val offline: Boolean = false,
     ) : LibraryUiState
@@ -145,13 +147,21 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
 
     private fun catalog(name: String, books: List<Book>, offline: Boolean): LibraryUiState.Catalog {
         val available = graph.downloads.all().map { it.editionId }.toSet()
+        val (progress, lastReadAt) = readingProgress()
         return LibraryUiState.Catalog(
             instanceName = name,
             books = books,
             downloads = books.flatMap { it.editions }.associate { it.id to if (it.id in available) DownloadStatus.AVAILABLE else DownloadStatus.NOT_DOWNLOADED },
-            progress = graph.progress.positions().associate { it.bookId to it.percentage },
+            progress = progress,
+            lastReadAt = lastReadAt,
             offline = offline,
         )
+    }
+
+    /** Percentage and last-activity time per book, from this device's local reading positions. */
+    private fun readingProgress(): Pair<Map<String, Double>, Map<String, String>> {
+        val positions = graph.progress.positions()
+        return positions.associate { it.bookId to it.percentage } to positions.associate { it.bookId to it.occurredAt }
     }
 
     private fun updateCatalog(change: (LibraryUiState.Catalog) -> LibraryUiState.Catalog) {
@@ -207,7 +217,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     fun closeReader() {
         opened?.epub?.close()
         opened = null
-        updateCatalog { it.copy(progress = graph.progress.positions().associate { p -> p.bookId to p.percentage }) }
+        updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
         scope.launch(Dispatchers.IO) { refreshSync() }
     }
 
@@ -222,7 +232,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 sync = sync.copy(error = "Couldn't reach the server. Your progress is saved here and will sync when you're back online.")
             }
             refreshSync()
-            updateCatalog { it.copy(progress = graph.progress.positions().associate { p -> p.bookId to p.percentage }) }
+            updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
         }
     }
 

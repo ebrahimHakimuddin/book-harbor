@@ -81,13 +81,14 @@ import dev.bookharbor.app.R
 import dev.bookharbor.app.ui.BrandIcons
 import dev.bookharbor.app.ui.theme.HarborNavy
 import dev.bookharbor.app.ui.theme.LiterataFamily
+import dev.bookharbor.app.ui.theme.cautionColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 import kotlin.math.roundToInt
 
-private enum class Tab(val label: String) { Library("Library"), Sync("Sync"), Friends("Friends"), More("More") }
+private enum class Tab(val label: String) { Library("Library"), History("History"), Friends("Friends"), More("More") }
 
 @Composable
 fun LibraryScreen(controller: AppController) {
@@ -165,7 +166,7 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
                     NavigationBarItem(
                         selected = tab == item,
                         onClick = { tab = item },
-                        icon = { Icon(when (item) { Tab.Library -> BrandIcons.Library; Tab.Sync -> BrandIcons.Sync; Tab.Friends -> BrandIcons.Friends; Tab.More -> BrandIcons.More }, contentDescription = null) },
+                        icon = { Icon(when (item) { Tab.Library -> BrandIcons.Library; Tab.History -> BrandIcons.History; Tab.Friends -> BrandIcons.Friends; Tab.More -> BrandIcons.More }, contentDescription = null) },
                         label = { Text(item.label) },
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.onPrimary, selectedTextColor = MaterialTheme.colorScheme.primary, indicatorColor = MaterialTheme.colorScheme.primary),
                     )
@@ -175,8 +176,8 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                Tab.Library -> LibraryTab(controller, catalog, onOpenSync = { tab = Tab.Sync })
-                Tab.Sync -> SyncTab(controller, catalog)
+                Tab.Library -> LibraryTab(controller, catalog, onOpenHistory = { tab = Tab.History })
+                Tab.History -> HistoryTab(controller, catalog)
                 Tab.Friends -> FriendsTab(controller)
                 Tab.More -> MoreTab(controller, catalog)
             }
@@ -196,7 +197,7 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
 // ---- Library ---------------------------------------------------------------------------------
 
 @Composable
-private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalog, onOpenSync: () -> Unit) {
+private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalog, onOpenHistory: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(ShelfFilter.All) }
     var sort by rememberSaveable { mutableStateOf(BookSort.Recent) }
@@ -205,7 +206,7 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
 
     PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)) {
-        item { LibraryHeader(controller, catalog, onOpenSync) }
+        item { LibraryHeader(controller, catalog, onOpenHistory) }
         item {
             Text("Your library.\nEverywhere with you.", Modifier.padding(top = 18.dp, bottom = 16.dp), fontFamily = LiterataFamily, fontWeight = FontWeight.Normal, fontSize = 27.sp, lineHeight = 33.sp, color = MaterialTheme.colorScheme.onBackground)
         }
@@ -238,7 +239,7 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
 }
 
 @Composable
-private fun LibraryHeader(controller: AppController, catalog: LibraryUiState.Catalog, onOpenSync: () -> Unit) {
+private fun LibraryHeader(controller: AppController, catalog: LibraryUiState.Catalog, onOpenHistory: () -> Unit) {
     val sync = controller.sync
     // Three equal-weight columns instead of a Box overlay: the brand mark and the actions can
     // never collide, even at large system font sizes, because each is bounded to its own third.
@@ -250,11 +251,11 @@ private fun LibraryHeader(controller: AppController, catalog: LibraryUiState.Cat
         }
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             val (icon, description) = when {
-                catalog.offline -> BrandIcons.CloudOff to "Offline. Open sync status."
-                sync.pending > 0 -> BrandIcons.Cloud to "${sync.pending} updates waiting to sync. Open sync status."
-                else -> BrandIcons.CloudDone to "Everything synced. Open sync status."
+                catalog.offline -> BrandIcons.CloudOff to "Offline. Open reading history."
+                sync.pending > 0 -> BrandIcons.Cloud to "${sync.pending} updates waiting to sync. Open reading history."
+                else -> BrandIcons.CloudDone to "Everything synced. Open reading history."
             }
-            IconButton(onClick = onOpenSync) { Icon(icon, description, tint = MaterialTheme.colorScheme.onBackground) }
+            IconButton(onClick = onOpenHistory) { Icon(icon, description, tint = MaterialTheme.colorScheme.onBackground) }
             Box(Modifier.size(34.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
                 Text(initialsOf(controller.displayName), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onBackground)
             }
@@ -373,49 +374,105 @@ private fun EmptyShelf(hasBooks: Boolean, filtering: Boolean) {
         Image(painterResource(R.drawable.brand_mark), contentDescription = null, Modifier.height(64.dp), alpha = 0.55f)
         Text(if (hasBooks && filtering) "Nothing here yet" else "No books yet", style = MaterialTheme.typography.titleLarge)
         Text(
-            if (hasBooks && filtering) "Try a different search, or pick another shelf." else "Ask your server's administrator to import a book, then pull to refresh from Sync.",
+            if (hasBooks && filtering) "Try a different search, or pick another shelf." else "Ask your server's administrator to import a book, then pull to refresh.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
         )
     }
 }
 
-// ---- Sync ------------------------------------------------------------------------------------
+// ---- History ---------------------------------------------------------------------------------
 
 @Composable
-private fun SyncTab(controller: AppController, catalog: LibraryUiState.Catalog) {
+private fun HistoryTab(controller: AppController, catalog: LibraryUiState.Catalog) {
     val sync = controller.sync
     val synced = sync.pending == 0 && !catalog.offline && sync.error == null
+    val read = remember(catalog.books, catalog.lastReadAt) {
+        catalog.books.filter { it.id in catalog.lastReadAt }.sortedByDescending { catalog.lastReadAt[it.id] }
+    }
     PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        Text("Sync", style = MaterialTheme.typography.headlineLarge)
-        Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Icon(if (synced) BrandIcons.CloudDone else if (catalog.offline) BrandIcons.CloudOff else BrandIcons.Cloud, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.secondary)
-            Text(
-                when {
-                    sync.running -> "Syncing…"
-                    catalog.offline -> "You're offline"
-                    sync.pending > 0 -> "${sync.pending} ${if (sync.pending == 1) "update" else "updates"} waiting"
-                    else -> "Everything is synced"
-                },
-                style = MaterialTheme.typography.titleLarge,
-            )
-            Text(
-                sync.error ?: if (sync.lastSyncMillis > 0) "Last synced ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(sync.lastSyncMillis))}" else "Your place in every book is saved on this device first, then sent whenever you're online.",
-                style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = if (sync.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(onClick = controller::syncNow, enabled = !sync.running, shape = RoundedCornerShape(9.dp)) {
-                if (sync.running) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary) else Icon(BrandIcons.Sync, null, Modifier.size(18.dp))
-                Text("  Sync now")
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        item { Text("History", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(bottom = 14.dp)) }
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 18.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable(onClick = controller::syncNow, enabled = !sync.running).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (sync.running) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
+                else Icon(if (synced) BrandIcons.CloudDone else if (catalog.offline) BrandIcons.CloudOff else BrandIcons.Cloud, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.secondary)
+                Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                    Text(
+                        when {
+                            sync.running -> "Syncing…"
+                            catalog.offline -> "You're offline"
+                            sync.pending > 0 -> "${sync.pending} ${if (sync.pending == 1) "update" else "updates"} waiting"
+                            else -> "Everything is synced"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        sync.error ?: if (sync.lastSyncMillis > 0) "Last synced ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(sync.lastSyncMillis))}" else "Tap to sync now",
+                        style = MaterialTheme.typography.bodySmall, color = if (sync.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(BrandIcons.Sync, "Sync now", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (sync.rejected > 0) Text(
-            "${sync.rejected} reading ${if (sync.rejected == 1) "update was" else "updates were"} refused by the server (for example, a book that no longer exists) and won't be retried.",
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (sync.rejected > 0) item {
+            Text(
+                "${sync.rejected} reading ${if (sync.rejected == 1) "update was" else "updates were"} refused by the server and won't be retried.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 14.dp),
+            )
+        }
+        if (read.isEmpty()) {
+            item {
+                Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(BrandIcons.History, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Nothing read yet", style = MaterialTheme.typography.titleLarge)
+                    Text("Books you open will show up here.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                }
+            }
+        } else {
+            items(read, key = { it.id }) { book -> HistoryRow(controller, catalog, book) }
+        }
     }
+    }
+}
+
+@Composable
+private fun HistoryRow(controller: AppController, catalog: LibraryUiState.Catalog, book: Book) {
+    val progress = catalog.progress[book.id]
+    val when_ = catalog.lastReadAt[book.id]?.let(::relativeReadTime)
+    Row(
+        Modifier.fillMaxWidth().clickable(onClickLabel = "Open ${book.title}", role = Role.Button) { controller.open(book) }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Cover(book, controller.covers, Modifier.width(52.dp))
+        Column(Modifier.weight(1f).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
+            val status = when {
+                isFinished(progress) -> "Finished"
+                isReading(progress) -> "${((progress ?: 0.0) * 100).roundToInt()}% read"
+                else -> "Started"
+            }
+            Text(
+                listOfNotNull(status, when_).joinToString(" · "),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** A short "3h ago" / "2d ago" / date label from an RFC 3339 UTC instant. */
+private fun relativeReadTime(occurredAt: String): String? {
+    val then = runCatching { java.time.Instant.parse(occurredAt) }.getOrNull() ?: return null
+    val minutes = java.time.Duration.between(then, java.time.Instant.now()).toMinutes()
+    return when {
+        minutes < 1 -> "Just now"
+        minutes < 60 -> "${minutes}m ago"
+        minutes < 24 * 60 -> "${minutes / 60}h ago"
+        minutes < 7 * 24 * 60 -> "${minutes / (24 * 60)}d ago"
+        else -> DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date.from(then))
     }
 }
 
