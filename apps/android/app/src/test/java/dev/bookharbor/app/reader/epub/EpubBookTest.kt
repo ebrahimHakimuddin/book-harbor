@@ -106,6 +106,43 @@ class EpubBookTest {
         assertThrows(EpubException::class.java) { EpubBook.open(epub(opf = "<package")) }
     }
 
+    @Test fun capturesHyperlinksAndAnchorIds() {
+        val withLink = """<html xmlns="http://www.w3.org/1999/xhtml"><body>
+            <p id="ref1">See the note<a href="ch2.xhtml#note1">here</a> for more.</p>
+            <p id="note1">The note itself.</p>
+            </body></html>"""
+        EpubBook.open(epub(chapters = mapOf("ch1.xhtml" to withLink, "ch2.xhtml" to CH2))).use { book ->
+            val paragraph = book.blocks(0)[0] as Block.Paragraph
+            assertEquals("ref1", paragraph.id)
+            assertEquals(1, paragraph.links.size)
+            val link = paragraph.links[0]
+            assertEquals("ch2.xhtml#note1", link.href)
+            assertEquals("here", paragraph.text.substring(link.start, link.end))
+            assertEquals("note1", (book.blocks(0)[1] as Block.Paragraph).id)
+        }
+    }
+
+    @Test fun repairsRealWorldMalformedXhtml() {
+        // Seen in the wild (a Calibre-produced EPUB): a duplicate <html> root before <head>, and
+        // unclosed void elements (<br>, <img> with no "/>"), neither of which a strict XML parser
+        // accepts. Both must be recovered rather than silently dropping the whole chapter.
+        val malformed = """<?xml version="1.0" encoding="utf-8"?>
+            <html xmlns="http://www.w3.org/1999/xhtml">
+            <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+            <head><title>x</title></head>
+            <body>
+              <br>
+              <p class="ilustra"><img src="pic.png" alt="Pic"></p>
+              <h1>Chapter One</h1>
+              <p>Harbor light, then dawn.</p>
+            </body></html>"""
+        EpubBook.open(epub(chapters = mapOf("ch1.xhtml" to malformed, "ch2.xhtml" to CH2))).use { book ->
+            val blocks = book.blocks(0)
+            assertEquals("Chapter One", blocks.filterIsInstance<Block.Heading>().single().text)
+            assertEquals("pic.png", blocks.filterIsInstance<Block.Image>().single().href)
+        }
+    }
+
     @Test fun doesNotFetchExternalEntities() {
         // A hostile chapter declaring an external entity must parse without touching the file or network.
         val hostile = """<?xml version="1.0"?><!DOCTYPE html [<!ENTITY x SYSTEM "file:///etc/passwd">]><html xmlns="http://www.w3.org/1999/xhtml"><body><p>safe &x;</p></body></html>"""

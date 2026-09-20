@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -117,10 +118,12 @@ fun PdfReaderScreen(
     DisposableEffect(book) { onDispose { book?.close() } }
 
     if (opened == null) {
+        BackHandler(onBack = onClose)
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
     if (book == null) {
+        BackHandler(onBack = onClose)
         val reason = opened?.exceptionOrNull()
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp), verticalArrangement = Arrangement.Center) {
             Text("This PDF can't be opened", style = MaterialTheme.typography.headlineMedium)
@@ -182,6 +185,14 @@ private fun PdfPages(
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { persist(latest) }
     DisposableEffect(Unit) { onDispose { persist(latest) } }
 
+    // Flush the debounced position before handing off — closing (either path) reads the
+    // store synchronously and must not race the pending write.
+    fun closeAndFlush() {
+        persist(latest)
+        onClose()
+    }
+    BackHandler(onBack = ::closeAndFlush)
+
     // "Contents" for a PDF is a page list; choosing a page scrolls there.
     var jumpTarget by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(jumpTarget) {
@@ -197,7 +208,7 @@ private fun PdfPages(
                 jumpTarget = action.index
             }
         },
-        onClose = onClose,
+        onClose = ::closeAndFlush,
         progressLabel = "Page ${state.chapterIndex + 1} of $count",
         fixedLayout = true,
         contentsLabel = "Pages",

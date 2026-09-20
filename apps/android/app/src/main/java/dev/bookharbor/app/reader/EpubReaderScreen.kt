@@ -1,6 +1,8 @@
 package dev.bookharbor.app.reader
 
+import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -29,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -37,20 +40,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import dev.bookharbor.app.reader.epub.Block
 import dev.bookharbor.app.reader.epub.EpubBook
 import dev.bookharbor.app.reader.epub.EpubPosition
+import dev.bookharbor.app.reader.epub.LinkSpan
 import dev.bookharbor.app.reader.epub.indexOfPath
 import dev.bookharbor.app.sync.LocalPosition
 import dev.bookharbor.app.sync.Locator
@@ -62,6 +73,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -135,15 +147,46 @@ fun EpubReaderScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { latest?.let(::persist) }
     DisposableEffect(Unit) { onDispose { latest?.let(::persist) } }
 
+    // Flush the debounced position before handing off — closing (either path) reads the
+    // store synchronously and must not race the pending write.
+    fun closeAndFlush() {
+        latest?.let(::persist)
+        onClose()
+    }
+    BackHandler(onBack = ::closeAndFlush)
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    fun openLink(href: String) {
+        if (href.contains("://")) {
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(href))) }
+            return
+        }
+        val targetHref = EpubBook.resolve(book.chapters[chapterIndex].href, href) ?: return
+        val targetChapterIndex = book.chapters.indexOfFirst { it.href == targetHref }
+        if (targetChapterIndex < 0) return
+        val fragment = href.substringAfter('#', "")
+        scope.launch(Dispatchers.IO) {
+            // The anchor's own block, if this chapter's blocks are loaded and it has one;
+            // otherwise the link just lands at the top of the target chapter.
+            val targetPath = fragment.takeIf { it.isNotEmpty() }
+                ?.let { frag -> runCatching { book.blocks(targetChapterIndex) }.getOrNull()?.firstOrNull { it.id == frag }?.path }
+            withContext(Dispatchers.Main) {
+                pendingRestore = targetPath?.let { EpubPosition(targetChapterIndex, it) }
+                dispatch(ReaderAction.SelectChapter(targetChapterIndex))
+            }
+        }
+    }
+
     ReaderScaffold(
         state = state,
         onAction = dispatch,
-        onClose = onClose,
+        onClose = ::closeAndFlush,
         progressLabel = "Chapter ${chapterIndex + 1} of ${state.chapters.size} · ${state.chapter.title}",
         progress = state.currentChapterProgress,
         percentage = (state.currentChapterProgress * 100).roundToInt(),
     ) { padding ->
-        ChapterList(book, state, blocks, listState, padding) { dispatch(ReaderAction.NextChapter) }
+        ChapterList(book, state, blocks, listState, padding, onLinkClick = ::openLink) { dispatch(ReaderAction.NextChapter) }
     }
 }
 
@@ -164,6 +207,7 @@ private fun ChapterList(
     blocks: List<Block>?,
     listState: LazyListState,
     padding: PaddingValues,
+    onLinkClick: (String) -> Unit,
     onNextChapter: () -> Unit,
 ) {
     val settings = state.settings
@@ -192,7 +236,7 @@ private fun ChapterList(
             }
         }
         itemsIndexed(blocks, key = { index, _ -> index }) { _, block ->
-            Measure(settings) { BlockView(book, book.chapters[state.chapterIndex].href, block, body, gap) }
+            Measure(settings) { BlockView(book, book.chapters[state.chapterIndex].href, block, body, gap, onLinkClick) }
         }
         item(key = "transition") {
             Measure(settings) {
@@ -213,21 +257,36 @@ private fun Measure(settings: ReaderSettings, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun BlockView(book: EpubBook, chapterHref: String, block: Block, body: TextStyle, gap: androidx.compose.ui.unit.Dp) {
+private fun BlockView(book: EpubBook, chapterHref: String, block: Block, body: TextStyle, gap: androidx.compose.ui.unit.Dp, onLinkClick: (String) -> Unit) {
     when (block) {
         is Block.Heading -> Text(
-            block.text,
+            linkedText(block.text, block.links, onLinkClick),
             Modifier.padding(top = gap, bottom = gap / 2).semantics { heading() },
             style = when (block.level) { 1 -> MaterialTheme.typography.headlineLarge; 2 -> MaterialTheme.typography.headlineMedium; else -> MaterialTheme.typography.titleLarge },
         )
-        is Block.Paragraph -> Text(block.text, Modifier.padding(bottom = gap), style = body)
+        is Block.Paragraph -> Text(linkedText(block.text, block.links, onLinkClick), Modifier.padding(bottom = gap), style = body)
         is Block.Quote -> Row(Modifier.padding(bottom = gap)) {
             Box(Modifier.width(3.dp).height(24.dp).background(MaterialTheme.colorScheme.secondary))
-            Text(block.text, Modifier.padding(start = 14.dp), style = body.copy(fontStyle = FontStyle.Italic))
+            Text(linkedText(block.text, block.links, onLinkClick), Modifier.padding(start = 14.dp), style = body.copy(fontStyle = FontStyle.Italic))
         }
         is Block.Preformatted -> Text(block.text, Modifier.padding(bottom = gap), style = body.copy(fontFamily = FontFamily.Monospace, fontSize = body.fontSize * 0.85, lineHeight = body.lineHeight * 0.9))
         is Block.Rule -> HorizontalDivider(Modifier.padding(vertical = gap), color = MaterialTheme.colorScheme.outline)
         is Block.Image -> BookImage(book, chapterHref, block, Modifier.padding(bottom = gap))
+    }
+}
+
+/** [text] with each of [links] underlined and tappable, without disturbing plain (link-free) text. */
+@Composable
+private fun linkedText(text: String, links: List<LinkSpan>, onLinkClick: (String) -> Unit): AnnotatedString {
+    if (links.isEmpty()) return AnnotatedString(text)
+    val color = MaterialTheme.colorScheme.secondary
+    return buildAnnotatedString {
+        append(text)
+        links.forEach { link ->
+            if (link.start !in 0..text.length || link.end !in link.start..text.length) return@forEach
+            addStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline), link.start, link.end)
+            addLink(LinkAnnotation.Clickable(link.href) { onLinkClick(link.href) }, link.start, link.end)
+        }
     }
 }
 

@@ -1,28 +1,47 @@
 package dev.bookharbor.app.reader.epub
 
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document.OutputSettings
+import org.jsoup.nodes.Entities
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.w3c.dom.Node
 import org.xml.sax.InputSource
+import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
 
 internal object Xml {
-    /** Parses untrusted XML: no DTD or external entity is ever fetched. */
+    private fun newBuilder() = DocumentBuilderFactory.newInstance().apply {
+        isNamespaceAware = true
+        isValidating = false
+        isExpandEntityReferences = false
+    }.newDocumentBuilder().apply {
+        // Parsing untrusted XML: no DTD or external entity is ever fetched.
+        setEntityResolver { _, _ -> InputSource(StringReader("")) }
+        setErrorHandler(null)
+    }
+
+    /**
+     * Parses XHTML. Real-world EPUBs are frequently not well-formed XML -- unclosed void
+     * elements (`<br>`, `<img src="…">`), duplicate `<html>` roots, unescaped entities -- so a
+     * strict-parse failure retries once through Jsoup's HTML tag-soup repair, which normalizes
+     * that into well-formed markup the strict parser can then read.
+     */
     fun parse(stream: InputStream): Document {
-        val factory = DocumentBuilderFactory.newInstance().apply {
-            isNamespaceAware = true
-            isValidating = false
-            isExpandEntityReferences = false
-        }
-        val builder = factory.newDocumentBuilder()
-        builder.setEntityResolver { _, _ -> InputSource(StringReader("")) }
-        builder.setErrorHandler(null)
+        val bytes = stream.readBytes()
         return try {
-            builder.parse(stream)
-        } catch (error: Exception) {
-            throw EpubException("Malformed XML in EPUB", error)
+            newBuilder().parse(ByteArrayInputStream(bytes))
+        } catch (strictError: Exception) {
+            try {
+                val repaired = Jsoup.parse(ByteArrayInputStream(bytes), null, "").apply {
+                    outputSettings(OutputSettings().syntax(OutputSettings.Syntax.xml).escapeMode(Entities.EscapeMode.xhtml))
+                }
+                newBuilder().parse(ByteArrayInputStream(repaired.outerHtml().toByteArray()))
+            } catch (_: Exception) {
+                throw EpubException("Malformed XML in EPUB", strictError)
+            }
         }
     }
 
@@ -60,16 +79,17 @@ object XhtmlBlocks {
         Xml.children(parent).forEachIndexed { index, element ->
             val path = "$parentPath/${2 * (index + 1)}"
             val name = element.tag()
+            val id = element.getAttribute("id")
             when {
                 name in SKIPPED -> Unit
-                name in HEADINGS -> text(element).takeIf { it.isNotEmpty() }?.let { out += Block.Heading(name.last() - '0', it, path) }
-                name == "hr" -> out += Block.Rule(path)
+                name in HEADINGS -> textAndLinks(element).let { (text, links) -> if (text.isNotEmpty()) out += Block.Heading(name.last() - '0', text, path, id, links) }
+                name == "hr" -> out += Block.Rule(path, id)
                 name == "img" -> image(element, path)?.let { out += it }
-                name == "pre" -> out += Block.Preformatted(element.textContent.trim('\n'), path)
-                name == "blockquote" -> leaf(element, path, out) { Block.Quote(it, path) }
-                name in PARAGRAPHS -> leaf(element, path, out) { Block.Paragraph(if (name == "li") "• $it" else it, path) }
+                name == "pre" -> out += Block.Preformatted(element.textContent.trim('\n'), path, id)
+                name == "blockquote" -> leaf(element, path, id, out) { text, links -> Block.Quote(text, path, id, links) }
+                name in PARAGRAPHS -> leaf(element, path, id, out) { text, links -> Block.Paragraph(if (name == "li") "• $text" else text, path, id, links) }
                 name in CONTAINERS -> walk(element, path, out)
-                else -> leaf(element, path, out) { Block.Paragraph(it, path) } // inline content sitting directly in a container
+                else -> leaf(element, path, id, out) { text, links -> Block.Paragraph(text, path, id, links) } // inline content sitting directly in a container
             }
         }
     }
@@ -78,9 +98,9 @@ object XhtmlBlocks {
      * A textual block. If it also holds block children (a blockquote of paragraphs, a list item
      * with a nested list) they are walked instead so each gets its own position.
      */
-    private fun leaf(element: Element, path: String, out: MutableList<Block>, make: (String) -> Block) {
+    private fun leaf(element: Element, path: String, id: String, out: MutableList<Block>, make: (String, List<LinkSpan>) -> Block) {
         if (hasBlockChild(element)) { walk(element, path, out); return }
-        text(element).takeIf { it.isNotEmpty() }?.let { out += make(it) }
+        textAndLinks(element).let { (text, links) -> if (text.isNotEmpty()) out += make(text, links) }
         images(element, path).forEach { out += it }
     }
 
@@ -96,7 +116,40 @@ object XhtmlBlocks {
 
     private fun image(element: Element, path: String): Block.Image? {
         val src = element.getAttribute("src").ifBlank { element.getAttributeNS("http://www.w3.org/1999/xlink", "href") }
-        return if (src.isBlank()) null else Block.Image(src, element.getAttribute("alt"), path)
+        return if (src.isBlank()) null else Block.Image(src, element.getAttribute("alt"), path, element.getAttribute("id"))
+    }
+
+    /**
+     * A block's text, plus any `<a href>` inside it as ranges into that text. Spans are found by
+     * locating each link's own rendered text within the block's text (both go through the same
+     * whitespace-collapsing [text]), rather than tracking offsets through that collapsing pass
+     * directly -- simpler, and a link that can't be located this way is just left untappable
+     * instead of risking the actual paragraph text.
+     */
+    private fun textAndLinks(element: Element): Pair<String, List<LinkSpan>> {
+        val full = text(element)
+        val links = ArrayList<LinkSpan>()
+        var searchFrom = 0
+        findLinks(element) { linkText, href ->
+            if (linkText.isBlank()) return@findLinks
+            val start = full.indexOf(linkText, searchFrom)
+            if (start < 0) return@findLinks
+            val end = start + linkText.length
+            links += LinkSpan(start, end, href)
+            searchFrom = end
+        }
+        return full to links
+    }
+
+    private fun findLinks(node: Node, onLink: (text: String, href: String) -> Unit) {
+        var child = node.firstChild
+        while (child != null) {
+            if (child is Element && child.tag() !in SKIPPED) {
+                val href = child.getAttribute("href")
+                if (child.tag() == "a" && href.isNotBlank()) onLink(text(child), href) else findLinks(child, onLink)
+            }
+            child = child.nextSibling
+        }
     }
 
     /** Visible text with runs of whitespace collapsed; `<br>` becomes a line break. */

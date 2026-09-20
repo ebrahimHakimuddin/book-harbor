@@ -68,6 +68,10 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.work:work-runtime-ktx:2.10.2")
+    // Real-world EPUBs are frequently not well-formed XML (unclosed <br>/<img>, duplicate <html>
+    // roots, etc.). Jsoup repairs that tag soup into well-formed markup before the strict XML
+    // parser sees it; hand-rolling that repair with regexes is the fragile path, not the lazy one.
+    implementation("org.jsoup:jsoup:1.18.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

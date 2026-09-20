@@ -2,7 +2,6 @@ package dev.bookharbor.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,8 +42,8 @@ fun BookHarborApp() {
 
     val opened = controller.opened
     if (opened != null) {
-        // The reader applies its own theme; everything else follows the system.
-        BackHandler(onBack = controller::closeReader)
+        // The reader applies its own theme; everything else follows the system. Each reader
+        // screen owns its own back handling so it can flush pending progress before closing.
         val common = Triple(opened.book.id, opened.edition.id, opened.book.title)
         if (opened.epub != null) {
             EpubReaderScreen(opened.epub, common.first, common.second, common.third, opened.position, graph.recorder, settings, controller::closeReader)
