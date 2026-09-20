@@ -602,7 +602,7 @@ private fun AboutSection() {
         val available = status as? UpdateStatus.Available
         OutlinedButton(
             onClick = {
-                if (available != null) open(available.release.pageUrl) else {
+                if (available != null) open(available.release.downloadUrl) else {
                     status = UpdateStatus.Checking
                     scope.launch {
                         status = try {
