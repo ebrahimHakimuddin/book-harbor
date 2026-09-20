@@ -15,6 +15,8 @@
   records the initial implementation stack.
 - [`decisions/0003-sqlite-metadata-store.md`](decisions/0003-sqlite-metadata-store.md)
   records the default metadata store.
+- [`backlog.md`](backlog.md) tracks open direction items and audit gaps from
+  the pre-v1 UI/UX and feature audit.
 
 These documents describe intended behavior. Once implementation begins, tested
 code and the versioned HTTP contract become authoritative where they differ.
