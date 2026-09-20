@@ -9,13 +9,16 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 const ACTIONS: Record<string, string> = {
-  "user.create": "Reader added", "user.update": "Account changed", "user.delete": "Account removed",
+  "user.create": "Reader added", "user.update": "Account changed", "user.update_self": "Account updated", "user.delete": "Account removed",
   "book.import": "Book imported", "book.update": "Book edited", "book.delete": "Book deleted", "export.create": "Export downloaded",
+  "friend.request": "Friend request sent", "friend.accept": "Friend request accepted", "friend.decline": "Friend request declined",
+  "friend.cancel": "Friend request cancelled", "friend.remove": "Friend removed", "social_settings.update": "Sharing settings updated",
 }
 
 function iconFor(action: string): LucideIcon {
   if (action.startsWith("user.")) return UsersIcon
   if (action.startsWith("book.")) return BookOpenIcon
+  if (action.startsWith("friend.") || action.startsWith("social_settings.")) return UsersIcon
   return ArchiveIcon
 }
 
