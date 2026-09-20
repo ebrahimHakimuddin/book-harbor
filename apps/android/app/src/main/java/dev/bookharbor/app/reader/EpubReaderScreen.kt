@@ -155,6 +155,18 @@ fun EpubReaderScreen(
     }
     BackHandler(onBack = ::closeAndFlush)
 
+    // Reaching the end of the last chapter records completion at 100% -- not whatever fraction
+    // of the final chapter happened to be on screen -- then returns to the library.
+    fun finishBook() {
+        latest?.let { position ->
+            currentBlocks.value?.getOrNull(position.first)?.let { block ->
+                val cfi = EpubPosition(chapterIndex, block.path).toCfi()
+                recorder.record(bookId, editionId, Locator.epub(cfi), 1.0)
+            }
+        }
+        onClose()
+    }
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     fun openLink(href: String) {
@@ -186,7 +198,7 @@ fun EpubReaderScreen(
         progress = state.currentChapterProgress,
         percentage = (state.currentChapterProgress * 100).roundToInt(),
     ) { padding ->
-        ChapterList(book, state, blocks, listState, padding, onLinkClick = ::openLink) { dispatch(ReaderAction.NextChapter) }
+        ChapterList(book, state, blocks, listState, padding, onLinkClick = ::openLink, onNextChapter = { dispatch(ReaderAction.NextChapter) }, onFinishBook = ::finishBook)
     }
 }
 
@@ -209,6 +221,7 @@ private fun ChapterList(
     padding: PaddingValues,
     onLinkClick: (String) -> Unit,
     onNextChapter: () -> Unit,
+    onFinishBook: () -> Unit,
 ) {
     val settings = state.settings
     val fontSize = 18.sp * settings.fontScale
@@ -241,7 +254,7 @@ private fun ChapterList(
         item(key = "transition") {
             Measure(settings) {
                 Spacer(Modifier.height(48.dp))
-                ChapterTransition(state.nextChapter, onNextChapter)
+                ChapterTransition(state.nextChapter, onNextChapter, onFinishBook)
                 Spacer(Modifier.height(64.dp))
             }
         }

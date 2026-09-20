@@ -41,4 +41,6 @@ object BrandIcons {
     val Server = icon("server", "M4 4h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z", "M4 13h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z", "M7 7.5h.01M7 16.5h.01")
     val Friends = icon("friends", "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2", "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8", "M23 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75")
     val History = icon("history", "M3 12a9 9 0 1 0 2.6-6.3", "M3 4v5h5", "M12 8v4l3 2")
+    val ChevronLeft = icon("chevron-left", "M15 5l-7 7 7 7")
+    val ChevronRight = icon("chevron-right", "M9 5l7 7-7 7")
 }

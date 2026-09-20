@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.bookharbor.app.ui.BrandIcons
 import dev.bookharbor.app.ui.theme.BookHarborTheme
 import dev.bookharbor.app.ui.theme.LiterataFamily
 import kotlin.math.roundToInt
@@ -87,7 +88,13 @@ fun ReaderScaffold(
             },
             bottomBar = {
                 AnimatedVisibility(visible = state.settings.showProgress, enter = fadeIn(), exit = fadeOut()) {
-                    ReaderProgressBar(progress = progress, label = progressLabel, percentage = percentage)
+                    val unit = if (fixedLayout) "page" else "chapter"
+                    ReaderProgressBar(
+                        progress = progress, label = progressLabel, percentage = percentage,
+                        onPrevious = { onAction(ReaderAction.SelectChapter(state.chapterIndex - 1)) }.takeIf { state.chapterIndex > 0 },
+                        onNext = { onAction(ReaderAction.SelectChapter(state.chapterIndex + 1)) }.takeIf { state.chapterIndex < state.chapters.lastIndex },
+                        previousLabel = "Previous $unit", nextLabel = "Next $unit",
+                    )
                 }
             },
             content = content,
@@ -132,7 +139,15 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
 }
 
 @Composable
-private fun ReaderProgressBar(progress: Float, label: String, percentage: Int) {
+private fun ReaderProgressBar(
+    progress: Float,
+    label: String,
+    percentage: Int,
+    onPrevious: (() -> Unit)?,
+    onNext: (() -> Unit)?,
+    previousLabel: String,
+    nextLabel: String,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -143,19 +158,24 @@ private fun ReaderProgressBar(progress: Float, label: String, percentage: Int) {
             Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(2.dp).background(MaterialTheme.colorScheme.secondary))
         }
         Row(
-            modifier = Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 18.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            IconButton(onClick = { onPrevious?.invoke() }, enabled = onPrevious != null) {
+                Icon(BrandIcons.ChevronLeft, previousLabel, tint = if (onPrevious != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+            }
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.weight(1f))
-            Text("$percentage%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("$percentage%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 6.dp))
+            IconButton(onClick = { onNext?.invoke() }, enabled = onNext != null) {
+                Icon(BrandIcons.ChevronRight, nextLabel, tint = if (onNext != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+            }
         }
     }
 }
 
 /** The deliberate end-of-chapter card: reaching the bottom never advances by itself. */
 @Composable
-fun ChapterTransition(nextChapter: ReaderChapter?, onNextChapter: () -> Unit, modifier: Modifier = Modifier) {
+fun ChapterTransition(nextChapter: ReaderChapter?, onNextChapter: () -> Unit, onFinishBook: () -> Unit, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -166,13 +186,14 @@ fun ChapterTransition(nextChapter: ReaderChapter?, onNextChapter: () -> Unit, mo
         Spacer(Modifier.height(12.dp))
         Text(nextChapter?.title ?: "You reached the final page", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(22.dp))
+        // The last chapter's action actually finishes the book (records 100% and returns to the
+        // library) rather than ending on a dead, disabled button.
         Button(
-            onClick = onNextChapter,
-            enabled = nextChapter != null,
+            onClick = if (nextChapter == null) onFinishBook else onNextChapter,
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
         ) {
-            Text(if (nextChapter == null) "Book finished" else "Next chapter")
+            Text(if (nextChapter == null) "Finish book" else "Next chapter")
         }
     }
 }
