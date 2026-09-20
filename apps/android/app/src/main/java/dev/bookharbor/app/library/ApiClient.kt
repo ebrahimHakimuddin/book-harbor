@@ -3,8 +3,12 @@ package dev.bookharbor.app.library
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import org.json.JSONObject
 
 class HttpError(val status: Int, message: String) : Exception(message)
+
+/** The server's error body is `{"code": "...", "message": "..."}`; fall back to the raw body if it isn't. */
+private fun errorMessage(body: String): String = runCatching { JSONObject(body).getString("message") }.getOrDefault(body)
 
 /**
  * The one place that talks HTTP to the BookHarbor server. Authorized calls send the
@@ -43,7 +47,7 @@ class ApiClient(
                 input.copyTo(out)
                 out.toByteArray()
             } ?: ByteArray(0)
-            if (status !in 200..299) throw HttpError(status, String(bytes))
+            if (status !in 200..299) throw HttpError(status, errorMessage(String(bytes)))
             return bytes
         } finally {
             connection.disconnect()

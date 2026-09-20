@@ -84,14 +84,16 @@ private fun SectionLabel(label: String) {
 }
 
 @Composable
-private fun AddFriendRow(onSend: (String) -> Unit) {
+private fun AddFriendRow(onSend: (String, () -> Unit) -> Unit) {
     var email by rememberSaveable { mutableStateOf("") }
     Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = email, onValueChange = { email = it }, singleLine = true, modifier = Modifier.weight(1f),
             label = { Text("Add a friend by email") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), shape = RoundedCornerShape(12.dp),
         )
-        Button(onClick = { if (email.isNotBlank()) { onSend(email.trim()); email = "" } }, Modifier.padding(start = 10.dp), enabled = email.isNotBlank(), shape = RoundedCornerShape(9.dp)) {
+        // Only clears the field once the request actually succeeds, so a failed attempt
+        // (e.g. a typo'd address) leaves the text in place to fix.
+        Button(onClick = { if (email.isNotBlank()) onSend(email.trim()) { email = "" } }, Modifier.padding(start = 10.dp), enabled = email.isNotBlank(), shape = RoundedCornerShape(9.dp)) {
             Text("Send")
         }
     }
@@ -127,7 +129,10 @@ private fun FriendCard(friend: Friend, onRemove: () -> Unit) {
                     Text("Activity is private", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            TextButton(onClick = onRemove) { Text("Remove") }
+            // Unlike declining/cancelling a pending request (which either side can just redo),
+            // removing an established friend needs the other person to accept a fresh request
+            // to undo, so it gets colorScheme.error rather than a milder tone.
+            TextButton(onClick = onRemove) { Text("Remove", color = MaterialTheme.colorScheme.error) }
         }
         friend.currentlyReading.forEach { book ->
             Column(Modifier.padding(start = 52.dp, top = 6.dp)) {

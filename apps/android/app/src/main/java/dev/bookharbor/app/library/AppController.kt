@@ -254,11 +254,12 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         }
     }
 
-    fun sendFriendRequest(email: String) {
+    fun sendFriendRequest(email: String, onSent: () -> Unit = {}) {
         scope.launch(Dispatchers.IO) {
             try {
                 graph.friends.sendRequest(email)
                 loadFriends()
+                onSent()
             } catch (error: Exception) {
                 friendsUi = friendsUi.copy(error = error.message ?: "Couldn't send that friend request")
             }
