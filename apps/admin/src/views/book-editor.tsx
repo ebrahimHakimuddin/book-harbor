@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react"
 import { CheckIcon, FileTextIcon, ImageIcon, Loader2Icon, PencilIcon, SearchIcon, SparklesIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 import type { Book, Candidate } from "@/lib/api"
-import { useAddEdition, useCoverMutations, useDeleteBook, useMetadataSearch, useUpdateBook } from "@/lib/queries"
+import { useAddEdition, useCoverMutations, useDeleteBook, useInstance, useMetadataSearch, useUpdateBook } from "@/lib/queries"
 import { errorMessage, formatBytes } from "@/lib/format"
 import { Cover } from "@/components/cover"
 import { useConfirm } from "@/components/confirm"
@@ -40,6 +40,8 @@ export function BookEditor({ book, onClose }: { book: Book | null; onClose: () =
 }
 
 function EditorBody({ book, onClose }: { book: Book; onClose: () => void }) {
+  const instance = useInstance()
+  const metadataEnabled = instance.data?.metadataEnabled ?? false
   const [tab, setTab] = useState("details")
   const [form, setForm] = useState(() => fromBook(book))
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }))
@@ -59,17 +61,17 @@ function EditorBody({ book, onClose }: { book: Book; onClose: () => void }) {
         <TabsList className="mx-6 mt-4 w-fit">
           <TabsTrigger value="details"><PencilIcon />Details{dirty && <span className="size-1.5 rounded-full bg-sunrise" aria-label="Unsaved changes" />}</TabsTrigger>
           <TabsTrigger value="media"><ImageIcon />Cover &amp; files</TabsTrigger>
-          <TabsTrigger value="online"><SparklesIcon />Find online</TabsTrigger>
+          {metadataEnabled && <TabsTrigger value="online"><SparklesIcon />Find online</TabsTrigger>}
         </TabsList>
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <TabsContent value="details"><DetailsTab book={book} form={form} set={set} dirty={dirty} onSaved={(saved) => setForm(fromBook(saved))} onDeleted={onClose} /></TabsContent>
           <TabsContent value="media"><MediaTab book={book} /></TabsContent>
-          <TabsContent value="online"><OnlineTab book={book} onUse={(c) => {
+          {metadataEnabled && <TabsContent value="online"><OnlineTab book={book} onUse={(c) => {
             set({ title: c.title || form.title, subtitle: c.subtitle, authors: c.authors.join("\n"), description: c.description, source: { provider: c.provider, id: c.id },
               ...(isUploaded(book) ? {} : { coverUrl: c.coverUrl }) })
             setTab("details")
             toast.success("Details added to the form. Save to apply them.")
-          }} /></TabsContent>
+          }} /></TabsContent>}
         </div>
       </Tabs>
     </>

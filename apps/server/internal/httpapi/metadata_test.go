@@ -13,7 +13,8 @@ type stubMetadataProvider struct {
 	items []metadata.Candidate
 }
 
-func (stubMetadataProvider) Name() string { return "hardcover" }
+func (stubMetadataProvider) Name() string     { return "hardcover" }
+func (stubMetadataProvider) Configured() bool { return true }
 func (provider stubMetadataProvider) Search(_ context.Context, query string, limit int) ([]metadata.Candidate, error) {
 	if query != "Dune" || limit != 8 {
 		return nil, metadata.ErrUpstream

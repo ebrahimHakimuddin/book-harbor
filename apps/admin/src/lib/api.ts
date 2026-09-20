@@ -59,6 +59,7 @@ export interface Instance {
   setupRequired: boolean
   formats: string[]
   invitesEnabled: boolean
+  metadataEnabled: boolean
 }
 
 export interface Candidate {

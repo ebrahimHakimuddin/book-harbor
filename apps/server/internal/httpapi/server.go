@@ -95,19 +95,21 @@ func (s *server) instance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, struct {
-		Name           string   `json:"name"`
-		Version        string   `json:"version"`
-		Commit         string   `json:"commit"`
-		SetupRequired  bool     `json:"setupRequired"`
-		Formats        []string `json:"formats"`
-		InvitesEnabled bool     `json:"invitesEnabled"`
+		Name            string   `json:"name"`
+		Version         string   `json:"version"`
+		Commit          string   `json:"commit"`
+		SetupRequired   bool     `json:"setupRequired"`
+		Formats         []string `json:"formats"`
+		InvitesEnabled  bool     `json:"invitesEnabled"`
+		MetadataEnabled bool     `json:"metadataEnabled"`
 	}{
-		Name:           s.config.Name,
-		Version:        s.build.Version,
-		Commit:         s.build.Commit,
-		SetupRequired:  setupRequired,
-		Formats:        []string{"epub", "pdf"},
-		InvitesEnabled: s.mailer != nil && s.mailer.Configured(),
+		Name:            s.config.Name,
+		Version:         s.build.Version,
+		Commit:          s.build.Commit,
+		SetupRequired:   setupRequired,
+		Formats:         []string{"epub", "pdf"},
+		InvitesEnabled:  s.mailer != nil && s.mailer.Configured(),
+		MetadataEnabled: s.metadata != nil && s.metadata.Configured(),
 	})
 }
 

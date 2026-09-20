@@ -37,6 +37,8 @@ func NewHardcover(token, endpoint string, client HTTPClient) *Hardcover {
 
 func (h *Hardcover) Name() string { return "hardcover" }
 
+func (h *Hardcover) Configured() bool { return h.token != "" }
+
 func (h *Hardcover) Search(ctx context.Context, query string, limit int) ([]Candidate, error) {
 	if h.token == "" {
 		return nil, ErrUnavailable
