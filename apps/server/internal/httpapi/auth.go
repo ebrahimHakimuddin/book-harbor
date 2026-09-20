@@ -2,7 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -121,21 +125,63 @@ func (s *server) adminUsers(w http.ResponseWriter, r *http.Request) {
 			DisplayName string `json:"displayName"`
 			Email       string `json:"email"`
 			Password    string `json:"password"`
+			Invite      bool   `json:"invite"`
 		}
 		if err := decodeJSON(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_json", "request body must be one valid JSON object")
 			return
 		}
-		user, err := s.users.CreateReader(r.Context(), identity.ReaderInput{DisplayName: request.DisplayName, Email: request.Email, Password: request.Password})
+		password := request.Password
+		if request.Invite {
+			if s.mailer == nil || !s.mailer.Configured() {
+				writeError(w, http.StatusUnprocessableEntity, "invites_not_configured", "email invites are not configured on this server; set a password instead")
+				return
+			}
+			generated, err := generateTempPassword()
+			if err != nil {
+				s.logger.Error("generate invite password", "error", err)
+				writeError(w, http.StatusInternalServerError, "internal_error", "unable to create invite")
+				return
+			}
+			password = generated
+		}
+		user, err := s.users.CreateReader(r.Context(), identity.ReaderInput{DisplayName: request.DisplayName, Email: request.Email, Password: password})
 		if err != nil {
 			s.writeCreateReaderError(w, err)
 			return
+		}
+		if request.Invite {
+			if err := s.sendInviteEmail(r.Context(), user, password); err != nil {
+				s.logger.Error("send invite email", "error", err, "user", user.ID)
+				writeError(w, http.StatusBadGateway, "invite_email_failed", "the account was created, but the invite email could not be sent")
+				return
+			}
 		}
 		s.record(r, "user.create", "user", user.ID, user.Email)
 		writeJSON(w, http.StatusCreated, newUserResponse(user))
 	default:
 		writeMethodNotAllowed(w, "GET, POST")
 	}
+}
+
+// generateTempPassword returns a random password long enough to satisfy identity.ErrWeakPassword's
+// minimum, for accounts created by email invite rather than an admin-chosen password.
+func generateTempPassword() (string, error) {
+	random := make([]byte, 18)
+	if _, err := rand.Read(random); err != nil {
+		return "", fmt.Errorf("generate random password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(random), nil
+}
+
+func (s *server) sendInviteEmail(ctx context.Context, user identity.User, password string) error {
+	subject := fmt.Sprintf("You've been invited to %s", s.config.Name)
+	body := fmt.Sprintf(`<p>Hi %s,</p>
+<p>You've been invited to <strong>%s</strong>. Sign in with the BookHarbor app using:</p>
+<p>Email: %s<br>Temporary password: <strong>%s</strong></p>
+<p>Ask an administrator to reset your password if you'd like a different one.</p>`,
+		html.EscapeString(user.DisplayName), html.EscapeString(s.config.Name), html.EscapeString(user.Email), html.EscapeString(password))
+	return s.mailer.Send(ctx, user.Email, user.DisplayName, subject, body)
 }
 
 func (s *server) writeCreateReaderError(w http.ResponseWriter, err error) {

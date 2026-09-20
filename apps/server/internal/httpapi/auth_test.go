@@ -2,11 +2,82 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+// fakeMailer records sends instead of calling out to ZeptoMail.
+type fakeMailer struct {
+	configured bool
+	sentTo     string
+	sentBody   string
+}
+
+func (f *fakeMailer) Configured() bool { return f.configured }
+
+func (f *fakeMailer) Send(_ context.Context, toEmail, _, _, body string) error {
+	f.sentTo = toEmail
+	f.sentBody = body
+	return nil
+}
+
+func TestAdminInviteByEmail(t *testing.T) {
+	mailer := &fakeMailer{configured: true}
+	handler, _ := testHandlerWithMailer(t, nil, mailer)
+	bootstrapAdministrator(t, handler)
+	admin := login(t, handler, "admin@example.com", "a secure first password")
+
+	invite := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users", bytes.NewBufferString(`{"displayName":"Invitee","email":"invitee@example.com","invite":true}`))
+	invite.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, invite)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("invite status = %d; body = %s", response.Code, response.Body.String())
+	}
+	if mailer.sentTo != "invitee@example.com" {
+		t.Fatalf("mailer.sentTo = %q", mailer.sentTo)
+	}
+	if !bytes.Contains([]byte(mailer.sentBody), []byte("invitee@example.com")) {
+		t.Fatalf("invite email body missing the account email: %s", mailer.sentBody)
+	}
+
+	// The invitee's generated password must actually work for login.
+	temp := extractTempPassword(t, mailer.sentBody)
+	login(t, handler, "invitee@example.com", temp)
+}
+
+func TestAdminInviteRequiresConfiguredMailer(t *testing.T) {
+	handler, _ := testHandlerWithMailer(t, nil, &fakeMailer{configured: false})
+	bootstrapAdministrator(t, handler)
+	admin := login(t, handler, "admin@example.com", "a secure first password")
+
+	invite := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users", bytes.NewBufferString(`{"displayName":"Invitee","email":"invitee@example.com","invite":true}`))
+	invite.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, invite)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invite status = %d; body = %s", response.Code, response.Body.String())
+	}
+	assertErrorCode(t, response, "invites_not_configured")
+}
+
+func extractTempPassword(t *testing.T, body string) string {
+	t.Helper()
+	const marker = "Temporary password: <strong>"
+	start := bytes.Index([]byte(body), []byte(marker))
+	if start < 0 {
+		t.Fatalf("invite email body missing temp password marker: %s", body)
+	}
+	start += len(marker)
+	end := bytes.Index([]byte(body[start:]), []byte("<"))
+	if end < 0 {
+		t.Fatalf("invite email body malformed: %s", body)
+	}
+	return body[start : start+end]
+}
 
 func TestAdminUserRoutes(t *testing.T) {
 	handler := testHandler(t)

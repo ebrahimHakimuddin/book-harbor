@@ -192,6 +192,11 @@ func testHandlerWithDatabase(t *testing.T) (http.Handler, *sql.DB) {
 
 func testHandlerWithMetadata(t *testing.T, metadataProvider metadata.Provider) (http.Handler, *sql.DB) {
 	t.Helper()
+	return testHandlerWithMailer(t, metadataProvider, nil)
+}
+
+func testHandlerWithMailer(t *testing.T, metadataProvider metadata.Provider, mailer Mailer) (http.Handler, *sql.DB) {
+	t.Helper()
 	db, err := database.Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatalf("database.Open() error = %v", err)
@@ -211,6 +216,7 @@ func testHandlerWithMetadata(t *testing.T, metadataProvider metadata.Provider) (
 		reading.NewStore(db),
 		social.NewStore(db),
 		metadataProvider,
+		mailer,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	), db
 }

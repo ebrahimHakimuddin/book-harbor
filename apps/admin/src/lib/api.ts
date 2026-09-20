@@ -58,6 +58,7 @@ export interface Instance {
   version: string
   setupRequired: boolean
   formats: string[]
+  invitesEnabled: boolean
 }
 
 export interface Candidate {
@@ -253,7 +254,7 @@ export const api = {
   searchMetadata: (query: string) => request<{ items: Candidate[] }>(`/api/v1/admin/metadata/search?q=${enc(query)}`),
 
   readers: () => request<{ items: User[] }>("/api/v1/admin/users"),
-  createReader: (body: { displayName: string; email: string; password: string }) =>
+  createReader: (body: { displayName: string; email: string; password?: string; invite?: boolean }) =>
     request<User>("/api/v1/admin/users", { method: "POST", body }),
   updateReader: (id: string, body: { role?: Role; disabled?: boolean; password?: string }) =>
     request<User>(`/api/v1/admin/users/${enc(id)}`, { method: "PATCH", body }),

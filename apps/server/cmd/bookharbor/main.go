@@ -16,6 +16,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/httpapi"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
+	"github.com/bookharbor/bookharbor/apps/server/internal/mail"
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 	"github.com/bookharbor/bookharbor/apps/server/internal/social"
@@ -58,6 +59,10 @@ func main() {
 		os.Getenv("BOOKHARBOR_HARDCOVER_TOKEN"),
 		os.Getenv("BOOKHARBOR_HARDCOVER_ENDPOINT"),
 		nil,
+	), mail.NewZeptoMail(
+		os.Getenv("BOOKHARBOR_ZEPTOMAIL_TOKEN"),
+		os.Getenv("BOOKHARBOR_ZEPTOMAIL_FROM_EMAIL"),
+		os.Getenv("BOOKHARBOR_ZEPTOMAIL_FROM_NAME"),
 	), logger)
 
 	server := &http.Server{

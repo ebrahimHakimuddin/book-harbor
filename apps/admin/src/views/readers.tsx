@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react"
 import { KeyRoundIcon, Loader2Icon, PauseCircleIcon, PlayCircleIcon, ShieldCheckIcon, ShieldOffIcon, Trash2Icon, UserPlusIcon, UsersIcon } from "lucide-react"
 import { toast } from "sonner"
 import type { User } from "@/lib/api"
-import { useCreateReader, useDeleteReader, useReaders, useUpdateReader } from "@/lib/queries"
+import { useCreateReader, useDeleteReader, useInstance, useReaders, useUpdateReader } from "@/lib/queries"
 import { errorMessage, initials, passwordOk, shortDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useConfirm } from "@/components/confirm"
@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 export function ReadersView({ currentUserId }: { currentUserId: string }) {
   const readers = useReaders()
@@ -113,6 +114,9 @@ function ReaderRow({ user, self, fresh, onReset }: { user: User; self: boolean; 
 
 function AddReader({ onCreated }: { onCreated: (user: User) => void }) {
   const create = useCreateReader()
+  const instance = useInstance()
+  const invitesEnabled = instance.data?.invitesEnabled ?? false
+  const [mode, setMode] = useState<"password" | "invite">("password")
   const [displayName, setDisplayName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -120,8 +124,12 @@ function AddReader({ onCreated }: { onCreated: (user: User) => void }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    create.mutate({ displayName, email, password }, {
-      onSuccess: (user) => { toast.success(`${user.displayName} can now sign in.`); setDisplayName(""); setEmail(""); setPassword(""); setReveal(false); onCreated(user) },
+    const body = mode === "invite" ? { displayName, email, invite: true } : { displayName, email, password }
+    create.mutate(body, {
+      onSuccess: (user) => {
+        toast.success(mode === "invite" ? `An invite email was sent to ${user.email}.` : `${user.displayName} can now sign in.`)
+        setDisplayName(""); setEmail(""); setPassword(""); setReveal(false); onCreated(user)
+      },
     })
   }
 
@@ -129,18 +137,27 @@ function AddReader({ onCreated }: { onCreated: (user: User) => void }) {
     <form onSubmit={submit} className="grid gap-4 rounded-xl bg-mist p-6 lg:sticky lg:top-24">
       <div>
         <h2 className="text-2xl font-bold text-navy">Add a reader</h2>
-        <p className="mt-1 text-sm text-muted-foreground">They can sign in immediately with this password.</p>
+        <p className="mt-1 text-sm text-muted-foreground">{mode === "invite" ? "They'll get an email with a temporary password." : "They can sign in immediately with this password."}</p>
       </div>
+      {invitesEnabled && (
+        <ToggleGroup value={[mode]} onValueChange={(v) => v[0] && setMode(v[0] as "password" | "invite")} variant="outline" aria-label="How to add this reader">
+          <ToggleGroupItem value="password" className="flex-1">Set a password</ToggleGroupItem>
+          <ToggleGroupItem value="invite" className="flex-1">Email invite</ToggleGroupItem>
+        </ToggleGroup>
+      )}
       <div className="grid gap-2"><Label htmlFor="reader-name">Display name</Label><Input id="reader-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={100} autoComplete="off" required className="bg-background" /></div>
       <div className="grid gap-2"><Label htmlFor="reader-email">Email</Label><Input id="reader-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" required className="bg-background" /></div>
-      <div className="grid gap-2">
-        <Label htmlFor="reader-password">Temporary password</Label>
-        <PasswordInput id="reader-password" value={password} onChange={(e) => setPassword(e.target.value)} visible={reveal} onVisibleChange={setReveal} minLength={12} maxLength={1024} autoComplete="new-password" required className="bg-background" />
-        <PasswordHelpers value={password} onGenerate={setPassword} onReveal={() => setReveal(true)} />
-      </div>
+      {mode === "password" && (
+        <div className="grid gap-2">
+          <Label htmlFor="reader-password">Temporary password</Label>
+          <PasswordInput id="reader-password" value={password} onChange={(e) => setPassword(e.target.value)} visible={reveal} onVisibleChange={setReveal} minLength={12} maxLength={1024} autoComplete="new-password" required className="bg-background" />
+          <PasswordHelpers value={password} onGenerate={setPassword} onReveal={() => setReveal(true)} />
+        </div>
+      )}
       <p role="alert" className="min-h-5 text-sm text-destructive">{create.isError && errorMessage(create.error, "The reader could not be created.")}</p>
-      <Button type="submit" size="lg" className="h-10" disabled={create.isPending || !passwordOk(password)}>
-        {create.isPending ? <Loader2Icon className="animate-spin" /> : <UserPlusIcon />}Create reader
+      <Button type="submit" size="lg" className="h-10" disabled={create.isPending || (mode === "password" && !passwordOk(password))}>
+        {create.isPending ? <Loader2Icon className="animate-spin" /> : <UserPlusIcon />}
+        {mode === "invite" ? "Send invite" : "Create reader"}
       </Button>
     </form>
   )

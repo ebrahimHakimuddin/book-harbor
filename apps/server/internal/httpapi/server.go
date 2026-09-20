@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,6 +26,14 @@ type BuildInfo struct {
 	Commit  string
 }
 
+// Mailer sends transactional email, such as admin-issued invites. A nil Mailer, or one
+// that reports Configured() == false, means invites are unavailable and admins must set
+// a password directly.
+type Mailer interface {
+	Configured() bool
+	Send(ctx context.Context, toEmail, toName, subject, html string) error
+}
+
 type server struct {
 	config   config.Config
 	build    BuildInfo
@@ -34,15 +43,16 @@ type server struct {
 	metadata metadata.Provider
 	reading  *reading.Store
 	social   *social.Store
+	mailer   Mailer
 	logger   *slog.Logger
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, metadataProvider metadata.Provider, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, metadataProvider metadata.Provider, mailer Mailer, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, logger: logger}
+	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, mailer: mailer, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", adminUI())
 	mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusPermanentRedirect))
@@ -85,17 +95,19 @@ func (s *server) instance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, struct {
-		Name          string   `json:"name"`
-		Version       string   `json:"version"`
-		Commit        string   `json:"commit"`
-		SetupRequired bool     `json:"setupRequired"`
-		Formats       []string `json:"formats"`
+		Name           string   `json:"name"`
+		Version        string   `json:"version"`
+		Commit         string   `json:"commit"`
+		SetupRequired  bool     `json:"setupRequired"`
+		Formats        []string `json:"formats"`
+		InvitesEnabled bool     `json:"invitesEnabled"`
 	}{
-		Name:          s.config.Name,
-		Version:       s.build.Version,
-		Commit:        s.build.Commit,
-		SetupRequired: setupRequired,
-		Formats:       []string{"epub", "pdf"},
+		Name:           s.config.Name,
+		Version:        s.build.Version,
+		Commit:         s.build.Commit,
+		SetupRequired:  setupRequired,
+		Formats:        []string{"epub", "pdf"},
+		InvitesEnabled: s.mailer != nil && s.mailer.Configured(),
 	})
 }
 
