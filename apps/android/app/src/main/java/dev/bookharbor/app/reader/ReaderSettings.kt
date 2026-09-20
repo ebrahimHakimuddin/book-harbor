@@ -11,13 +11,11 @@ enum class ReaderTheme(val label: String) {
 }
 
 enum class ReaderTypeface(val label: String) {
-    Publisher("Publisher"),
     Literata("Literata"),
     Inter("Inter"),
 }
 
 enum class ReaderAlignment(val label: String) {
-    Publisher("Default"),
     Left("Left"),
     Justified("Justified"),
 }
@@ -30,7 +28,7 @@ data class ReaderSettings(
     val lineHeight: Float = 1.55f,
     val paragraphSpacing: Float = 1f,
     val horizontalMargin: Int = 24,
-    val alignment: ReaderAlignment = ReaderAlignment.Publisher,
+    val alignment: ReaderAlignment = ReaderAlignment.Left,
     /** 0.05..1, or null to follow the system brightness. */
     val brightness: Float? = null,
     val showProgress: Boolean = true,
