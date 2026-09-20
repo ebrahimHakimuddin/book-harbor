@@ -22,6 +22,7 @@ var (
 	ErrUserNotFound        = errors.New("user not found")
 	ErrLastAdministrator   = errors.New("at least one active administrator is required")
 	ErrInvalidRole         = errors.New("role must be admin or reader")
+	ErrIncorrectPassword   = errors.New("current password is incorrect")
 	// ErrDuplicateEmail is kept as a descriptive alias for callers that use that terminology.
 	ErrDuplicateEmail = ErrEmailAlreadyExists
 )
@@ -307,6 +308,68 @@ func (s *Store) UpdateUser(ctx context.Context, id string, update UserUpdate) (U
 	}
 	if err := tx.Commit(); err != nil {
 		return User{}, fmt.Errorf("commit user update: %w", err)
+	}
+	return user, nil
+}
+
+// UpdateSelf lets a signed-in user change their own display name and/or password. Unlike
+// UpdateUser (an administrator acting on someone else), a password change here requires the
+// current password, and it does not revoke the caller's own sessions -- they just proved they
+// are who they say they are, so there is nothing to protect against by signing them out.
+func (s *Store) UpdateSelf(ctx context.Context, id string, displayName *string, currentPassword string, newPassword *string) (User, error) {
+	var trimmedName string
+	if displayName != nil {
+		trimmedName = strings.TrimSpace(*displayName)
+		if utf8.RuneCountInString(trimmedName) < 1 || utf8.RuneCountInString(trimmedName) > 100 {
+			return User{}, ErrInvalidDisplayName
+		}
+	}
+	var newPasswordHash string
+	if newPassword != nil {
+		if len(*newPassword) < 12 || len(*newPassword) > 1024 {
+			return User{}, ErrWeakPassword
+		}
+		var currentHash string
+		if err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = ?`, id).Scan(&currentHash); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return User{}, ErrUserNotFound
+			}
+			return User{}, fmt.Errorf("read password hash: %w", err)
+		}
+		ok, err := verifyPassword(currentHash, currentPassword)
+		if err != nil {
+			return User{}, fmt.Errorf("verify current password: %w", err)
+		}
+		if !ok {
+			return User{}, ErrIncorrectPassword
+		}
+		if newPasswordHash, err = hashPassword(*newPassword); err != nil {
+			return User{}, err
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, fmt.Errorf("begin self update: %w", err)
+	}
+	defer tx.Rollback()
+	user, err := loadUser(ctx, tx, id)
+	if err != nil {
+		return User{}, err
+	}
+	if displayName != nil {
+		user.DisplayName = trimmedName
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET display_name = ? WHERE id = ?`, trimmedName, id); err != nil {
+			return User{}, fmt.Errorf("update display name: %w", err)
+		}
+	}
+	if newPassword != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, newPasswordHash, id); err != nil {
+			return User{}, fmt.Errorf("update password: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, fmt.Errorf("commit self update: %w", err)
 	}
 	return user, nil
 }

@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query"
-import { api, type Book, type BookPage, type BookUpdate, type Role, type User } from "@/lib/api"
+import { api, sessionStore, type Book, type BookPage, type BookUpdate, type Role, type User } from "@/lib/api"
 
 export const keys = {
   instance: ["instance"] as const,
@@ -122,6 +122,19 @@ export function useUpdateReader() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; role?: Role; disabled?: boolean; password?: string }) => api.updateReader(id, body),
     onSuccess: (user) => { setReaders(client, (users) => users.map((u) => (u.id === user.id ? user : u))); void audit() },
+  })
+}
+
+// Updates the signed-in admin's own display name and/or password (requires currentPassword
+// whenever newPassword is set), and refreshes the cached session so the header reflects it
+// immediately without forcing a re-login.
+export function useUpdateSelf() {
+  return useMutation({
+    mutationFn: api.updateSelf,
+    onSuccess: (user) => {
+      const session = sessionStore.get()
+      if (session) sessionStore.set({ ...session, user })
+    },
   })
 }
 

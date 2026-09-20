@@ -500,6 +500,7 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
             Icon(BrandIcons.Server, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.secondary)
             Text(controller.serverUrl, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        ProfileSection(controller)
         OutlinedButton(onClick = { controller.signOut() }, shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp)) {
             Icon(BrandIcons.SignOut, null, Modifier.size(18.dp))
             Text("  Sign out")
@@ -507,6 +508,62 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
         AboutSection()
         Text("A brighter tomorrow, one book at a time.", fontFamily = LiterataFamily, fontStyle = FontStyle.Italic, fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 12.dp))
     }
+    }
+}
+
+@Composable
+private fun ProfileSection(controller: AppController) {
+    val state = controller.profileUi
+    var name by rememberSaveable(controller.displayName) { mutableStateOf(controller.displayName) }
+    var currentPassword by rememberSaveable { mutableStateOf("") }
+    var newPassword by rememberSaveable { mutableStateOf("") }
+    var confirmPassword by rememberSaveable { mutableStateOf("") }
+
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Profile", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = name, onValueChange = { name = it }, singleLine = true, modifier = Modifier.weight(1f),
+                label = { Text("Display name") }, shape = RoundedCornerShape(12.dp),
+            )
+            TextButton(
+                onClick = { controller.updateDisplayName(name.trim()) },
+                enabled = !state.saving && name.isNotBlank() && name.trim() != controller.displayName,
+            ) { Text("Save") }
+        }
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+        Text("Change password", style = MaterialTheme.typography.titleSmall)
+        OutlinedTextField(
+            value = currentPassword, onValueChange = { currentPassword = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            label = { Text("Current password") }, visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp),
+        )
+        OutlinedTextField(
+            value = newPassword, onValueChange = { newPassword = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            label = { Text("New password") }, visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp),
+        )
+        OutlinedTextField(
+            value = confirmPassword, onValueChange = { confirmPassword = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            label = { Text("Confirm new password") }, visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp),
+            isError = confirmPassword.isNotEmpty() && confirmPassword != newPassword,
+        )
+        if (state.error != null) Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        if (state.passwordChanged) Text("Password updated.", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.bodySmall)
+        Button(
+            onClick = {
+                controller.changePassword(currentPassword, newPassword) { currentPassword = ""; newPassword = ""; confirmPassword = "" }
+            },
+            enabled = !state.saving && currentPassword.isNotBlank() && newPassword.length >= 12 && newPassword == confirmPassword,
+            shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (state.saving) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary) else Text("Update password")
+        }
     }
 }
 

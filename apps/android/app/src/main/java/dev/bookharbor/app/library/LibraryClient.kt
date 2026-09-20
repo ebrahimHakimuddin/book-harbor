@@ -217,6 +217,21 @@ class LibraryClient(private val api: ApiClient) {
         runCatching { api.request(store.serverUrl + "/api/v1/sessions/current", "DELETE", token = token.accessToken) }
     }
 
+    /** Changes the signed-in user's own display name and/or password (the server requires
+     * [currentPassword] whenever [newPassword] is set). Returns the (possibly unchanged)
+     * display name, and updates the cached copy used elsewhere in the app. */
+    fun updateSelf(displayName: String? = null, currentPassword: String? = null, newPassword: String? = null): String {
+        val body = JSONObject().apply {
+            displayName?.let { put("displayName", it) }
+            currentPassword?.let { put("currentPassword", it) }
+            newPassword?.let { put("newPassword", it) }
+        }.toString()
+        val json = api.authorized("/api/v1/me", "PATCH", body)
+        val updated = JSONObject(json).getString("displayName")
+        store.displayName = updated
+        return updated
+    }
+
     /** Every book, following the server's pagination cursor. */
     fun books(): List<Book> {
         val all = mutableListOf<Book>()

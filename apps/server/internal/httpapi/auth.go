@@ -92,7 +92,58 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read authenticated user")
 		return
 	}
-	writeJSON(w, http.StatusOK, newUserResponse(principal.User))
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, newUserResponse(principal.User))
+	case http.MethodPatch:
+		s.updateSelf(w, r, principal.User.ID)
+	default:
+		writeMethodNotAllowed(w, "GET, PATCH")
+	}
+}
+
+func (s *server) updateSelf(w http.ResponseWriter, r *http.Request, userID string) {
+	var request struct {
+		DisplayName     *string `json:"displayName"`
+		CurrentPassword string  `json:"currentPassword"`
+		NewPassword     *string `json:"newPassword"`
+	}
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be one valid JSON object")
+		return
+	}
+	if request.DisplayName == nil && request.NewPassword == nil {
+		writeError(w, http.StatusBadRequest, "empty_update", "provide displayName, newPassword, or both")
+		return
+	}
+	if request.NewPassword != nil && request.CurrentPassword == "" {
+		writeError(w, http.StatusUnprocessableEntity, "current_password_required", "provide your current password to set a new one")
+		return
+	}
+	user, err := s.users.UpdateSelf(r.Context(), userID, request.DisplayName, request.CurrentPassword, request.NewPassword)
+	if err != nil {
+		switch {
+		case errors.Is(err, identity.ErrIncorrectPassword):
+			writeError(w, http.StatusUnprocessableEntity, "incorrect_password", "current password is incorrect")
+		case errors.Is(err, identity.ErrInvalidDisplayName):
+			writeError(w, http.StatusUnprocessableEntity, "invalid_display_name", "display name must contain 1 to 100 characters")
+		case errors.Is(err, identity.ErrWeakPassword):
+			writeError(w, http.StatusUnprocessableEntity, "invalid_password", "password must contain 12 to 1024 bytes")
+		default:
+			s.logger.Error("update self", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "unable to update your account")
+		}
+		return
+	}
+	var changes []string
+	if request.DisplayName != nil {
+		changes = append(changes, "display name updated")
+	}
+	if request.NewPassword != nil {
+		changes = append(changes, "password changed")
+	}
+	s.record(r, "user.update_self", "user", user.ID, strings.Join(changes, ", "))
+	writeJSON(w, http.StatusOK, newUserResponse(user))
 }
 
 func (s *server) adminUsers(w http.ResponseWriter, r *http.Request) {

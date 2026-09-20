@@ -62,7 +62,7 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/sessions", requireMethod(http.MethodPost, http.HandlerFunc(s.createSession)))
 	mux.Handle("/api/v1/sessions/refresh", requireMethod(http.MethodPost, http.HandlerFunc(s.refreshSession)))
 	mux.Handle("/api/v1/sessions/current", requireMethod(http.MethodDelete, s.requireAuthentication(s.deleteCurrentSession)))
-	mux.Handle("/api/v1/me", requireMethod(http.MethodGet, s.requireAuthentication(s.me)))
+	mux.Handle("/api/v1/me", s.requireAuthentication(s.me))
 	mux.Handle("/api/v1/admin/users", s.requireAuthentication(s.adminUsers))
 	mux.Handle("/api/v1/admin/users/", s.requireAdmin(s.adminUser))
 	mux.Handle("/api/v1/admin/export", requireMethod(http.MethodGet, s.requireAdmin(s.exportArchive)))

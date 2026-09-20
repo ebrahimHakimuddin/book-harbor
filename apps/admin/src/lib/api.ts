@@ -217,6 +217,8 @@ const enc = encodeURIComponent
 export const api = {
   instance: () => request<Instance>("/api/v1/instance", { auth: false }),
   me: () => request<User>("/api/v1/me"),
+  updateSelf: (body: { displayName?: string; currentPassword?: string; newPassword?: string }) =>
+    request<User>("/api/v1/me", { method: "PATCH", body }),
   async login(email: string, password: string) {
     const session = await request<Session>("/api/v1/sessions", { method: "POST", body: { email, password }, auth: false })
     if (session.user.role !== "admin") throw new APIError(403, "forbidden", "This console is available to administrators only.")

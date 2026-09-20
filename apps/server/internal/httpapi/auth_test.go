@@ -202,6 +202,62 @@ func TestHTTPAuthenticationLifecycle(t *testing.T) {
 	}
 }
 
+func TestUpdateSelf(t *testing.T) {
+	handler := testHandler(t)
+	bootstrapAdministrator(t, handler)
+	admin := login(t, handler, "admin@example.com", "a secure first password")
+
+	patch := func(token, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPatch, "/api/v1/me", bytes.NewBufferString(body))
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	// Display name alone needs no current password.
+	response := patch(admin.AccessToken, `{"displayName":"New Name"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("rename status = %d; body = %s", response.Code, response.Body.String())
+	}
+	var updated userResponse
+	if err := json.NewDecoder(response.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName != "New Name" {
+		t.Fatalf("displayName = %q", updated.DisplayName)
+	}
+
+	// A password change without the current password is rejected outright.
+	response = patch(admin.AccessToken, `{"newPassword":"a brand new password"}`)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing-current-password status = %d", response.Code)
+	}
+	assertErrorCode(t, response, "current_password_required")
+
+	// The wrong current password is rejected too, and the old password still works.
+	response = patch(admin.AccessToken, `{"currentPassword":"wrong password","newPassword":"a brand new password"}`)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("wrong-current-password status = %d", response.Code)
+	}
+	assertErrorCode(t, response, "incorrect_password")
+	login(t, handler, "admin@example.com", "a secure first password")
+
+	// The right current password changes it, and the session used to make the change survives.
+	response = patch(admin.AccessToken, `{"currentPassword":"a secure first password","newPassword":"a brand new password"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("password change status = %d; body = %s", response.Code, response.Body.String())
+	}
+	me := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	me.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+	meResponse := httptest.NewRecorder()
+	handler.ServeHTTP(meResponse, me)
+	if meResponse.Code != http.StatusOK {
+		t.Fatalf("using the same session after a password change: status = %d", meResponse.Code)
+	}
+	login(t, handler, "admin@example.com", "a brand new password")
+}
+
 func TestSessionCreationUsesGenericCredentialError(t *testing.T) {
 	handler := testHandler(t)
 	bootstrapAdministrator(t, handler)

@@ -32,6 +32,8 @@ sealed interface LibraryUiState {
 
 data class SyncUiState(val pending: Int = 0, val rejected: Int = 0, val running: Boolean = false, val error: String? = null, val lastSyncMillis: Long = 0)
 
+data class ProfileUiState(val saving: Boolean = false, val error: String? = null, val passwordChanged: Boolean = false)
+
 data class FriendsUiState(
     val friends: List<Friend> = emptyList(),
     val incoming: List<FriendRequest> = emptyList(),
@@ -53,6 +55,8 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     var sync by mutableStateOf(SyncUiState())
         private set
     var friendsUi by mutableStateOf(FriendsUiState())
+        private set
+    var profileUi by mutableStateOf(ProfileUiState())
         private set
     /** Set when signing out would discard reading updates that have not reached the server. */
     var unsyncedOnSignOut by mutableStateOf<Int?>(null)
@@ -312,6 +316,32 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 friendsUi = friendsUi.copy(settings = settings)
             } catch (error: Exception) {
                 friendsUi = friendsUi.copy(error = error.message ?: "Couldn't update your sharing settings")
+            }
+        }
+    }
+
+    fun updateDisplayName(name: String, onSuccess: () -> Unit = {}) {
+        profileUi = profileUi.copy(saving = true, error = null)
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.library.updateSelf(displayName = name)
+                profileUi = profileUi.copy(saving = false)
+                onSuccess()
+            } catch (error: Exception) {
+                profileUi = profileUi.copy(saving = false, error = error.message ?: "Couldn't update your name")
+            }
+        }
+    }
+
+    fun changePassword(currentPassword: String, newPassword: String, onSuccess: () -> Unit = {}) {
+        profileUi = profileUi.copy(saving = true, error = null, passwordChanged = false)
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.library.updateSelf(currentPassword = currentPassword, newPassword = newPassword)
+                profileUi = profileUi.copy(saving = false, passwordChanged = true)
+                onSuccess()
+            } catch (error: Exception) {
+                profileUi = profileUi.copy(saving = false, error = error.message ?: "Couldn't change your password")
             }
         }
     }

@@ -1,13 +1,18 @@
-import { useEffect, useState } from "react"
-import { ArchiveIcon, BookOpenIcon, HistoryIcon, LogOutIcon, UsersIcon, type LucideIcon } from "lucide-react"
+import { useEffect, useState, type FormEvent } from "react"
+import { ArchiveIcon, BookOpenIcon, HistoryIcon, LogOutIcon, UsersIcon, type LucideIcon, Loader2Icon } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { api, type Session } from "@/lib/api"
-import { useBooks, useReaders } from "@/lib/queries"
-import { initials } from "@/lib/format"
+import { toast } from "sonner"
+import { api, type Session, type User } from "@/lib/api"
+import { useBooks, useReaders, useUpdateSelf } from "@/lib/queries"
+import { errorMessage, initials, passwordOk } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Wordmark } from "@/components/brand"
+import { PasswordHelpers, PasswordInput } from "@/components/password-input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { LibraryView } from "@/views/library"
 import { ReadersView } from "@/views/readers"
 import { ActivityView } from "@/views/activity"
@@ -38,6 +43,7 @@ function useView(): [View, (view: View) => void] {
 export function Shell({ session, instanceName }: { session: Session; instanceName: string }) {
   const client = useQueryClient()
   const [view, setView] = useView()
+  const [accountOpen, setAccountOpen] = useState(false)
   const books = useBooks()
   const readers = useReaders()
   const counts: Partial<Record<View, number | undefined>> = {
@@ -58,7 +64,9 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
           <div className="text-sm font-semibold text-navy">{instanceName}</div>
           <div className="text-xs text-muted-foreground">Self-hosted</div>
         </div>
-        <Avatar aria-hidden><AvatarFallback className="bg-cyan/25 font-heading font-bold text-navy">{initials(session.user.displayName)}</AvatarFallback></Avatar>
+        <button type="button" onClick={() => setAccountOpen(true)} aria-label="My account" className="rounded-full focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/60">
+          <Avatar><AvatarFallback className="bg-cyan/25 font-heading font-bold text-navy">{initials(session.user.displayName)}</AvatarFallback></Avatar>
+        </button>
         <Button variant="outline" onClick={signOut}><LogOutIcon data-icon="inline-start" />Sign out</Button>
       </header>
 
@@ -97,6 +105,67 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
           </div>
         </main>
       </div>
+      <MyAccountDialog user={session.user} open={accountOpen} onClose={() => setAccountOpen(false)} />
     </div>
+  )
+}
+
+function MyAccountDialog({ user, open, onClose }: { user: User; open: boolean; onClose: () => void }) {
+  const update = useUpdateSelf()
+  const [displayName, setDisplayName] = useState(user.displayName)
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [reveal, setReveal] = useState(false)
+
+  // Re-seed from the latest user (and clear the password fields) each time the dialog opens.
+  useEffect(() => {
+    if (!open) return
+    setDisplayName(user.displayName); setCurrentPassword(""); setNewPassword(""); setReveal(false); update.reset()
+  }, [open, user.displayName])
+
+  const changingPassword = newPassword.length > 0
+  const renaming = displayName.trim() !== user.displayName && displayName.trim().length > 0
+  const canSubmit = (renaming || changingPassword) && (!changingPassword || (currentPassword.length > 0 && passwordOk(newPassword)))
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    if (!canSubmit) return
+    const body: { displayName?: string; currentPassword?: string; newPassword?: string } = {}
+    if (renaming) body.displayName = displayName.trim()
+    if (changingPassword) { body.currentPassword = currentPassword; body.newPassword = newPassword }
+    update.mutate(body, {
+      onSuccess: () => { toast.success("Account updated."); setCurrentPassword(""); setNewPassword("") },
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose() }}>
+      <DialogContent>
+        <form onSubmit={submit} className="grid gap-4">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold text-navy">My account</DialogTitle>
+            <DialogDescription>Update your display name, or change your password.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="my-name">Display name</Label>
+            <Input id="my-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={100} autoComplete="off" required />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="my-current-password">Current password</Label>
+            <PasswordInput id="my-current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} visible={reveal} onVisibleChange={setReveal} autoComplete="current-password" />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="my-new-password">New password</Label>
+            <PasswordInput id="my-new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} visible={reveal} onVisibleChange={setReveal} minLength={12} maxLength={1024} autoComplete="new-password" />
+            {changingPassword ? <PasswordHelpers value={newPassword} onGenerate={setNewPassword} onReveal={() => setReveal(true)} /> : <p className="text-xs text-muted-foreground">Leave blank to keep your current password.</p>}
+          </div>
+          <p role="alert" className="min-h-5 text-sm text-destructive">{update.isError && errorMessage(update.error, "Your account could not be updated.")}</p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Close</Button>
+            <Button type="submit" disabled={update.isPending || !canSubmit}>{update.isPending && <Loader2Icon className="animate-spin" />}Save</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
