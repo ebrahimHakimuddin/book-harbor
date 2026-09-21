@@ -23,7 +23,7 @@ export function BackupView() {
     <>
       <PageHeading title="Keep it safe." description="Your books and data belong to you. Take a copy any time." />
       <div className="grid max-w-2xl gap-5 rounded-xl bg-mist p-7">
-        <span className="grid size-12 place-items-center rounded-full bg-background text-teal shadow-sm"><ArchiveIcon className="size-6" /></span>
+        <span className="grid size-12 place-items-center rounded-full bg-background text-teal-dark shadow-sm"><ArchiveIcon className="size-6" /></span>
         <div>
           <h2 className="text-2xl font-bold text-navy">Export everything</h2>
           <p className="mt-2 text-sm text-muted-foreground">One zip with every original EPUB and PDF, uploaded covers, a manifest, and a snapshot of the library database. Sign-in sessions are left out; password hashes are included, so store the file as carefully as the server.</p>
@@ -32,6 +32,7 @@ export function BackupView() {
           {exportArchive.isPending ? <Loader2Icon className="animate-spin" /> : <DownloadIcon />}{exportArchive.isPending ? "Preparing…" : "Download export"}
         </Button>
         <p role="alert" className="min-h-5 text-sm text-destructive">{exportArchive.isError && errorMessage(exportArchive.error, "The export could not be created.")}</p>
+        <p className="text-sm text-muted-foreground">To restore this archive onto a server, stop it and run <code className="rounded bg-background px-1 py-0.5">bookharbor restore backup.zip</code> against its data directory, then start it again.</p>
       </div>
     </>
   )

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
+	"github.com/bookharbor/bookharbor/apps/server/internal/export"
 	"github.com/bookharbor/bookharbor/apps/server/internal/httpapi"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
@@ -28,6 +31,11 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "restore" {
+		runRestore(os.Args[2:])
+		return
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := config.Load()
 	if err != nil {
@@ -96,4 +104,34 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("server stopped")
+}
+
+// runRestore implements `bookharbor restore <archive.zip> [--force]`: an offline
+// operation, run instead of starting the server, that replaces BOOKHARBOR_DATA_DIR's
+// database and book/cover files with the contents of a backup produced by the
+// admin "Export everything" feature. It must not run against a data directory a
+// server is currently using.
+func runRestore(args []string) {
+	set := flag.NewFlagSet("restore", flag.ExitOnError)
+	force := set.Bool("force", false, "overwrite an existing database in the data directory")
+	set.Parse(args)
+	if set.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: bookharbor restore [--force] <archive.zip>")
+		os.Exit(2)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if err := export.Restore(set.Arg(0), cfg.DataDir, *force); err != nil {
+		if errors.Is(err, export.ErrDataDirNotEmpty) {
+			fmt.Fprintf(os.Stderr, "%v\nStop the server first; this replaces its database and files. Pass --force to proceed.\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "restore failed: %v\n", err)
+		}
+		os.Exit(1)
+	}
+	fmt.Printf("Restored %s into %s. Start the server normally to use it.\n", set.Arg(0), cfg.DataDir)
 }
