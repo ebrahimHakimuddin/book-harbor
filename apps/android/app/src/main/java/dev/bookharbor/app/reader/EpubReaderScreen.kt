@@ -125,7 +125,9 @@ fun EpubReaderScreen(
     }
 
     val currentBlocks = rememberUpdatedState(blocks)
-    var latest by remember { mutableStateOf<Pair<Int, Double>?>(null) }
+    // Keyed on chapterIndex: a chapter switch (TOC jump, next-chapter) must not let a flush
+    // right after landing persist the old chapter's block index against the new chapter's blocks.
+    var latest by remember(chapterIndex) { mutableStateOf<Pair<Int, Double>?>(null) }
 
     fun persist(position: Pair<Int, Double>) {
         val block = currentBlocks.value?.getOrNull(position.first) ?: return
@@ -145,7 +147,14 @@ fun EpubReaderScreen(
             .collect { position -> withContext(Dispatchers.IO) { persist(position) } }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { latest?.let(::persist) }
-    DisposableEffect(Unit) { onDispose { latest?.let(::persist) } }
+    // Keyed on chapterIndex, not Unit: a keyless DisposableEffect's onDispose closure is
+    // captured once at first composition and never refreshed, so `persist` would keep closing
+    // over that first chapter's index forever. Every chapter change must flush and reinstall
+    // this effect so the closure that ultimately runs on unmount (screen close) always matches
+    // the chapter the reader is actually on -- otherwise closing after changing chapters at all
+    // (TOC jump, next-chapter, reaching a chapter boundary) re-persists the old chapter's
+    // position right after closeAndFlush() wrote the correct one.
+    DisposableEffect(chapterIndex) { onDispose { latest?.let(::persist) } }
 
     // Flush the debounced position before handing off — closing (either path) reads the
     // store synchronously and must not race the pending write.
