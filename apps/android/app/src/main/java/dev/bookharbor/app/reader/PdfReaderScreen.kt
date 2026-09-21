@@ -212,6 +212,7 @@ private fun PdfPages(
         progressLabel = "Page ${state.chapterIndex + 1} of $count",
         fixedLayout = true,
         contentsLabel = "Pages",
+        isScrolling = listState.isScrollInProgress,
     ) { padding -> PageList(book, ratios, listState, padding, state.settings.theme) }
 }
 

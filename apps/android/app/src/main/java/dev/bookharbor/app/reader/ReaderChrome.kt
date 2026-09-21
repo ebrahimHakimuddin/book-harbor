@@ -1,11 +1,13 @@
 package dev.bookharbor.app.reader
 
 import android.app.Activity
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,9 +44,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -76,18 +85,31 @@ fun ReaderScaffold(
     percentage: Int = state.overallPercentage,
     fixedLayout: Boolean = false,
     contentsLabel: String = "Contents",
+    /** True while the content is actively scrolling, so the chrome can duck out of the way. */
+    isScrolling: Boolean = false,
     content: @Composable (PaddingValues) -> Unit,
 ) {
+    var chromeVisible by remember { mutableStateOf(true) }
+    // TalkBack's touch exploration turns single taps into "focus this element" rather than a
+    // plain gesture, so the tap-to-show zone below often can't be reached once the chrome is
+    // hidden -- a TalkBack user could lose the close/contents/settings buttons with no reliable
+    // way to bring them back (aside from the system Back gesture). Never auto-hide for them.
+    val touchExplorationEnabled by rememberTouchExplorationEnabled()
+    LaunchedEffect(isScrolling, touchExplorationEnabled) {
+        if (touchExplorationEnabled) chromeVisible = true else if (isScrolling) chromeVisible = false
+    }
     BookHarborTheme(readerTheme = state.settings.theme) {
         BrightnessEffect(state.settings.brightness)
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = WindowInsets(0),
             topBar = {
-                ReaderTopBar(state.bookTitle, onClose, onContents = { onAction(ReaderAction.OpenContents) }, contentsLabel = contentsLabel, onSettings = { onAction(ReaderAction.OpenSettings) })
+                AnimatedVisibility(visible = chromeVisible, enter = fadeIn(), exit = fadeOut()) {
+                    ReaderTopBar(state.bookTitle, onClose, onContents = { onAction(ReaderAction.OpenContents) }, contentsLabel = contentsLabel, onSettings = { onAction(ReaderAction.OpenSettings) })
+                }
             },
             bottomBar = {
-                AnimatedVisibility(visible = state.settings.showProgress, enter = fadeIn(), exit = fadeOut()) {
+                AnimatedVisibility(visible = chromeVisible && state.settings.showProgress, enter = fadeIn(), exit = fadeOut()) {
                     val unit = if (fixedLayout) "page" else "chapter"
                     ReaderProgressBar(
                         progress = progress, label = progressLabel, percentage = percentage,
@@ -97,11 +119,36 @@ fun ReaderScaffold(
                     )
                 }
             },
-            content = content,
+            content = { padding ->
+                // A tap in the middle band shows/hides the chrome; a link or other clickable
+                // span inside the content consumes its own tap first, so this never fires for it.
+                Box(
+                    Modifier.fillMaxSize().pointerInput(touchExplorationEnabled) {
+                        detectTapGestures(onTap = { offset ->
+                            if (!touchExplorationEnabled && offset.x in size.width * 0.3f..size.width * 0.7f) chromeVisible = !chromeVisible
+                        })
+                    },
+                ) { content(padding) }
+            },
         )
         if (state.settingsOpen) ReaderSettingsSheet(state.settings, fixedLayout, onAction)
         if (state.contentsOpen) ContentsSheet(state, contentsLabel, onAction)
     }
+}
+
+/** Tracks whether a touch-exploration accessibility service (e.g. TalkBack) is active, live. */
+@Composable
+private fun rememberTouchExplorationEnabled(): State<Boolean> {
+    val context = LocalContext.current
+    val manager = remember(context) { context.getSystemService(AccessibilityManager::class.java) }
+    val state = remember(manager) { mutableStateOf(manager?.isTouchExplorationEnabled == true) }
+    DisposableEffect(manager) {
+        if (manager == null) return@DisposableEffect onDispose {}
+        val listener = AccessibilityManager.TouchExplorationStateChangeListener { enabled -> state.value = enabled }
+        manager.addTouchExplorationStateChangeListener(listener)
+        onDispose { manager.removeTouchExplorationStateChangeListener(listener) }
+    }
+    return state
 }
 
 @Composable

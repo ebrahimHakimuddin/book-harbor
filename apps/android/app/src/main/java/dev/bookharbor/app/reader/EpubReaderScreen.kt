@@ -206,6 +206,7 @@ fun EpubReaderScreen(
         progressLabel = "Chapter ${chapterIndex + 1} of ${state.chapters.size} · ${state.chapter.title}",
         progress = state.currentChapterProgress,
         percentage = (state.currentChapterProgress * 100).roundToInt(),
+        isScrolling = listState.isScrollInProgress,
     ) { padding ->
         ChapterList(book, state, blocks, listState, padding, onLinkClick = ::openLink, onNextChapter = { dispatch(ReaderAction.NextChapter) }, onFinishBook = ::finishBook)
     }
