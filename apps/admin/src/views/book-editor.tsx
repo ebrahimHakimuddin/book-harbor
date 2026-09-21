@@ -165,7 +165,7 @@ function MediaTab({ book }: { book: Book }) {
         <ul className="mb-4 grid gap-2">
           {book.editions.map((edition) => (
             <li key={edition.id} className="flex min-w-0 items-center gap-3 rounded-lg bg-mist px-3 py-2.5">
-              <FileTextIcon className="size-4 text-teal" />
+              <FileTextIcon className="size-4 text-teal-dark" />
               <span className="text-xs font-bold tracking-wide text-teal-dark uppercase">{edition.format}</span>
               <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{edition.originalFilename}</span>
               <span className="text-xs text-muted-foreground tabular-nums">{formatBytes(edition.byteLength)}</span>

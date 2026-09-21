@@ -15,7 +15,7 @@ export function PageHeading({ title, description, actions }: { title: string; de
 export function EmptyState({ icon, title, children, action }: { icon: ReactNode; title: string; children: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-input px-6 py-14 text-center animate-in fade-in zoom-in-95 duration-300">
-      <span className="mb-1 grid size-12 place-items-center rounded-full bg-mist text-teal [&_svg]:size-6">{icon}</span>
+      <span className="mb-1 grid size-12 place-items-center rounded-full bg-mist text-teal-dark [&_svg]:size-6">{icon}</span>
       <h2 className="text-xl font-bold text-navy">{title}</h2>
       <p className="max-w-sm text-sm text-muted-foreground">{children}</p>
       {action && <div className="mt-3">{action}</div>}

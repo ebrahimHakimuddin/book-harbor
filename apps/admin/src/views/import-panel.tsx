@@ -34,7 +34,7 @@ export function ImportPanel({ onDone, onCancel }: { onDone: (book: Book) => void
 
       {file ? (
         <div className="flex items-center gap-3 rounded-lg border bg-background px-4 py-3 animate-in fade-in zoom-in-95 duration-150">
-          <FileTextIcon className="size-5 text-teal" />
+          <FileTextIcon className="size-5 text-teal-dark" />
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-navy">{file.name}</span>
           <span className="text-xs text-muted-foreground tabular-nums">{formatBytes(file.size)}</span>
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove selected file" disabled={importBook.isPending} onClick={() => setFile(null)}><XIcon /></Button>

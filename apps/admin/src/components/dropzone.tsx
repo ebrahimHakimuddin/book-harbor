@@ -44,7 +44,7 @@ export function Dropzone({ accept, onFile, disabled, icon, title, hint, compact,
         id={id} type="file" accept={accept} disabled={disabled} className="sr-only"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onFile(file); e.target.value = "" }}
       />
-      <span className={cn("mb-1 text-muted-foreground transition-transform group-hover:-translate-y-0.5 [&_svg]:size-6", over && "-translate-y-1 text-teal")}>{icon}</span>
+      <span className={cn("mb-1 text-muted-foreground transition-transform group-hover:-translate-y-0.5 [&_svg]:size-6", over && "-translate-y-1 text-teal-dark")}>{icon}</span>
       <span className="text-sm font-semibold text-navy">{title}</span>
       <span className="text-xs text-muted-foreground">{hint}</span>
     </label>
