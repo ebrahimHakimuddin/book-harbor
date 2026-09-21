@@ -43,4 +43,7 @@ object BrandIcons {
     val History = icon("history", "M3 12a9 9 0 1 0 2.6-6.3", "M3 4v5h5", "M12 8v4l3 2")
     val ChevronLeft = icon("chevron-left", "M15 5l-7 7 7 7")
     val ChevronRight = icon("chevron-right", "M9 5l7 7-7 7")
+    val List = icon("list", "M8 6h13M8 12h13M8 18h13", "M3 6h.01M3 12h.01M3 18h.01")
+    val Grid = icon("grid", "M3 3h8v8H3z", "M13 3h8v8h-8z", "M3 13h8v8H3z", "M13 13h8v8h-8z")
+    val Request = icon("request", "M4 19.5A2.5 2.5 0 0 1 6.5 17H20", "M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z", "M9 7h7M9 10h4")
 }

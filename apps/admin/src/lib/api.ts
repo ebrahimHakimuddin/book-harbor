@@ -73,6 +73,17 @@ export interface Candidate {
   publishedDate: string
 }
 
+export interface BookRequest {
+  id: string
+  title: string
+  author: string
+  coverUrl: string
+  status: "open" | "fulfilled" | "declined"
+  fulfilledBookId: string | null
+  createdAt: string
+  requestedByEmail?: string
+}
+
 export interface AuditEntry {
   id: number
   actorEmail: string
@@ -264,6 +275,11 @@ export const api = {
   deleteReader: (id: string) => request<void>(`/api/v1/admin/users/${enc(id)}`, { method: "DELETE" }),
 
   audit: (limit = 100) => request<{ items: AuditEntry[] }>(`/api/v1/admin/audit?limit=${limit}`),
+
+  bookRequests: () => request<{ items: BookRequest[] }>("/api/v1/admin/book-requests"),
+  fulfillBookRequest: (id: string, bookId: string) =>
+    request<void>(`/api/v1/admin/book-requests/${enc(id)}/fulfill`, { method: "POST", body: { bookId } }),
+  declineBookRequest: (id: string) => request<void>(`/api/v1/admin/book-requests/${enc(id)}/decline`, { method: "POST" }),
 
   // Uploaded covers need the bearer token, so they are fetched and shown as blob URLs.
   async coverBlobUrl(path: string) {

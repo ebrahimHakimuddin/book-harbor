@@ -14,8 +14,10 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
+	"github.com/bookharbor/bookharbor/apps/server/internal/lists"
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
+	"github.com/bookharbor/bookharbor/apps/server/internal/requests"
 	"github.com/bookharbor/bookharbor/apps/server/internal/social"
 )
 
@@ -43,19 +45,25 @@ type server struct {
 	metadata metadata.Provider
 	reading  *reading.Store
 	social   *social.Store
+	requests *requests.Store
+	lists    *lists.Store
 	mailer   Mailer
 	logger   *slog.Logger
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, metadataProvider metadata.Provider, mailer Mailer, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, bookRequests *requests.Store, bookLists *lists.Store, metadataProvider metadata.Provider, mailer Mailer, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, mailer: mailer, logger: logger}
+	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, requests: bookRequests, lists: bookLists, mailer: mailer, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", adminUI())
 	mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusPermanentRedirect))
+	// The bare root has no page of its own; send a browser to the admin UI instead of a raw
+	// JSON 404. "/{$}" matches only the exact root path, so every other unmatched path still
+	// falls through to notFound below.
+	mux.Handle("/{$}", http.RedirectHandler("/admin/", http.StatusFound))
 	mux.Handle("/healthz", requireMethod(http.MethodGet, http.HandlerFunc(s.health)))
 	mux.Handle("/api/v1/instance", requireMethod(http.MethodGet, http.HandlerFunc(s.instance)))
 	mux.Handle("/api/v1/bootstrap", requireMethod(http.MethodPost, http.HandlerFunc(s.bootstrap)))
@@ -77,6 +85,13 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/friends/requests/", s.requireAuthentication(s.friendRequestAction))
 	mux.Handle("/api/v1/friends/", s.requireAuthentication(s.friend))
 	mux.Handle("/api/v1/me/social-settings", s.requireAuthentication(s.socialSettings))
+	mux.Handle("/api/v1/metadata/search", requireMethod(http.MethodGet, s.requireAuthentication(s.searchMetadataForRequest)))
+	mux.Handle("/api/v1/book-requests", s.requireAuthentication(s.bookRequests))
+	mux.Handle("/api/v1/book-requests/", s.requireAuthentication(s.bookRequest))
+	mux.Handle("/api/v1/admin/book-requests", requireMethod(http.MethodGet, s.requireAdmin(s.adminBookRequests)))
+	mux.Handle("/api/v1/admin/book-requests/", s.requireAdmin(s.adminBookRequest))
+	mux.Handle("/api/v1/lists", s.requireAuthentication(s.userLists))
+	mux.Handle("/api/v1/lists/", s.requireAuthentication(s.list))
 	mux.HandleFunc("/", notFound)
 
 	return s.withRequestLogging(s.withSecurityHeaders(mux))

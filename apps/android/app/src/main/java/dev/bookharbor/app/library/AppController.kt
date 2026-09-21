@@ -43,6 +43,23 @@ data class FriendsUiState(
     val error: String? = null,
 )
 
+data class ListsUiState(
+    val lists: List<BookList> = emptyList(),
+    val openList: BookList? = null,
+    val booksInOpenList: List<Book> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
+data class BookRequestsUiState(
+    val mine: List<BookRequest> = emptyList(),
+    val searchResults: List<MetadataCandidate> = emptyList(),
+    val searching: Boolean = false,
+    val loading: Boolean = false,
+    val error: String? = null,
+    val notice: String? = null,
+)
+
 /** A book that is open in the reader. [epub] is already parsed, so open errors surface before the screen changes. */
 class OpenedBook(val book: Book, val edition: Edition, val file: File, val position: LocalPosition?, val epub: EpubBook?)
 
@@ -57,6 +74,10 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     var friendsUi by mutableStateOf(FriendsUiState())
         private set
     var profileUi by mutableStateOf(ProfileUiState())
+        private set
+    var bookRequestsUi by mutableStateOf(BookRequestsUiState())
+        private set
+    var listsUi by mutableStateOf(ListsUiState())
         private set
     /** Set when signing out would discard reading updates that have not reached the server. */
     var unsyncedOnSignOut by mutableStateOf<Int?>(null)
@@ -124,11 +145,17 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         }
     }
 
+/** Where signing out lands: back at this server's sign-in form, or at server setup to point at a different one. */
+    enum class SignOutTarget { SIGN_IN, SETUP }
+
+    private var signOutTarget = SignOutTarget.SIGN_IN
+
     /**
      * Signs out. Unsent reading updates are synced first; if some remain the caller is told via
      * [unsyncedOnSignOut] and must confirm with [force] = true, because they will be discarded.
      */
-    fun signOut(force: Boolean = false) {
+    fun signOut(force: Boolean = false, target: SignOutTarget = SignOutTarget.SIGN_IN) {
+        signOutTarget = target
         scope.launch(Dispatchers.IO) {
             if (!force && graph.progress.pendingCount() > 0) {
                 runCatching { graph.syncEngine.runOnce() }
@@ -142,10 +169,19 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             graph.progress.clear() // never send this account's unsent events as someone else
             cache.clear()
             opened = null
-            ui = LibraryUiState.SignIn(serverUrl = graph.session.serverUrl)
+            ui = when (signOutTarget) {
+                SignOutTarget.SIGN_IN -> LibraryUiState.SignIn(serverUrl = graph.session.serverUrl)
+                SignOutTarget.SETUP -> { graph.session.serverUrl = ""; LibraryUiState.Setup }
+            }
             refreshSync()
         }
     }
+
+    /** Signs out and lands on server setup, so the reader can point the app at a different server. */
+    fun switchServer(force: Boolean = false) = signOut(force, SignOutTarget.SETUP)
+
+    /** Confirms the sign-out [unsyncedOnSignOut] warned about, keeping whichever target the original attempt asked for. */
+    fun confirmSignOut() = signOut(force = true, target = signOutTarget)
 
     fun dismissSignOutWarning() { unsyncedOnSignOut = null }
 
@@ -316,6 +352,142 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 friendsUi = friendsUi.copy(settings = settings)
             } catch (error: Exception) {
                 friendsUi = friendsUi.copy(error = error.message ?: "Couldn't update your sharing settings")
+            }
+        }
+    }
+
+    fun loadBookRequests() {
+        bookRequestsUi = bookRequestsUi.copy(loading = true, error = null)
+        scope.launch(Dispatchers.IO) {
+            try {
+                val mine = graph.bookRequests.mine()
+                bookRequestsUi = bookRequestsUi.copy(mine = mine, loading = false)
+            } catch (error: Exception) {
+                bookRequestsUi = bookRequestsUi.copy(loading = false, error = error.message ?: "Couldn't load your requests")
+            }
+        }
+    }
+
+    fun searchForRequest(query: String) {
+        if (query.isBlank()) { bookRequestsUi = bookRequestsUi.copy(searchResults = emptyList(), searching = false); return }
+        bookRequestsUi = bookRequestsUi.copy(searching = true, error = null)
+        scope.launch(Dispatchers.IO) {
+            try {
+                val results = graph.bookRequests.search(query)
+                bookRequestsUi = bookRequestsUi.copy(searchResults = results, searching = false)
+            } catch (error: Exception) {
+                bookRequestsUi = bookRequestsUi.copy(searching = false, error = error.message ?: "Search failed")
+            }
+        }
+    }
+
+    fun requestBook(candidate: MetadataCandidate) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.bookRequests.request(candidate)
+                bookRequestsUi = bookRequestsUi.copy(searchResults = emptyList(), notice = "Requested \"${candidate.title}\".")
+                loadBookRequests()
+            } catch (error: Exception) {
+                bookRequestsUi = bookRequestsUi.copy(error = error.message ?: "Couldn't request that book")
+            }
+        }
+    }
+
+    fun cancelBookRequest(id: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.bookRequests.cancel(id)
+                loadBookRequests()
+            } catch (error: Exception) {
+                bookRequestsUi = bookRequestsUi.copy(error = error.message ?: "Couldn't cancel that request")
+            }
+        }
+    }
+
+    fun dismissBookRequestNotice() { bookRequestsUi = bookRequestsUi.copy(notice = null) }
+
+    fun loadLists() {
+        listsUi = listsUi.copy(loading = true, error = null)
+        scope.launch(Dispatchers.IO) {
+            try {
+                val lists = graph.lists.lists()
+                listsUi = listsUi.copy(lists = lists, loading = false)
+            } catch (error: Exception) {
+                listsUi = listsUi.copy(loading = false, error = error.message ?: "Couldn't load your lists")
+            }
+        }
+    }
+
+    fun createList(name: String, onCreated: (BookList) -> Unit = {}) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val list = graph.lists.create(name)
+                loadLists()
+                onCreated(list)
+            } catch (error: Exception) {
+                listsUi = listsUi.copy(error = error.message ?: "Couldn't create that list")
+            }
+        }
+    }
+
+    fun renameList(id: String, name: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.lists.rename(id, name)
+                loadLists()
+            } catch (error: Exception) {
+                listsUi = listsUi.copy(error = error.message ?: "Couldn't rename that list")
+            }
+        }
+    }
+
+    fun deleteList(id: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.lists.delete(id)
+                if (listsUi.openList?.id == id) listsUi = listsUi.copy(openList = null, booksInOpenList = emptyList())
+                loadLists()
+            } catch (error: Exception) {
+                listsUi = listsUi.copy(error = error.message ?: "Couldn't delete that list")
+            }
+        }
+    }
+
+    fun openList(list: BookList) {
+        listsUi = listsUi.copy(openList = list, booksInOpenList = emptyList(), loading = true, error = null)
+        scope.launch(Dispatchers.IO) {
+            try {
+                val books = graph.lists.books(list.id)
+                listsUi = listsUi.copy(booksInOpenList = books, loading = false)
+            } catch (error: Exception) {
+                listsUi = listsUi.copy(loading = false, error = error.message ?: "Couldn't load that list")
+            }
+        }
+    }
+
+    fun closeList() { listsUi = listsUi.copy(openList = null, booksInOpenList = emptyList()) }
+
+    /** Adding is idempotent server-side, so this never needs to check membership first. */
+    fun addBookToList(listId: String, book: Book) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.lists.addBook(listId, book.id)
+                if (listsUi.openList?.id == listId) listsUi = listsUi.copy(booksInOpenList = listsUi.booksInOpenList + book)
+                loadLists()
+            } catch (error: Exception) {
+                listsUi = listsUi.copy(error = error.message ?: "Couldn't add that book to the list")
+            }
+        }
+    }
+
+    fun removeBookFromList(listId: String, bookId: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                graph.lists.removeBook(listId, bookId)
+                if (listsUi.openList?.id == listId) listsUi = listsUi.copy(booksInOpenList = listsUi.booksInOpenList.filter { it.id != bookId })
+                loadLists()
+            } catch (error: Exception) {
+                listsUi = listsUi.copy(error = error.message ?: "Couldn't remove that book from the list")
             }
         }
     }

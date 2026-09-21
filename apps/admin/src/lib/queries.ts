@@ -7,6 +7,7 @@ export const keys = {
   books: ["books"] as const,
   readers: ["readers"] as const,
   audit: ["audit"] as const,
+  bookRequests: ["bookRequests"] as const,
 }
 
 export const useInstance = () => useQuery({ queryKey: keys.instance, queryFn: api.instance, retry: false })
@@ -163,4 +164,28 @@ export function useCoverSrc(url: string) {
     retry: false,
   })
   return isPrivate ? query.data : url || undefined
+}
+
+export const useBookRequests = () => useQuery({ queryKey: keys.bookRequests, queryFn: async () => (await api.bookRequests()).items })
+
+function useResolveBookRequest() {
+  const client = useQueryClient()
+  const audit = useAuditRefresh()
+  return () => {
+    void client.invalidateQueries({ queryKey: keys.bookRequests })
+    void audit()
+  }
+}
+
+export function useFulfillBookRequest() {
+  const resolved = useResolveBookRequest()
+  return useMutation({
+    mutationFn: (v: { id: string; bookId: string }) => api.fulfillBookRequest(v.id, v.bookId),
+    onSuccess: resolved,
+  })
+}
+
+export function useDeclineBookRequest() {
+  const resolved = useResolveBookRequest()
+  return useMutation({ mutationFn: (id: string) => api.declineBookRequest(id), onSuccess: resolved })
 }

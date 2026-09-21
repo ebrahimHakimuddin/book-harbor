@@ -121,6 +121,38 @@ var migrations = []string{
 			annual_goal_books INTEGER CHECK (annual_goal_books IS NULL OR annual_goal_books > 0),
 			updated_at TEXT NOT NULL
 		) STRICT;`,
+	// A request is only fulfilled by pointing it at a book that already exists in the library
+	// (fulfilled_book_id), never by a bare status flip -- see internal/requests.
+	`CREATE TABLE book_requests (
+		id TEXT PRIMARY KEY,
+		requested_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		title TEXT NOT NULL,
+		author TEXT NOT NULL DEFAULT '',
+		cover_url TEXT NOT NULL DEFAULT '',
+		source_provider TEXT NOT NULL DEFAULT '',
+		source_id TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'fulfilled', 'declined')),
+		fulfilled_book_id TEXT REFERENCES books(id) ON DELETE SET NULL,
+		created_at TEXT NOT NULL,
+		resolved_at TEXT
+	) STRICT;
+	CREATE INDEX book_requests_status_idx ON book_requests(status);
+	CREATE INDEX book_requests_requested_by_idx ON book_requests(requested_by);`,
+	`CREATE TABLE book_lists (
+		id TEXT PRIMARY KEY,
+		owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	) STRICT;
+	CREATE INDEX book_lists_owner_idx ON book_lists(owner_id);
+	CREATE TABLE book_list_items (
+		list_id TEXT NOT NULL REFERENCES book_lists(id) ON DELETE CASCADE,
+		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		added_at TEXT NOT NULL,
+		PRIMARY KEY (list_id, book_id)
+	) STRICT;
+	CREATE INDEX book_list_items_book_idx ON book_list_items(book_id);`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

@@ -13,6 +13,7 @@ const ACTIONS: Record<string, string> = {
   "book.import": "Book imported", "book.update": "Book edited", "book.delete": "Book deleted", "export.create": "Export downloaded",
   "friend.request": "Friend request sent", "friend.accept": "Friend request accepted", "friend.decline": "Friend request declined",
   "friend.cancel": "Friend request cancelled", "friend.remove": "Friend removed", "social_settings.update": "Sharing settings updated",
+  "book_request.create": "Book requested", "book_request.fulfill": "Book request fulfilled", "book_request.decline": "Book request declined", "book_request.cancel": "Book request cancelled",
 }
 
 function iconFor(action: string): LucideIcon {
@@ -42,7 +43,7 @@ export function ActivityView() {
             const destructive = entry.action.endsWith(".delete")
             return (
               <li key={entry.id} className="flex items-center gap-4 px-4 py-3.5 animate-in fade-in duration-300">
-                <span className={cn("grid size-9 shrink-0 place-items-center rounded-full", destructive ? "bg-destructive/10 text-destructive" : "bg-mist text-teal")}><Icon className="size-4" /></span>
+                <span className={cn("grid size-9 shrink-0 place-items-center rounded-full", destructive ? "bg-destructive/10 text-destructive" : "bg-mist text-teal-dark")}><Icon className="size-4" /></span>
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-navy">{ACTIONS[entry.action] ?? entry.action}</p>
                   <p className="truncate text-sm text-muted-foreground">{entry.summary}</p>

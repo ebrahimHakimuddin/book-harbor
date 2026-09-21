@@ -2,6 +2,7 @@ package dev.bookharbor.app.library
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,8 +21,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,10 +51,12 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -88,7 +97,7 @@ import java.text.DateFormat
 import java.util.Date
 import kotlin.math.roundToInt
 
-private enum class Tab(val label: String) { Library("Library"), History("History"), Friends("Friends"), More("More") }
+private enum class Tab(val label: String) { Library("Library"), History("History"), Friends("Friends"), Requests("Requests"), More("More") }
 
 @Composable
 fun LibraryScreen(controller: AppController) {
@@ -128,7 +137,6 @@ private fun EntryColumn(subtitle: String? = null, content: @Composable () -> Uni
         Spacer(Modifier.height(24.dp))
         Image(painterResource(R.drawable.brand_mark), contentDescription = null, Modifier.height(96.dp))
         Text(subtitle ?: "BookHarbor", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onBackground)
-        Text("Your library. Your harbor. Every device.", fontFamily = LiterataFamily, fontStyle = FontStyle.Italic, fontSize = 15.sp, color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         content()
     }
@@ -158,6 +166,11 @@ private fun SignInForm(initialEmail: String, onSignIn: (String, String) -> Unit)
 @Composable
 private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.Catalog) {
     var tab by rememberSaveable { mutableStateOf(Tab.Library) }
+    var listsOpen by rememberSaveable { mutableStateOf(false) }
+    if (listsOpen) {
+        ListsScreen(controller, onClose = { listsOpen = false })
+        return
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
@@ -166,7 +179,7 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
                     NavigationBarItem(
                         selected = tab == item,
                         onClick = { tab = item },
-                        icon = { Icon(when (item) { Tab.Library -> BrandIcons.Library; Tab.History -> BrandIcons.History; Tab.Friends -> BrandIcons.Friends; Tab.More -> BrandIcons.More }, contentDescription = null) },
+                        icon = { Icon(when (item) { Tab.Library -> BrandIcons.Library; Tab.History -> BrandIcons.History; Tab.Friends -> BrandIcons.Friends; Tab.Requests -> BrandIcons.Request; Tab.More -> BrandIcons.More }, contentDescription = null) },
                         label = { Text(item.label) },
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.onPrimary, selectedTextColor = MaterialTheme.colorScheme.primary, indicatorColor = MaterialTheme.colorScheme.primary),
                     )
@@ -176,9 +189,10 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                Tab.Library -> LibraryTab(controller, catalog, onOpenHistory = { tab = Tab.History })
+                Tab.Library -> LibraryTab(controller, catalog, onOpenHistory = { tab = Tab.History }, onOpenLists = { listsOpen = true })
                 Tab.History -> HistoryTab(controller, catalog)
                 Tab.Friends -> FriendsTab(controller)
+                Tab.Requests -> RequestsTab(controller)
                 Tab.More -> MoreTab(controller, catalog)
             }
         }
@@ -188,7 +202,7 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
             onDismissRequest = controller::dismissSignOutWarning,
             title = { Text("Reading progress hasn't synced") },
             text = { Text("$count reading ${if (count == 1) "update hasn't" else "updates haven't"} reached your server yet. Signing out now discards ${if (count == 1) "it" else "them"}. Connect to the internet and sync first to keep your place.") },
-            confirmButton = { TextButton(onClick = { controller.signOut(force = true) }) { Text("Sign out anyway", color = MaterialTheme.colorScheme.error) } },
+            confirmButton = { TextButton(onClick = controller::confirmSignOut) { Text("Sign out anyway", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = controller::dismissSignOutWarning) { Text("Keep me signed in") } },
         )
     }
@@ -196,22 +210,41 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
 
 // ---- Library ---------------------------------------------------------------------------------
 
+private enum class LibraryViewMode { List, Grid }
+
 @Composable
-private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalog, onOpenHistory: () -> Unit) {
+private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalog, onOpenHistory: () -> Unit, onOpenLists: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(ShelfFilter.All) }
     var sort by rememberSaveable { mutableStateOf(BookSort.Recent) }
+    var viewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Grid) }
     val downloaded = remember(catalog.downloads) { catalog.downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys }
     val shown = remember(catalog.books, query, filter, sort, catalog.progress, downloaded) { visibleBooks(catalog.books, query, filter, sort, catalog.progress, downloaded) }
+    val fullRow: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
 
     PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)) {
-        item { LibraryHeader(controller, catalog, onOpenHistory) }
-        item {
-            Text("Your library.\nEverywhere with you.", Modifier.padding(top = 18.dp, bottom = 16.dp), fontFamily = LiterataFamily, fontWeight = FontWeight.Normal, fontSize = 27.sp, lineHeight = 33.sp, color = MaterialTheme.colorScheme.onBackground)
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(if (viewMode == LibraryViewMode.Grid) 3 else 1),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item(span = fullRow) { LibraryHeader(controller, catalog, onOpenHistory) }
+        item(span = fullRow) {
+            Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Library", Modifier.weight(1f), style = MaterialTheme.typography.headlineLarge)
+                TextButton(onClick = onOpenLists) { Text("Your lists") }
+            }
         }
-        item { SearchRow(query, { query = it }, sort) { sort = it } }
-        item {
+        item(span = fullRow) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f)) { SearchRow(query, { query = it }, sort) { sort = it } }
+                IconButton(onClick = { viewMode = if (viewMode == LibraryViewMode.Grid) LibraryViewMode.List else LibraryViewMode.Grid }) {
+                    Icon(if (viewMode == LibraryViewMode.Grid) BrandIcons.List else BrandIcons.Grid, if (viewMode == LibraryViewMode.Grid) "Switch to list view" else "Switch to grid view")
+                }
+            }
+        }
+        item(span = fullRow) {
             Row(Modifier.padding(vertical = 14.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ShelfFilter.entries.forEach { option ->
                     FilterChip(
@@ -224,16 +257,20 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
                 }
             }
         }
-        if (catalog.offline) item {
+        if (catalog.offline) item(span = fullRow) {
             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(BrandIcons.CloudOff, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Offline. Showing your last saved library; downloaded books open normally.", Modifier.padding(start = 10.dp).weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = controller::load) { Text("Retry") }
             }
         }
-        if (shown.isEmpty()) item {
-            EmptyShelf(hasBooks = catalog.books.isNotEmpty(), filtering = query.isNotBlank() || filter != ShelfFilter.All)
-        } else items(shown, key = { it.id }) { book -> BookRow(controller, catalog, book) }
+        if (shown.isEmpty()) {
+            item(span = fullRow) { EmptyShelf(hasBooks = catalog.books.isNotEmpty(), filtering = query.isNotBlank() || filter != ShelfFilter.All) }
+        } else if (viewMode == LibraryViewMode.List) {
+            items(shown, key = { it.id }, span = { fullRow() }) { book -> BookRow(controller, catalog, book) }
+        } else {
+            items(shown, key = { it.id }) { book -> BookGridCell(controller, catalog, book) }
+        }
     }
     }
 }
@@ -322,6 +359,35 @@ private fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, 
     }
 }
 
+@Composable
+private fun BookGridCell(controller: AppController, catalog: LibraryUiState.Catalog, book: Book) {
+    val progress = catalog.progress[book.id]
+    val downloaded = book.editions.any { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
+    Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+        Box {
+            Cover(
+                book, controller.covers,
+                Modifier.fillMaxWidth().clickable(onClickLabel = "Open ${book.title}", role = Role.Button) { controller.open(book) },
+            )
+            // A scrim behind the menu button, since the icon's fixed tint would otherwise vanish
+            // against whatever color the cover art happens to be.
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(2.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
+            ) { BookMenu(controller, catalog, book, tint = Color.White) }
+            if (isReading(progress)) {
+                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.Black.copy(alpha = 0.25f))) {
+                    Box(Modifier.fillMaxWidth((progress ?: 0.0).toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
+                }
+            }
+        }
+        Text(book.title, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
+        Text(
+            if (isFinished(progress)) "Finished" else if (downloaded) "Available offline" else "Tap to download",
+            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+        )
+    }
+}
+
 private fun statusLine(progress: Double?, offline: Boolean): String {
     val place = when {
         isFinished(progress) -> "Finished"
@@ -332,12 +398,19 @@ private fun statusLine(progress: Double?, offline: Boolean): String {
 }
 
 @Composable
-private fun BookMenu(controller: AppController, catalog: LibraryUiState.Catalog, book: Book) {
+private fun BookMenu(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, tint: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
     var open by remember { mutableStateOf(false) }
+    var confirmRemove by remember { mutableStateOf<Edition?>(null) }
+    var addToListOpen by remember { mutableStateOf(false) }
     Box {
         val hasAction = book.editions.any { catalog.downloads[it.id] != DownloadStatus.DOWNLOADING }
-        IconButton(onClick = { open = true }, enabled = hasAction) { Icon(BrandIcons.MoreVertical, "More options for ${book.title}", tint = if (hasAction) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)) }
+        IconButton(onClick = { open = true }, enabled = hasAction) { Icon(BrandIcons.MoreVertical, "More options for ${book.title}", tint = if (hasAction) tint else tint.copy(alpha = 0.38f)) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Add to list") },
+                leadingIcon = { Icon(BrandIcons.Request, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                onClick = { open = false; addToListOpen = true },
+            )
             book.editions.forEach { edition ->
                 val format = edition.format.uppercase().ifBlank { "Edition" }
                 val status = catalog.downloads[edition.id]
@@ -352,15 +425,68 @@ private fun BookMenu(controller: AppController, catalog: LibraryUiState.Catalog,
                 DropdownMenuItem(
                     text = { Text(if (available) "Remove $format download" else "Download $format", color = if (available) caution else Color.Unspecified) },
                     leadingIcon = { Icon(if (available) BrandIcons.Trash else BrandIcons.Download, null, Modifier.size(18.dp), tint = if (available) caution else MaterialTheme.colorScheme.onSurfaceVariant) },
-                    onClick = { open = false; if (available) controller.removeDownload(edition) else controller.download(edition) },
+                    onClick = { open = false; if (available) confirmRemove = edition else controller.download(edition) },
                 )
             }
         }
     }
+    confirmRemove?.let { edition ->
+        AlertDialog(
+            onDismissRequest = { confirmRemove = null },
+            title = { Text("Remove download?") },
+            text = { Text("\"${book.title}\" (${edition.format.uppercase()}) will be deleted from this device. You can download it again any time.") },
+            confirmButton = { TextButton(onClick = { controller.removeDownload(edition); confirmRemove = null }) { Text("Remove", color = cautionColor()) } },
+            dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text("Cancel") } },
+        )
+    }
+    if (addToListOpen) AddToListDialog(controller, book, onDismiss = { addToListOpen = false })
 }
 
 @Composable
-private fun Cover(book: Book, loader: CoverLoader, modifier: Modifier = Modifier) {
+private fun AddToListDialog(controller: AppController, book: Book, onDismiss: () -> Unit) {
+    LaunchedEffect(Unit) { controller.loadLists() }
+    val lists = controller.listsUi.lists
+    var newListName by rememberSaveable { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add \"${book.title}\" to a list") },
+        text = {
+            Column {
+                if (lists.isEmpty()) Text("No lists yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                lists.forEach { list ->
+                    TextButton(onClick = { controller.addBookToList(list.id, book); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
+                        Text(list.name, Modifier.weight(1f), textAlign = TextAlign.Start)
+                    }
+                }
+                TextButton(onClick = { newListName = "" }, modifier = Modifier.fillMaxWidth()) { Text("New list…", Modifier.weight(1f), textAlign = TextAlign.Start) }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+    if (newListName != null) {
+        var name by rememberSaveable(newListName) { mutableStateOf(newListName.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { newListName = null },
+            title = { Text("New list") },
+            text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Name") }, modifier = Modifier.fillMaxWidth()) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        controller.createList(name.trim()) { created -> controller.addBookToList(created.id, book) }
+                        newListName = null
+                        onDismiss()
+                    },
+                    enabled = name.isNotBlank(),
+                ) { Text("Create") }
+            },
+            dismissButton = { TextButton(onClick = { newListName = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+@Composable
+internal fun Cover(book: Book, loader: CoverLoader, modifier: Modifier = Modifier) {
     val bitmap by produceState<ImageBitmap?>(null, book.coverUrl, book.updatedAt) { value = withContext(Dispatchers.IO) { loader.load(book) } }
     Box(
         modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(Brush.linearGradient(listOf(HarborNavy, Color(0xFF315B72)))),
@@ -501,12 +627,32 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
             Text(controller.serverUrl, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         ProfileSection(controller)
-        OutlinedButton(onClick = { controller.signOut() }, shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp)) {
+        var confirmSignOut by rememberSaveable { mutableStateOf(false) }
+        var confirmSwitchServer by rememberSaveable { mutableStateOf(false) }
+        TextButton(onClick = { confirmSwitchServer = true }, modifier = Modifier.fillMaxWidth()) { Text("Change server") }
+        OutlinedButton(onClick = { confirmSignOut = true }, shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp)) {
             Icon(BrandIcons.SignOut, null, Modifier.size(18.dp))
             Text("  Sign out")
         }
+        if (confirmSignOut) {
+            AlertDialog(
+                onDismissRequest = { confirmSignOut = false },
+                title = { Text("Sign out?") },
+                text = { Text("You'll need your email and password to sign back in.") },
+                confirmButton = { TextButton(onClick = { confirmSignOut = false; controller.signOut() }) { Text("Sign out", color = MaterialTheme.colorScheme.error) } },
+                dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } },
+            )
+        }
+        if (confirmSwitchServer) {
+            AlertDialog(
+                onDismissRequest = { confirmSwitchServer = false },
+                title = { Text("Change server?") },
+                text = { Text("You'll be signed out of ${controller.serverUrl} and asked for a new server address.") },
+                confirmButton = { TextButton(onClick = { confirmSwitchServer = false; controller.switchServer() }) { Text("Change server", color = MaterialTheme.colorScheme.error) } },
+                dismissButton = { TextButton(onClick = { confirmSwitchServer = false }) { Text("Cancel") } },
+            )
+        }
         AboutSection()
-        Text("A brighter tomorrow, one book at a time.", fontFamily = LiterataFamily, fontStyle = FontStyle.Italic, fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 12.dp))
     }
     }
 }
@@ -519,6 +665,9 @@ private fun ProfileSection(controller: AppController) {
     var newPassword by rememberSaveable { mutableStateOf("") }
     var confirmPassword by rememberSaveable { mutableStateOf("") }
 
+    // The default unfocused text-field border and divider both use colorScheme.outline, which
+    // is too close in luminance to this card's surfaceVariant background to read as a border.
+    val fieldColors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -527,7 +676,7 @@ private fun ProfileSection(controller: AppController) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = name, onValueChange = { name = it }, singleLine = true, modifier = Modifier.weight(1f),
-                label = { Text("Display name") }, shape = RoundedCornerShape(12.dp),
+                label = { Text("Display name") }, shape = RoundedCornerShape(12.dp), colors = fieldColors,
             )
             TextButton(
                 onClick = { controller.updateDisplayName(name.trim()) },
@@ -535,23 +684,23 @@ private fun ProfileSection(controller: AppController) {
             ) { Text("Save") }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
         Text("Change password", style = MaterialTheme.typography.titleSmall)
         OutlinedTextField(
             value = currentPassword, onValueChange = { currentPassword = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             label = { Text("Current password") }, visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp), colors = fieldColors,
         )
         OutlinedTextField(
             value = newPassword, onValueChange = { newPassword = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             label = { Text("New password") }, visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp), colors = fieldColors,
         )
         OutlinedTextField(
             value = confirmPassword, onValueChange = { confirmPassword = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             label = { Text("Confirm new password") }, visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp),
-            isError = confirmPassword.isNotEmpty() && confirmPassword != newPassword,
+            isError = confirmPassword.isNotEmpty() && confirmPassword != newPassword, colors = fieldColors,
         )
         if (state.error != null) Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         if (state.passwordChanged) Text("Password updated.", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.bodySmall)
@@ -614,6 +763,7 @@ private fun AboutSection() {
             },
             enabled = status != UpdateStatus.Checking,
             shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)),
         ) { Text(if (available != null) "Download update" else "Check for updates") }
     }
 }

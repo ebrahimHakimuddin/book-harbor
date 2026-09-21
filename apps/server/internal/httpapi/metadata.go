@@ -19,6 +19,21 @@ func (s *server) searchMetadata(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden", "administrator access is required")
 		return
 	}
+	s.searchMetadataFor(w, r)
+}
+
+// searchMetadataForRequest is the reader-facing counterpart of searchMetadata: any
+// authenticated user may search, since it's read-only and used to find a book to request
+// (POST /api/v1/book-requests), not to edit library metadata.
+func (s *server) searchMetadataForRequest(w http.ResponseWriter, r *http.Request) {
+	if _, ok := authenticatedPrincipal(r); !ok {
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read authenticated user")
+		return
+	}
+	s.searchMetadataFor(w, r)
+}
+
+func (s *server) searchMetadataFor(w http.ResponseWriter, r *http.Request) {
 	if s.metadata == nil {
 		writeError(w, http.StatusServiceUnavailable, "metadata_unavailable", "no metadata provider is configured")
 		return

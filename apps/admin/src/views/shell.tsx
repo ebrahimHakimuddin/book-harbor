@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { ArchiveIcon, BookOpenIcon, HistoryIcon, LogOutIcon, UsersIcon, type LucideIcon, Loader2Icon } from "lucide-react"
+import { ArchiveIcon, BookMarkedIcon, BookOpenIcon, HistoryIcon, LogOutIcon, UsersIcon, type LucideIcon, Loader2Icon } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, type Session, type User } from "@/lib/api"
-import { useBooks, useReaders, useUpdateSelf } from "@/lib/queries"
+import { useBooks, useBookRequests, useReaders, useUpdateSelf } from "@/lib/queries"
 import { errorMessage, initials, passwordOk } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Wordmark } from "@/components/brand"
@@ -15,15 +15,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { LibraryView } from "@/views/library"
 import { ReadersView } from "@/views/readers"
+import { RequestsView } from "@/views/requests"
 import { ActivityView } from "@/views/activity"
 import { BackupView } from "@/views/backup"
 
-const VIEWS = ["library", "readers", "activity", "backup"] as const
+const VIEWS = ["library", "readers", "requests", "activity", "backup"] as const
 type View = (typeof VIEWS)[number]
 
 const NAV: { view: View; label: string; icon: LucideIcon }[] = [
   { view: "library", label: "Library", icon: BookOpenIcon },
   { view: "readers", label: "Readers", icon: UsersIcon },
+  { view: "requests", label: "Requests", icon: BookMarkedIcon },
   { view: "activity", label: "Activity", icon: HistoryIcon },
   { view: "backup", label: "Backup", icon: ArchiveIcon },
 ]
@@ -46,9 +48,11 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
   const [accountOpen, setAccountOpen] = useState(false)
   const books = useBooks()
   const readers = useReaders()
+  const requests = useBookRequests()
   const counts: Partial<Record<View, number | undefined>> = {
     library: books.loading ? undefined : books.books.length,
     readers: readers.data?.length,
+    requests: requests.data?.length || undefined,
   }
 
   useEffect(() => { document.title = `${instanceName} administration` }, [instanceName])
@@ -82,7 +86,7 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
                   active && "bg-accent text-navy",
                 )}>
                 <span aria-hidden className={cn("absolute top-2 bottom-2 left-0 hidden w-[3px] origin-center scale-y-0 rounded-full bg-teal transition-transform lg:block", active && "scale-y-100")} />
-                <Icon className={cn("size-[18px] text-muted-foreground transition-all group-hover:translate-x-0.5", active && "text-teal")} />
+                <Icon className={cn("size-[18px] text-muted-foreground transition-all group-hover:translate-x-0.5", active && "text-teal-dark")} />
                 <span>{label}</span>
                 {counts[id] !== undefined && <span className="ml-auto text-xs font-medium text-muted-foreground tabular-nums">{counts[id]}</span>}
               </button>
@@ -100,6 +104,7 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
           <div key={view} className="mx-auto max-w-[1320px] animate-in fade-in slide-in-from-bottom-1 duration-200">
             {view === "library" && <LibraryView />}
             {view === "readers" && <ReadersView currentUserId={session.user.id} />}
+            {view === "requests" && <RequestsView />}
             {view === "activity" && <ActivityView />}
             {view === "backup" && <BackupView />}
           </div>

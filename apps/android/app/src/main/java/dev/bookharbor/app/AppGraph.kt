@@ -2,10 +2,12 @@ package dev.bookharbor.app
 
 import android.content.Context
 import dev.bookharbor.app.library.ApiClient
+import dev.bookharbor.app.library.BookRequestsClient
 import dev.bookharbor.app.library.DownloadStore
 import dev.bookharbor.app.library.EditionDownloader
 import dev.bookharbor.app.library.FriendsClient
 import dev.bookharbor.app.library.LibraryClient
+import dev.bookharbor.app.library.ListsClient
 import dev.bookharbor.app.library.SessionStore
 import dev.bookharbor.app.sync.HttpSyncApi
 import dev.bookharbor.app.sync.ProgressRecorder
@@ -26,6 +28,8 @@ class AppGraph private constructor(context: Context) {
     val api = ApiClient(session)
     val library = LibraryClient(api)
     val friends = FriendsClient(api)
+    val bookRequests = BookRequestsClient(api)
+    val lists = ListsClient(api)
     val downloads = DownloadStore(prefs, File(app.filesDir, "downloads"))
     val downloader = EditionDownloader(api, downloads)
     val progress = SqliteProgressStore(app)
