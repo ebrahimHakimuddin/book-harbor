@@ -40,9 +40,10 @@ type friendRequestResponse struct {
 }
 
 type socialSettingsResponse struct {
-	ActivityVisible bool `json:"activityVisible"`
-	GoalYear        int  `json:"goalYear"`
-	GoalBooks       int  `json:"goalBooks"`
+	ActivityVisible  bool `json:"activityVisible"`
+	GoalYear         int  `json:"goalYear"`
+	GoalBooks        int  `json:"goalBooks"`
+	FinishedThisYear int  `json:"finishedThisYear"`
 }
 
 // friends handles GET /api/v1/friends: the caller's accepted friends, each with as
@@ -315,7 +316,13 @@ func (s *server) socialSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal_error", "unable to read settings")
 			return
 		}
-		writeJSON(w, http.StatusOK, newSocialSettingsResponse(settings))
+		response, err := s.newSocialSettingsResponseWithStats(r, principal.User.ID, settings)
+		if err != nil {
+			s.logger.Error("get reading stats", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "unable to read settings")
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
 	case http.MethodPut:
 		var request struct {
 			ActivityVisible bool `json:"activityVisible"`
@@ -332,7 +339,13 @@ func (s *server) socialSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.record(r, "social_settings.update", "user", principal.User.ID, "")
-		writeJSON(w, http.StatusOK, newSocialSettingsResponse(settings))
+		response, err := s.newSocialSettingsResponseWithStats(r, principal.User.ID, settings)
+		if err != nil {
+			s.logger.Error("get reading stats", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "unable to read settings")
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
 	default:
 		writeMethodNotAllowed(w, "GET, PUT")
 	}
@@ -340,6 +353,16 @@ func (s *server) socialSettings(w http.ResponseWriter, r *http.Request) {
 
 func newSocialSettingsResponse(settings social.Settings) socialSettingsResponse {
 	return socialSettingsResponse{ActivityVisible: settings.ActivityVisible, GoalYear: settings.GoalYear, GoalBooks: settings.GoalBooks}
+}
+
+func (s *server) newSocialSettingsResponseWithStats(r *http.Request, userID string, settings social.Settings) (socialSettingsResponse, error) {
+	response := newSocialSettingsResponse(settings)
+	finished, err := s.reading.FinishedCount(r.Context(), userID, time.Now().UTC().Year())
+	if err != nil {
+		return socialSettingsResponse{}, err
+	}
+	response.FinishedThisYear = finished
+	return response, nil
 }
 
 func (s *server) writeSocialError(w http.ResponseWriter, err error) {

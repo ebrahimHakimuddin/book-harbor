@@ -33,8 +33,8 @@ class FriendsClientTest {
  }
 
  @Test fun parsesSocialSettings() {
-  val settings = parseSocialSettings("""{"activityVisible":true,"goalYear":2026,"goalBooks":24}""")
-  assertTrue(settings.activityVisible); assertEquals(2026, settings.goalYear); assertEquals(24, settings.goalBooks)
+  val settings = parseSocialSettings("""{"activityVisible":true,"goalYear":2026,"goalBooks":24,"finishedThisYear":9}""")
+  assertTrue(settings.activityVisible); assertEquals(2026, settings.goalYear); assertEquals(24, settings.goalBooks); assertEquals(9, settings.finishedThisYear)
  }
 
  @Test fun parsesSocialSettingsDefaults() {

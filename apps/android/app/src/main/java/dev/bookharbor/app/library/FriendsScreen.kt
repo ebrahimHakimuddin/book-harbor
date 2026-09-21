@@ -72,6 +72,9 @@ fun FriendsTab(controller: AppController) {
             FriendCard(friend, onRemove = { controller.removeFriend(friend.userId) })
         }
 
+        item { SectionLabel("Your reading") }
+        item { YourStats(state.settings) }
+
         item { SectionLabel("Sharing") }
         item { SharingSettings(state.settings, onChange = controller::updateSocialSettings) }
     }
@@ -79,7 +82,7 @@ fun FriendsTab(controller: AppController) {
 }
 
 @Composable
-private fun SectionLabel(label: String) {
+internal fun SectionLabel(label: String) {
     Text(label, Modifier.padding(top = 24.dp, bottom = 8.dp), style = MaterialTheme.typography.titleMedium)
 }
 
@@ -147,6 +150,27 @@ private fun FriendCard(friend: Friend, onRemove: () -> Unit) {
 private fun Avatar(name: String) {
     Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
         Text(initialsOf(name), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun YourStats(settings: SocialSettings) {
+    Column {
+        Text(
+            "Finished ${settings.finishedThisYear} book${if (settings.finishedThisYear == 1) "" else "s"} this year",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (settings.goalBooks > 0 && settings.goalYear == Year.now().value) {
+            LinearProgressIndicator(
+                progress = { (settings.finishedThisYear.toFloat() / settings.goalBooks).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            )
+            Text(
+                "Goal: ${settings.goalBooks} books",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
     }
 }
 

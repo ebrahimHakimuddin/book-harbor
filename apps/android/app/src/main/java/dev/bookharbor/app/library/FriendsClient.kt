@@ -15,7 +15,7 @@ data class Friend(
 )
 data class FriendRequest(val userId: String, val displayName: String, val email: String, val direction: String, val createdAt: String)
 data class FriendRequests(val incoming: List<FriendRequest>, val outgoing: List<FriendRequest>)
-data class SocialSettings(val activityVisible: Boolean, val goalYear: Int, val goalBooks: Int)
+data class SocialSettings(val activityVisible: Boolean, val goalYear: Int, val goalBooks: Int, val finishedThisYear: Int = 0)
 
 private fun parseActivityBook(json: JSONObject) = FriendActivityBook(
     bookId = json.getString("bookId"), title = json.optString("title"), coverUrl = json.optString("coverUrl"),
@@ -54,7 +54,7 @@ fun parseFriendRequests(json: String): FriendRequests {
 }
 
 fun parseSocialSettings(json: String): SocialSettings = JSONObject(json).let {
-    SocialSettings(it.optBoolean("activityVisible"), it.optInt("goalYear"), it.optInt("goalBooks"))
+    SocialSettings(it.optBoolean("activityVisible"), it.optInt("goalYear"), it.optInt("goalBooks"), it.optInt("finishedThisYear"))
 }
 
 /** Friend relationships, requests, and the visibility/goal settings that gate them. */
