@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.bookharbor.app.AppGraph
 import dev.bookharbor.app.reader.epub.EpubBook
+import dev.bookharbor.app.widget.ContinueReadingWidget
 import dev.bookharbor.app.sync.LocalPosition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -119,6 +120,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                     else -> {
                         val books = graph.library.books()
                         cache.save(instance.name, books)
+                        ContinueReadingWidget.refresh(graph.context)
                         catalog(instance.name, books, offline = false)
                     }
                 }
@@ -179,6 +181,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             graph.session.displayName = ""
             graph.progress.clear() // never send this account's unsent events as someone else
             graph.annotations.clear() // they belong to this account, and are on its server
+            ContinueReadingWidget.refresh(graph.context)
             cache.clear()
             opened = null
             ui = when (signOutTarget) {
@@ -273,6 +276,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         opened = null
         updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
         scope.launch(Dispatchers.IO) { refreshSync() }
+        ContinueReadingWidget.refresh(graph.context)
     }
 
     fun syncNow() {
@@ -288,6 +292,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             }
             refreshSync()
             updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
+            ContinueReadingWidget.refresh(graph.context)
         }
     }
 

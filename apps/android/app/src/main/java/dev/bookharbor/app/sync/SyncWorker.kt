@@ -13,6 +13,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.bookharbor.app.AppGraph
 import dev.bookharbor.app.library.HttpError
+import dev.bookharbor.app.widget.ContinueReadingWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -24,6 +25,7 @@ class ProgressSyncWorker(context: Context, params: WorkerParameters) : Coroutine
         try {
             val outcome = graph.syncEngine.runOnce()
             val annotationsRemain = graph.annotationSync.runOnce()
+            ContinueReadingWidget.refresh(applicationContext) // positions from other devices may have moved
             // A page can stop early with events still queued (see SyncEngine); that is not
             // success, or WorkManager would drop the job with nothing left to retry it.
             if (outcome.pendingRemains || annotationsRemain) Result.retry() else Result.success()

@@ -231,6 +231,9 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item(span = fullRow) { LibraryHeader(controller, catalog, onOpenHistory) }
+        continueReading(catalog.books, catalog.progress, catalog.lastReadAt)?.let { book ->
+            item(span = fullRow, key = "continue") { ContinueReadingCard(controller, book, catalog.progress[book.id] ?: 0.0) }
+        }
         item(span = fullRow) {
             Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Library", Modifier.weight(1f), style = MaterialTheme.typography.headlineLarge)
@@ -275,6 +278,28 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
             items(shown, key = { it.id }) { book -> BookGridCell(controller, catalog, book) }
         }
     }
+    }
+}
+
+/** The book in progress, one tap from the top of the library. */
+@Composable
+private fun ContinueReadingCard(controller: AppController, book: Book, progress: Double) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 18.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClickLabel = "Continue reading ${book.title}", role = Role.Button) { controller.open(book) }.padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Cover(book, controller.covers, Modifier.width(56.dp))
+        Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("CONTINUE READING", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, letterSpacing = 1.2.sp)
+            Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f).height(4.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background)) {
+                    Box(Modifier.fillMaxWidth(progress.toFloat().coerceIn(0f, 1f)).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
+                }
+                Text("${(progress * 100).roundToInt()}%", Modifier.padding(start = 10.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

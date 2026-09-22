@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">BookHarbor</string>
+    <string name="widget_label">CONTINUE READING</string>
+    <string name="widget_empty">Open a book in BookHarbor to pick up here</string>
+    <string name="widget_description">Jump back into the book you\'re reading</string>
 </resources>

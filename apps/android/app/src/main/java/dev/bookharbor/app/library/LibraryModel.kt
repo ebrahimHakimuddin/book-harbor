@@ -47,4 +47,9 @@ fun visibleBooks(
     }
 }
 
+/** The in-progress book read most recently, for the library's "Continue reading" card. */
+fun continueReading(books: List<Book>, progress: Map<String, Double>, lastReadAt: Map<String, String>): Book? =
+    books.filter { isReading(progress[it.id]) }
+        .maxByOrNull { book -> lastReadAt[book.id]?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() } ?: java.time.Instant.EPOCH }
+
 fun initialsOf(name: String): String = name.split(Regex("\\s+")).filter { it.isNotBlank() }.take(2).joinToString("") { it.first().uppercase() }.ifEmpty { "BH" }

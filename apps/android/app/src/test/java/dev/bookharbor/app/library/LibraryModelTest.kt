@@ -50,4 +50,12 @@ class LibraryModelTest {
         assertEquals("M", initialsOf("mira"))
         assertEquals("BH", initialsOf("   "))
     }
+
+    @Test
+    fun continueReadingPicksTheMostRecentlyReadUnfinishedBook() {
+        val progress = mapOf("b1" to 0.4, "b2" to 0.99)
+        val lastRead = mapOf("b1" to "2026-09-20T10:00:00Z", "b2" to "2026-09-22T10:00:00Z")
+        assertEquals(dune, continueReading(listOf(dune, hail), progress, lastRead)) // hail is finished
+        assertEquals(null, continueReading(listOf(dune, hail), emptyMap(), lastRead))
+    }
 }

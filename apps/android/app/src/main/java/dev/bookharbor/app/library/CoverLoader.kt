@@ -1,5 +1,6 @@
 package dev.bookharbor.app.library
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
@@ -28,19 +29,26 @@ class CoverLoader(private val api: ApiClient, cacheDir: File) {
             file.isFile -> file.readBytes()
             else -> runCatching { fetch(book.coverUrl) }.getOrNull()?.also { runCatching { file.writeBytes(it) } }
         } ?: return null
-        return decode(bytes)?.also { memory.put(key, it) }
+        return decode(bytes)?.asImageBitmap()?.also { memory.put(key, it) }
+    }
+
+    /** The cover already on disk, without touching the network (for the home-screen widget). */
+    fun cached(book: Book): Bitmap? {
+        if (book.coverUrl.isBlank()) return null
+        val file = File(directory, hash(book.coverUrl + "|" + book.updatedAt))
+        return if (file.isFile) runCatching { decode(file.readBytes()) }.getOrNull() else null
     }
 
     private fun fetch(url: String): ByteArray =
         if (url.startsWith("/")) api.authorizedBytes(url) else api.requestBytes(url)
 
-    private fun decode(bytes: ByteArray): ImageBitmap? {
+    private fun decode(bytes: ByteArray): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0) return null
         var sample = 1
         while (bounds.outWidth / (sample * 2) >= TARGET_WIDTH) sample *= 2
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
     private fun hash(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }.take(40)
