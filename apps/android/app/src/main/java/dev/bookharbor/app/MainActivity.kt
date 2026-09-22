@@ -8,6 +8,13 @@ import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -94,19 +101,29 @@ fun BookHarborApp(openRequest: MutableState<String?> = remember { mutableStateOf
         onDispose { runCatching { connectivity?.unregisterNetworkCallback(callback) } }
     }
 
-    val opened = controller.opened
-    if (opened != null) {
-        // The reader applies its own theme; everything else follows the system. Each reader
-        // screen owns its own back handling so it can flush pending progress before closing.
-        val common = Triple(opened.book.id, opened.edition.id, opened.book.title)
-        if (opened.epub != null) {
-            EpubReaderScreen(opened.epub, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader)
+    // Opening a book rises gently into place; closing fades back to the library underneath.
+    AnimatedContent(
+        targetState = controller.opened,
+        contentKey = { it?.book?.id },
+        transitionSpec = {
+            if (targetState != null) (fadeIn(tween(260)) + scaleIn(tween(320), initialScale = 0.94f)) togetherWith fadeOut(tween(200))
+            else fadeIn(tween(220)) togetherWith (fadeOut(tween(200)) + scaleOut(tween(220), targetScale = 0.97f))
+        },
+        label = "reader",
+    ) { opened ->
+        if (opened != null) {
+            // The reader applies its own theme; everything else follows the system. Each reader
+            // screen owns its own back handling so it can flush pending progress before closing.
+            val common = Triple(opened.book.id, opened.edition.id, opened.book.title)
+            if (opened.epub != null) {
+                EpubReaderScreen(opened.epub, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader)
+            } else {
+                PdfReaderScreen(opened.file, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader)
+            }
         } else {
-            PdfReaderScreen(opened.file, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader)
-        }
-    } else {
-        BookHarborTheme(readerTheme = ReaderTheme.System) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LibraryScreen(controller) }
+            BookHarborTheme(readerTheme = ReaderTheme.System) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LibraryScreen(controller) }
+            }
         }
     }
 }

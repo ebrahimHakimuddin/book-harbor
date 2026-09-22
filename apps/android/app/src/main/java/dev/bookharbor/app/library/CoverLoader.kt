@@ -19,6 +19,9 @@ class CoverLoader(private val api: ApiClient, cacheDir: File) {
         override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
     }
 
+    /** The decoded cover if it is already in memory; cheap enough to call while composing. */
+    fun peek(book: Book): ImageBitmap? = if (book.coverUrl.isBlank()) null else memory.get(hash(book.coverUrl + "|" + book.updatedAt))
+
     /** Blocking; call from Dispatchers.IO. Returns null when there is no cover or it cannot be fetched. */
     fun load(book: Book): ImageBitmap? {
         if (book.coverUrl.isBlank()) return null
@@ -29,7 +32,9 @@ class CoverLoader(private val api: ApiClient, cacheDir: File) {
             file.isFile -> file.readBytes()
             else -> runCatching { fetch(book.coverUrl) }.getOrNull()?.also { runCatching { file.writeBytes(it) } }
         } ?: return null
-        return decode(bytes)?.asImageBitmap()?.also { memory.put(key, it) }
+        // prepareToDraw uploads the pixels to the GPU now, on this IO thread, rather than on the
+        // first frame that draws the cover -- which is what made scrolling stutter as covers arrived.
+        return decode(bytes)?.also { it.prepareToDraw() }?.asImageBitmap()?.also { memory.put(key, it) }
     }
 
     /** The cover already on disk, without touching the network (for the home-screen widget). */
@@ -51,7 +56,11 @@ class CoverLoader(private val api: ApiClient, cacheDir: File) {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
-    private fun hash(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }.take(40)
+    private val hashes = LruCache<String, String>(512)
+
+    private fun hash(value: String) = hashes.get(value) ?: sha(value).also { hashes.put(value, it) }
+
+    private fun sha(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }.take(40)
 
     private companion object { const val TARGET_WIDTH = 360 }
 }

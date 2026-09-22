@@ -25,6 +25,8 @@ sealed interface LibraryUiState {
         val books: List<Book>,
         val downloads: Map<String, DownloadStatus> = emptyMap(),
         val errors: Map<String, String> = emptyMap(),
+        /** 0..1 for each edition that is downloading and knows its size. */
+        val downloadProgress: Map<String, Float> = emptyMap(),
         val progress: Map<String, Double> = emptyMap(),
         /** RFC 3339 UTC instant of each book's most recent local reading event, for the History tab. */
         val lastReadAt: Map<String, String> = emptyMap(),
@@ -234,21 +236,18 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         return positions.associate { it.bookId to it.percentage } to positions.associate { it.bookId to it.occurredAt }
     }
 
-    private fun updateCatalog(change: (LibraryUiState.Catalog) -> LibraryUiState.Catalog) {
+    /** Serialized: downloads report progress from several IO threads at once, and none may lose another's change. */
+    private val catalogLock = Any()
+
+    private fun updateCatalog(change: (LibraryUiState.Catalog) -> LibraryUiState.Catalog) = synchronized(catalogLock) {
         val current = ui
         if (current is LibraryUiState.Catalog) ui = change(current)
     }
 
     fun download(edition: Edition, thenOpen: Book? = null) {
-        updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.DOWNLOADING), errors = it.errors - edition.id) }
-        scope.launch(Dispatchers.IO) {
-            try {
-                graph.downloader.download(edition)
-                updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.AVAILABLE)) }
-                if (thenOpen != null) open(thenOpen)
-            } catch (error: Exception) {
-                updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.FAILED), errors = it.errors + (edition.id to (error.message ?: "Download failed"))) }
-            }
+        scope.launch {
+            downloadNow(edition)
+            if (thenOpen != null && (ui as? LibraryUiState.Catalog)?.downloads?.get(edition.id) == DownloadStatus.AVAILABLE) open(thenOpen)
         }
     }
 
@@ -363,10 +362,10 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     private suspend fun downloadNow(edition: Edition) = withContext(Dispatchers.IO) {
         updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.DOWNLOADING), errors = it.errors - edition.id) }
         try {
-            graph.downloader.download(edition)
-            updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.AVAILABLE)) }
+            graph.downloader.download(edition) { fraction -> updateCatalog { it.copy(downloadProgress = it.downloadProgress + (edition.id to fraction)) } }
+            updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.AVAILABLE), downloadProgress = it.downloadProgress - edition.id) }
         } catch (error: Exception) {
-            updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.FAILED), errors = it.errors + (edition.id to (error.message ?: "Download failed"))) }
+            updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.FAILED), downloadProgress = it.downloadProgress - edition.id, errors = it.errors + (edition.id to (error.message ?: "Download failed"))) }
         }
     }
 
@@ -397,8 +396,10 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     fun dismissPasswordReset() { passwordResetUi = PasswordResetUiState() }
 
     fun closeReader() {
-        opened?.epub?.close()
+        val closing = opened
         opened = null
+        // The reader stays on screen while it fades out, so release the file after that.
+        scope.launch { kotlinx.coroutines.delay(600); closing?.epub?.close() }
         updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
         scope.launch(Dispatchers.IO) { refreshSync() }
         ContinueReadingWidget.refresh(graph.context)

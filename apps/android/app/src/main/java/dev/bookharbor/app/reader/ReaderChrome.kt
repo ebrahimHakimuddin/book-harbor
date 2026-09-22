@@ -4,6 +4,13 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -339,11 +346,16 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
         }
         Text(bookTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (onReadAloud != null) IconButton(onClick = onReadAloud) { Icon(BrandIcons.Headphones, "Read aloud from here") }
-        IconButton(onClick = { onBookmark?.invoke() }, enabled = onBookmark != null) {
+        // Adding a bookmark pops the icon and ticks; removing it just settles back.
+        val haptics = LocalHapticFeedback.current
+        val pop = remember { Animatable(1f) }
+        LaunchedEffect(bookmarked) { if (bookmarked) { pop.snapTo(0.6f); pop.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 500f)) } }
+        IconButton(onClick = { haptics.performHapticFeedback(if (bookmarked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn); onBookmark?.invoke() }, enabled = onBookmark != null) {
             Icon(
                 if (bookmarked) BrandIcons.BookmarkAdded else BrandIcons.Bookmark,
                 if (bookmarked) "Remove bookmark" else "Bookmark this place",
-                tint = if (bookmarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
+                Modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value },
+                tint = animateColorAsState(if (bookmarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface, tween(200), label = "bookmark").value,
             )
         }
         TextButton(onClick = onContents, modifier = Modifier.semantics { contentDescription = contentsLabel }) {
@@ -371,8 +383,9 @@ private fun ReaderProgressBar(
             .background(MaterialTheme.colorScheme.background)
             .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()),
     ) {
+        val shown by animateFloatAsState(progress.coerceIn(0f, 1f), tween(300), label = "reading progress")
         Box(Modifier.fillMaxWidth().height(2.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
-            Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(2.dp).background(MaterialTheme.colorScheme.secondary))
+            Box(Modifier.fillMaxWidth(shown).height(2.dp).background(MaterialTheme.colorScheme.secondary))
         }
         Row(
             modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 4.dp),

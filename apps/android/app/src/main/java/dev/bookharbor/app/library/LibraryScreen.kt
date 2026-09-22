@@ -12,6 +12,19 @@ import androidx.core.content.ContextCompat
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.ripple
+import androidx.compose.ui.composed
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import dev.bookharbor.app.ui.pressScale
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -251,8 +264,9 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
             }
         },
     ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
-            when (tab) {
+        // A quick crossfade between tabs rather than a hard cut.
+        Crossfade(tab, Modifier.padding(padding).fillMaxSize(), animationSpec = tween(180), label = "tab") { shown ->
+            when (shown) {
                 Tab.Library -> LibraryTab(controller, catalog, onOpenHistory = { tab = Tab.History }, onOpenLists = { listsOpen = true })
                 Tab.History -> HistoryTab(controller, catalog)
                 Tab.Friends -> FriendsTab(controller)
@@ -349,9 +363,9 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
         if (shown.isEmpty()) {
             item(span = fullRow) { EmptyShelf(hasBooks = catalog.books.isNotEmpty(), filtering = query.isNotBlank() || filter != ShelfFilter.All || tag != null) }
         } else if (viewMode == LibraryViewMode.List) {
-            items(shown, key = { it.id }, span = { fullRow() }) { book -> BookRow(controller, catalog, book) }
+            items(shown, key = { it.id }, span = { fullRow() }, contentType = { "row" }) { book -> Box(Modifier.animateItem()) { BookRow(controller, catalog, book) } }
         } else {
-            items(shown, key = { it.id }) { book -> BookGridCell(controller, catalog, book) }
+            items(shown, key = { it.id }, contentType = { "cell" }) { book -> Box(Modifier.animateItem()) { BookGridCell(controller, catalog, book) } }
         }
     }
     }
@@ -360,9 +374,11 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
 /** The book in progress, one tap from the top of the library. */
 @Composable
 private fun ContinueReadingCard(controller: AppController, book: Book, progress: Double) {
+    val press = remember { MutableInteractionSource() }
+    val shown by animateFloatAsState(progress.toFloat().coerceIn(0f, 1f), tween(600), label = "continue")
     Row(
         Modifier.fillMaxWidth().padding(top = 18.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClickLabel = "Continue reading ${book.title}", role = Role.Button) { controller.open(book) }.padding(14.dp),
+            .pressScale(press, 0.98f).clickable(press, ripple(), onClickLabel = "Continue reading ${book.title}", role = Role.Button) { controller.open(book) }.padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Cover(book, controller.covers, Modifier.width(56.dp))
@@ -371,7 +387,7 @@ private fun ContinueReadingCard(controller: AppController, book: Book, progress:
             Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f).height(4.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background)) {
-                    Box(Modifier.fillMaxWidth(progress.toFloat().coerceIn(0f, 1f)).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
+                    Box(Modifier.fillMaxWidth(shown).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
                 }
                 Text("${(progress * 100).roundToInt()}%", Modifier.padding(start = 10.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -437,12 +453,13 @@ private fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, 
     val progress = catalog.progress[book.id]
     val statuses = book.editions.map { catalog.downloads[it.id] ?: DownloadStatus.NOT_DOWNLOADED }
     val downloading = statuses.any { it == DownloadStatus.DOWNLOADING }
+    val fraction = book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }
     val error = book.editions.firstNotNullOfOrNull { edition -> catalog.errors[edition.id]?.takeIf { catalog.downloads[edition.id] == DownloadStatus.FAILED || it.isNotBlank() } }
     var details by remember { mutableStateOf(false) }
     if (details) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
     Column {
         Row(
-            Modifier.fillMaxWidth().bookClicks(book, onOpen = { controller.open(book) }, onDetails = { details = true }).padding(vertical = 10.dp),
+            Modifier.fillMaxWidth().bookClicks(book, scale = false, onOpen = { controller.open(book) }, onDetails = { details = true }).padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Cover(book, controller.covers, Modifier.width(52.dp))
@@ -453,8 +470,8 @@ private fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, 
                 seriesLabel(book).takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 when {
                     downloading -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
-                        Text("  Downloading…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                        DownloadRing(fraction, Modifier.size(12.dp))
+                        Text(if (fraction != null) "  Downloading… ${(fraction * 100).roundToInt()}%" else "  Downloading…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                     }
                     error != null -> Text(error, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, maxLines = 2)
                     else -> Text(statusLine(progress, statuses.any { it == DownloadStatus.AVAILABLE }), style = MaterialTheme.typography.labelMedium, color = if (isReading(progress) || isFinished(progress)) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -470,6 +487,8 @@ private fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, 
 private fun BookGridCell(controller: AppController, catalog: LibraryUiState.Catalog, book: Book) {
     val progress = catalog.progress[book.id]
     val downloaded = book.editions.any { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
+    val downloading = book.editions.any { catalog.downloads[it.id] == DownloadStatus.DOWNLOADING }
+    val fraction = book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }
     var details by remember { mutableStateOf(false) }
     if (details) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
     Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
@@ -478,6 +497,8 @@ private fun BookGridCell(controller: AppController, catalog: LibraryUiState.Cata
                 book, controller.covers,
                 Modifier.fillMaxWidth().bookClicks(book, onOpen = { controller.open(book) }, onDetails = { details = true }),
             )
+            // Downloading: the cover dims under a progress ring, then clears when it's ready.
+            DownloadScrim(downloading, fraction, Modifier.matchParentSize())
             // A scrim behind the menu button, since the icon's fixed tint would otherwise vanish
             // against whatever color the cover art happens to be.
             Box(
@@ -491,7 +512,12 @@ private fun BookGridCell(controller: AppController, catalog: LibraryUiState.Cata
         }
         Text(book.title, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
         Text(
-            if (isFinished(progress)) "Finished" else if (downloaded) "Available offline" else "Tap to download",
+            when {
+                downloading -> fraction?.let { "Downloading… ${(it * 100).roundToInt()}%" } ?: "Downloading…"
+                isFinished(progress) -> "Finished"
+                downloaded -> "Available offline"
+                else -> "Tap to download"
+            },
             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
         )
     }
@@ -603,23 +629,54 @@ internal fun AddToListDialog(controller: AppController, book: Book, onDismiss: (
     }
 }
 
-/** Tap opens the book; press and hold (or TalkBack's long-press action) shows its details. */
+/**
+ * Tap opens the book; press and hold (or TalkBack's long-press action) shows its details with a
+ * haptic tick. Covers ([scale]) sink a little under the finger.
+ */
 @OptIn(ExperimentalFoundationApi::class)
-private fun Modifier.bookClicks(book: Book, onOpen: () -> Unit, onDetails: () -> Unit): Modifier =
-    combinedClickable(onClickLabel = "Open ${book.title}", role = Role.Button, onLongClickLabel = "About ${book.title}", onLongClick = onDetails, onClick = onOpen)
+private fun Modifier.bookClicks(book: Book, scale: Boolean = true, onOpen: () -> Unit, onDetails: () -> Unit): Modifier = composed {
+    val press = remember { MutableInteractionSource() }
+    val haptics = LocalHapticFeedback.current
+    (if (scale) pressScale(press) else this).combinedClickable(
+        press, ripple(), onClickLabel = "Open ${book.title}", role = Role.Button, onLongClickLabel = "About ${book.title}",
+        onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); onDetails() }, onClick = onOpen,
+    )
+}
+
+@Composable
+private fun DownloadScrim(visible: Boolean, fraction: Float?, modifier: Modifier) {
+    AnimatedVisibility(visible, modifier, enter = fadeIn(tween(200)), exit = fadeOut(tween(300))) {
+        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
+            DownloadRing(fraction, Modifier.size(36.dp), color = Color.White, strokeWidth = 3.dp)
+        }
+    }
+}
+
+/** Determinate once the size is known, spinning until then; the fill glides between updates. */
+@Composable
+internal fun DownloadRing(fraction: Float?, modifier: Modifier, color: Color = MaterialTheme.colorScheme.secondary, strokeWidth: androidx.compose.ui.unit.Dp = 2.dp) {
+    if (fraction == null) { CircularProgressIndicator(modifier, strokeWidth = strokeWidth, color = color); return }
+    val shown by animateFloatAsState(fraction, tween(250), label = "download")
+    CircularProgressIndicator(progress = { shown }, modifier = modifier, strokeWidth = strokeWidth, color = color, trackColor = color.copy(alpha = 0.25f))
+}
 
 @Composable
 internal fun Cover(book: Book, loader: CoverLoader, modifier: Modifier = Modifier) {
-    val bitmap by produceState<ImageBitmap?>(null, book.coverUrl, book.updatedAt) { value = withContext(Dispatchers.IO) { loader.load(book) } }
+    // Straight from memory when it's there, so a cover scrolled back into view never flashes its
+    // placeholder; only a cover that has to come from disk or the network fades in.
+    val cached = remember(book.coverUrl, book.updatedAt) { loader.peek(book) }
+    val bitmap by produceState(cached, book.coverUrl, book.updatedAt) { if (value == null) value = withContext(Dispatchers.IO) { loader.load(book) } }
+    val alpha by animateFloatAsState(if (bitmap != null) 1f else 0f, tween(if (cached != null) 0 else 280), label = "cover")
     Box(
-        modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(Brush.linearGradient(listOf(HarborNavy, Color(0xFF315B72)))),
+        modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(CoverGradient),
         contentAlignment = Alignment.Center,
     ) {
-        val image = bitmap
-        if (image != null) Image(image, contentDescription = null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else Text(initialsOf(book.title), fontFamily = LiterataFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color.White)
+        if (alpha < 1f) Text(initialsOf(book.title), fontFamily = LiterataFamily, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color.White)
+        bitmap?.let { Image(it, contentDescription = null, Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha }, contentScale = ContentScale.Crop) }
     }
 }
+
+private val CoverGradient = Brush.linearGradient(listOf(HarborNavy, Color(0xFF315B72)))
 
 @Composable
 private fun EmptyShelf(hasBooks: Boolean, filtering: Boolean) {
@@ -686,7 +743,7 @@ private fun HistoryTab(controller: AppController, catalog: LibraryUiState.Catalo
                 }
             }
         } else {
-            items(read, key = { it.id }) { book -> HistoryRow(controller, catalog, book) }
+            items(read, key = { it.id }) { book -> Box(Modifier.animateItem()) { HistoryRow(controller, catalog, book) } }
         }
     }
     }

@@ -2,6 +2,10 @@ package dev.bookharbor.app.library
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -73,6 +77,8 @@ fun BookDetailsSheet(controller: AppController, catalog: LibraryUiState.Catalog,
     val progress = catalog.progress[book.id]
     val downloaded = book.editions.filter { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
     val downloading = book.editions.any { catalog.downloads[it.id] == DownloadStatus.DOWNLOADING }
+    val fraction = book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }
+    val haptics = LocalHapticFeedback.current
     var addToList by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
@@ -93,9 +99,10 @@ fun BookDetailsSheet(controller: AppController, catalog: LibraryUiState.Catalog,
             }
 
             if (progress != null && progress > 0) {
+                val shown by animateFloatAsState(progress.toFloat().coerceIn(0f, 1f), tween(500), label = "progress")
                 Row(Modifier.padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f).height(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                        Box(Modifier.fillMaxWidth(progress.toFloat().coerceIn(0f, 1f)).fillMaxHeight().clip(CircleShape).background(MaterialTheme.colorScheme.secondary))
+                        Box(Modifier.fillMaxWidth(shown).fillMaxHeight().clip(CircleShape).background(MaterialTheme.colorScheme.secondary))
                     }
                     Text(if (isFinished(progress)) "Finished" else "${(progress * 100).roundToInt()}% read", Modifier.padding(start = 12.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                 }
@@ -113,7 +120,7 @@ fun BookDetailsSheet(controller: AppController, catalog: LibraryUiState.Catalog,
                 shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(top = 20.dp).height(52.dp),
             ) {
                 when {
-                    downloading -> { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary); Text("  Downloading…") }
+                    downloading -> { DownloadRing(fraction, Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary); Text(fraction?.let { "  Downloading… ${(it * 100).roundToInt()}%" } ?: "  Downloading…") }
                     downloaded.isEmpty() -> { Icon(BrandIcons.Download, null, Modifier.size(18.dp)); Text("  Download and read") }
                     isReading(progress) -> Text("Continue reading")
                     isFinished(progress) -> Text("Read again")
@@ -121,7 +128,7 @@ fun BookDetailsSheet(controller: AppController, catalog: LibraryUiState.Catalog,
                 }
             }
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = { controller.markRead(book, !isFinished(progress)) }, Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                OutlinedButton(onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markRead(book, !isFinished(progress)) }, Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
                     Icon(BrandIcons.Check, null, Modifier.size(16.dp)); Text(if (isFinished(progress)) "  Mark unread" else "  Mark read", maxLines = 1)
                 }
                 OutlinedButton(onClick = { addToList = true }, Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
@@ -184,6 +191,7 @@ private fun JumpToSection(controller: AppController, book: Book, downloaded: Lis
         return
     }
     val entries by produceState<List<String>?>(null, edition.id) { value = controller.tableOfContents(edition) }
+    val haptics = LocalHapticFeedback.current
     val here by produceState<dev.bookharbor.app.sync.LocalPosition?>(null, book.id) { value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { controller.savedPosition(book.id) } }
     val list = entries
     val saved = here
@@ -203,7 +211,7 @@ private fun JumpToSection(controller: AppController, book: Book, downloaded: Lis
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                                 .background(if (isCurrent) MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f) else androidx.compose.ui.graphics.Color.Transparent)
-                                .clickable(onClickLabel = "Open at $title", role = Role.Button) { onOpened(); controller.open(book, edition, Locator.epub(EpubPosition.atChapter(index).toCfi())) }
+                                .clickable(onClickLabel = "Open at $title", role = Role.Button) { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onOpened(); controller.open(book, edition, Locator.epub(EpubPosition.atChapter(index).toCfi())) }
                                 .padding(horizontal = 12.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

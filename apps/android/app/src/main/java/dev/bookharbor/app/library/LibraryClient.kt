@@ -121,7 +121,8 @@ class EditionDownloader(
 ) {
     private val session get() = api.session
 
-    fun download(edition: Edition): LocalDownload {
+    /** [onProgress] gets 0..1 as bytes arrive, when the edition's size is known. */
+    fun download(edition: Edition, onProgress: (Float) -> Unit = {}): LocalDownload {
         var token = session.tokens ?: error("sign in required")
         val directory = downloads.directory
         directory.mkdirs()
@@ -162,7 +163,13 @@ class EditionDownloader(
             val append = status == 206
             connection.inputStream.use { input -> FileOutputStream(temporary, append).use { output ->
                 val buffer = ByteArray(64 * 1024)
-                while (true) { val count = input.read(buffer); if (count < 0) break; output.write(buffer, 0, count); digest.update(buffer, 0, count); downloadedBytes += count }
+                var reported = -1
+                while (true) {
+                    val count = input.read(buffer); if (count < 0) break
+                    output.write(buffer, 0, count); digest.update(buffer, 0, count); downloadedBytes += count
+                    // Whole percents only, so a fast download doesn't flood the UI with updates.
+                    if (edition.byteLength > 0) { val percent = (downloadedBytes * 100 / edition.byteLength).toInt(); if (percent != reported) { reported = percent; onProgress(percent / 100f) } }
+                }
             } }
             val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
             if (edition.byteLength > 0 && downloadedBytes != edition.byteLength) throw DownloadVerificationError("Downloaded file length does not match the edition")

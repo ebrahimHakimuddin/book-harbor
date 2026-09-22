@@ -5,6 +5,9 @@ import android.app.SearchManager
 import android.content.Context
 import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.graphics.Color
@@ -343,8 +346,10 @@ private fun ChapterList(
 ) {
     val settings = state.settings
     val fontSize = 18.sp * settings.fontScale
-    val body = TextStyle(
-        color = MaterialTheme.colorScheme.onBackground,
+    val textColor = MaterialTheme.colorScheme.onBackground
+    // Remembered so every block's Text can skip recomposition while the reader scrolls.
+    val body = remember(settings, textColor) { TextStyle(
+        color = textColor,
         fontFamily = if (settings.typeface == ReaderTypeface.Inter) InterFamily else LiterataFamily,
         fontSize = fontSize,
         lineHeight = fontSize * settings.lineHeight,
@@ -352,15 +357,27 @@ private fun ChapterList(
         hyphens = if (settings.hyphenation) Hyphens.Auto else Hyphens.None,
         letterSpacing = settings.letterSpacing.em,
         lineBreak = LineBreak.Paragraph,
-    )
+    ) }
     val gap = (14 * settings.paragraphSpacing).dp
+    // Grouped once per change to the annotations, not on every scroll-driven recomposition.
+    val highlightsByBlock = remember(annotations.items, state.chapterIndex) {
+        annotations.items.filter { it.kind == AnnotationKind.Highlight }
+            .mapNotNull { a -> EpubPosition.parse(a.locator.value)?.takeIf { it.chapterIndex == state.chapterIndex }?.let { it.path to a } }
+            .groupBy({ it.first }, { it.second })
+    }
 
     if (blocks == null) {
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        // Most chapters load in a blink; only a slow one earns a spinner, so switching chapters
+        // doesn't flash one.
+        var slow by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { delay(250); slow = true }
+        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { if (slow) CircularProgressIndicator() }
         return
     }
+    val appear = remember(state.chapterIndex) { Animatable(0f) }
+    LaunchedEffect(state.chapterIndex) { appear.animateTo(1f, tween(220)) }
     CompositionLocalProvider(LocalTextAids provides TextAids(settings.wordEmphasis, settings.wordSpacing)) {
-    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding).graphicsLayer { alpha = appear.value }) {
         item(key = "header") {
             Measure(settings) {
                 Spacer(Modifier.height(30.dp))
@@ -371,9 +388,7 @@ private fun ChapterList(
             }
         }
         // This chapter's highlights, grouped by the block they sit in.
-        val highlights = annotations.items.filter { it.kind == AnnotationKind.Highlight }
-            .mapNotNull { a -> EpubPosition.parse(a.locator.value)?.takeIf { it.chapterIndex == state.chapterIndex }?.let { it.path to a } }
-            .groupBy({ it.first }, { it.second })
+        val highlights = highlightsByBlock
         itemsIndexed(blocks, key = { index, _ -> index }) { index, block ->
             val spoken by animateColorAsState(if (index == speaking) MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f) else Color.Transparent, tween(300), label = "spoken")
             Measure(settings, Modifier.background(spoken)) {
