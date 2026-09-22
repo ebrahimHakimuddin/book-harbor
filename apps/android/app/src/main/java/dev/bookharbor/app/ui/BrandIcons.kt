@@ -48,5 +48,11 @@ object BrandIcons {
     val Bookmark = icon("bookmark", "M6 3h12v18l-6-4.5L6 21z")
     val BookmarkAdded = icon("bookmark-added", "M6 3h12v18l-6-4.5L6 21z", "M9.5 9.5l2 2 3.5-3.5")
     val Share = icon("share", "M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z", "M8.6 13.5l6.8 4M15.4 6.5l-6.8 4")
+    val Headphones = icon("headphones", "M3 18v-6a9 9 0 0 1 18 0v6", "M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z")
+    val Play = icon("play", "M7 4.5v15l12-7.5z")
+    val Pause = icon("pause", "M8 5v14M16 5v14")
+    val Book = icon("book", "M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z", "M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5")
+    val Bell = icon("bell", "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9", "M10.3 21a1.94 1.94 0 0 0 3.4 0")
+    val Storage = icon("storage", "M12 3c4.97 0 9 1.34 9 3s-4.03 3-9 3-9-1.34-9-3 4.03-3 9-3z", "M21 12c0 1.66-4 3-9 3s-9-1.34-9-3", "M3 6v12c0 1.66 4 3 9 3s9-1.34 9-3V6")
     val Request = icon("request", "M4 19.5A2.5 2.5 0 0 1 6.5 17H20", "M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z", "M9 7h7M9 10h4")
 }

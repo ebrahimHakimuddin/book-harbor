@@ -33,9 +33,43 @@ class ReadingStats(private val preferences: SharedPreferences, private val today
         return streak(days + listOfNotNull(today().takeIf { secondsToday() >= MIN_SECONDS }), today())
     }
 
+    /** This reader's pace in EPUB chapter bytes per minute, learned from their own reading. */
+    fun bytesPerMinute(): Double = preferences.getFloat(PACE_KEY, DEFAULT_BYTES_PER_MINUTE.toFloat()).toDouble()
+
+    /** Folds in [bytes] read over [seconds] of steady reading; implausible samples are ignored. */
+    fun recordPace(bytes: Double, seconds: Double) {
+        val blended = blendPace(bytesPerMinute(), bytes, seconds) ?: return
+        preferences.edit().putFloat(PACE_KEY, blended.toFloat()).apply()
+    }
+
     private companion object {
         const val PREFIX = "stats.day."
         const val MIN_SECONDS = 60L
+        const val PACE_KEY = "stats.pace"
+    }
+}
+
+/** ~250 words a minute, in XHTML bytes (text plus typical markup). */
+internal const val DEFAULT_BYTES_PER_MINUTE = 2000.0
+
+/**
+ * A new pace estimate from [current] and one sample, or null to ignore the sample: too short to
+ * mean anything, or too fast to be reading (a jump or a skim).
+ */
+internal fun blendPace(current: Double, bytes: Double, seconds: Double): Double? {
+    if (seconds < 20 || bytes <= 0) return null
+    val sample = bytes / (seconds / 60)
+    if (sample !in 300.0..12_000.0) return null
+    return current * 0.8 + sample * 0.2
+}
+
+/** "3 min left in chapter", "1 h 10 min left in chapter", or null for less than a minute. */
+fun minutesLeftLabel(bytesLeft: Double, bytesPerMinute: Double): String? {
+    val minutes = kotlin.math.ceil(bytesLeft / bytesPerMinute.coerceAtLeast(1.0)).toInt()
+    return when {
+        minutes < 1 -> null
+        minutes < 60 -> "$minutes min left in chapter"
+        else -> "${minutes / 60} h ${minutes % 60} min left in chapter"
     }
 }
 

@@ -4,12 +4,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.bookharbor.app.AppGraph
+import dev.bookharbor.app.notify.Notifications
 import dev.bookharbor.app.reader.epub.EpubBook
 import dev.bookharbor.app.widget.ContinueReadingWidget
+import dev.bookharbor.app.reader.epub.EpubPosition
 import dev.bookharbor.app.sync.LocalPosition
+import dev.bookharbor.app.sync.Locator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 sealed interface LibraryUiState {
@@ -31,6 +35,9 @@ sealed interface LibraryUiState {
 }
 
 data class SyncUiState(val pending: Int = 0, val rejected: Int = 0, val running: Boolean = false, val error: String? = null, val lastSyncMillis: Long = 0)
+
+/** The sign-in screen's "forgot password" flow: ask for a code, then enter it with a new password. */
+data class PasswordResetUiState(val codeSent: Boolean = false, val working: Boolean = false, val error: String? = null, val done: Boolean = false)
 
 data class ProfileUiState(val saving: Boolean = false, val error: String? = null, val passwordChanged: Boolean = false)
 
@@ -83,11 +90,15 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     var unsyncedOnSignOut by mutableStateOf<Int?>(null)
         private set
     var notice by mutableStateOf<String?>(null)
+    var passwordResetUi by mutableStateOf(PasswordResetUiState())
+        private set
     val covers = CoverLoader(graph.api, graph.cacheDir)
     val serverUrl: String get() = graph.session.serverUrl
     val displayName: String get() = graph.session.displayName
 
     private val cache = CatalogCache(graph.prefs)
+    /** The server's self-description, kept so the sign-in form still knows what it offers after a failed attempt. */
+    private var lastInstance: InstanceInfo? = null
 
     /** True while a pull-to-refresh reload is running; the catalog stays on screen meanwhile. */
     var refreshing by mutableStateOf(false)
@@ -114,6 +125,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             }
             try {
                 val instance = graph.library.instance(graph.session.serverUrl)
+                lastInstance = instance
                 ui = when {
                     instance.setupRequired -> LibraryUiState.Error("This BookHarbor server still needs to be set up by an administrator.", LibraryUiState.Setup)
                     graph.session.tokens == null -> LibraryUiState.SignIn(instance, graph.session.serverUrl)
@@ -126,7 +138,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 }
             } catch (error: Exception) {
                 ui = when {
-                    error is HttpError && error.status == 401 -> { graph.session.tokens = null; LibraryUiState.SignIn(null, graph.session.serverUrl) }
+                    error is HttpError && error.status == 401 -> { graph.session.tokens = null; LibraryUiState.SignIn(lastInstance, graph.session.serverUrl) }
                     graph.session.tokens != null && cache.load() != null -> cache.load()!!.let { (name, books) -> catalog(name, books, offline = true) }
                     else -> LibraryUiState.Error(error.message?.takeIf { it.isNotBlank() } ?: "Unable to connect", if (graph.session.serverUrl.isBlank()) LibraryUiState.Setup else LibraryUiState.Loading)
                 }
@@ -152,7 +164,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 load()
             } catch (error: Exception) {
                 val message = if (error is HttpError && error.status == 401) "That email or password isn't right." else (error.message ?: "Sign in failed")
-                ui = LibraryUiState.Error(message, LibraryUiState.SignIn(serverUrl = graph.session.serverUrl, email = email))
+                ui = LibraryUiState.Error(message, LibraryUiState.SignIn(lastInstance, graph.session.serverUrl, email))
             }
         }
     }
@@ -181,11 +193,12 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             graph.session.displayName = ""
             graph.progress.clear() // never send this account's unsent events as someone else
             graph.annotations.clear() // they belong to this account, and are on its server
+            Notifications.forget(graph.prefs) // the next account's library isn't "new"
             ContinueReadingWidget.refresh(graph.context)
             cache.clear()
             opened = null
             ui = when (signOutTarget) {
-                SignOutTarget.SIGN_IN -> LibraryUiState.SignIn(serverUrl = graph.session.serverUrl)
+                SignOutTarget.SIGN_IN -> LibraryUiState.SignIn(lastInstance, graph.session.serverUrl)
                 SignOutTarget.SETUP -> { graph.session.serverUrl = ""; LibraryUiState.Setup }
             }
             refreshSync()
@@ -250,10 +263,13 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         }
     }
 
-    /** Opens a book offline if any edition is downloaded; otherwise downloads the best edition and then opens it. */
-    fun open(book: Book) {
+    /**
+     * Opens a book offline if any edition is downloaded; otherwise downloads the best edition and then opens it.
+     * [edition] and [startAt] open a specific edition at a chosen chapter or page instead of the saved place.
+     */
+    fun open(book: Book, edition: Edition? = null, startAt: Locator? = null) {
         val catalog = ui as? LibraryUiState.Catalog ?: return
-        val edition = preferredEdition(book) { catalog.downloads[it.id] == DownloadStatus.AVAILABLE } ?: return
+        val edition = edition ?: preferredEdition(book) { catalog.downloads[it.id] == DownloadStatus.AVAILABLE } ?: return
         if (catalog.downloads[edition.id] != DownloadStatus.AVAILABLE) { download(edition, thenOpen = book); return }
         scope.launch(Dispatchers.IO) {
             val local = graph.downloads.get(edition.id) // re-verifies the checksum before trusting the file
@@ -264,12 +280,121 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             val file = File(local.path)
             try {
                 val epub = if (edition.format == "epub") EpubBook.open(file) else null
-                opened = OpenedBook(book, edition, file, graph.progress.position(book.id), epub)
+                val position = startAt?.let { LocalPosition(book.id, edition.id, it, 0.0, "", "") } ?: graph.progress.position(book.id)
+                opened = OpenedBook(book, edition, file, position, epub)
             } catch (error: Exception) {
                 updateCatalog { it.copy(errors = it.errors + (edition.id to (error.message ?: "This file could not be opened"))) }
             }
         }
     }
+
+    /**
+     * Chapter titles of a downloaded EPUB, or "Page n" for each page of a PDF, for opening at a
+     * chosen place. Null when the edition isn't on the device or can't be read.
+     */
+    suspend fun tableOfContents(edition: Edition): List<String>? = withContext(Dispatchers.IO) {
+        val local = graph.downloads.get(edition.id) ?: return@withContext null
+        runCatching {
+            if (edition.format == "epub") EpubBook.open(File(local.path)).use { epub -> epub.chapters.mapIndexed { i, c -> c.title.ifBlank { "Chapter ${i + 1}" } } }
+            else android.os.ParcelFileDescriptor.open(File(local.path), android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                android.graphics.pdf.PdfRenderer(fd).use { pdf -> List(pdf.pageCount) { "Page ${it + 1}" } }
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * Marks a book finished (100%) or not started (0%) as an ordinary reading event, so it syncs
+     * like any other progress. Finishing keeps the reader's place; unreading goes back to the start.
+     */
+    fun markRead(book: Book, read: Boolean) {
+        val catalog = ui as? LibraryUiState.Catalog ?: return
+        val edition = preferredEdition(book) { catalog.downloads[it.id] == DownloadStatus.AVAILABLE } ?: return
+        scope.launch(Dispatchers.IO) {
+            val current = graph.progress.position(book.id)
+            val start = if (edition.format == "epub") Locator.epub(EpubPosition.atChapter(0).toCfi()) else Locator.pdf(1)
+            val locator = if (read && current != null && current.editionId == edition.id) current.locator else start
+            graph.recorder.record(book.id, current?.editionId?.takeIf { read } ?: edition.id, locator, if (read) 1.0 else 0.0)
+            updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
+            ContinueReadingWidget.refresh(graph.context)
+            notice = if (read) "Marked \"${book.title}\" as read" else "Marked \"${book.title}\" as unread"
+        }
+    }
+
+    /** Where this device last left [bookId], if it has been opened. */
+    fun savedPosition(bookId: String): LocalPosition? = graph.progress.position(bookId)
+
+    var notificationsEnabled by mutableStateOf(Notifications.enabled(graph.prefs))
+        private set
+
+    /** True once: the first time the library opens, to ask for the notification permission. */
+    fun firstNotificationPrompt(): Boolean {
+        if (graph.prefs.getBoolean("notify.asked", false)) return false
+        graph.prefs.edit().putBoolean("notify.asked", true).apply()
+        return notificationsEnabled
+    }
+
+    fun setNotifications(enabled: Boolean) {
+        Notifications.setEnabled(graph.context, graph.prefs, enabled)
+        notificationsEnabled = enabled
+    }
+
+    /** Bytes used by downloaded books on this device. */
+    fun downloadedBytes(): Long = graph.downloads.all().sumOf { File(it.path).length() }
+
+    /** Frees space held by books the reader has finished; they can be downloaded again any time. */
+    fun removeFinishedDownloads() {
+        val catalog = ui as? LibraryUiState.Catalog ?: return
+        val editions = catalog.books.filter { isFinished(catalog.progress[it.id]) }.flatMap { it.editions }.filter { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
+        editions.forEach(::removeDownload)
+        notice = if (editions.isEmpty()) "No finished books are downloaded" else "Removed ${editions.size} finished ${if (editions.size == 1) "download" else "downloads"}"
+    }
+
+    /** Downloads the preferred edition of every book in [books] that isn't on the device yet. */
+    fun downloadAll(books: List<Book>) {
+        val catalog = ui as? LibraryUiState.Catalog ?: return
+        val missing = books.filter { book -> book.editions.none { catalog.downloads[it.id] == DownloadStatus.AVAILABLE || catalog.downloads[it.id] == DownloadStatus.DOWNLOADING } }
+        // One at a time, so a list of twenty books doesn't open twenty connections at once.
+        scope.launch {
+            missing.forEach { book -> preferredEdition(book) { false }?.let { edition -> downloadNow(edition) } }
+        }
+        notice = if (missing.isEmpty()) "Everything here is already downloaded" else "Downloading ${missing.size} ${if (missing.size == 1) "book" else "books"}"
+    }
+
+    private suspend fun downloadNow(edition: Edition) = withContext(Dispatchers.IO) {
+        updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.DOWNLOADING), errors = it.errors - edition.id) }
+        try {
+            graph.downloader.download(edition)
+            updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.AVAILABLE)) }
+        } catch (error: Exception) {
+            updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.FAILED), errors = it.errors + (edition.id to (error.message ?: "Download failed"))) }
+        }
+    }
+
+    fun requestPasswordReset(email: String) {
+        passwordResetUi = passwordResetUi.copy(working = true, error = null)
+        scope.launch(Dispatchers.IO) {
+            passwordResetUi = try {
+                graph.library.requestPasswordReset(graph.session.serverUrl, email)
+                passwordResetUi.copy(working = false, codeSent = true)
+            } catch (error: Exception) {
+                passwordResetUi.copy(working = false, error = error.message ?: "Couldn't send a reset code")
+            }
+        }
+    }
+
+    fun confirmPasswordReset(email: String, code: String, newPassword: String) {
+        passwordResetUi = passwordResetUi.copy(working = true, error = null)
+        scope.launch(Dispatchers.IO) {
+            passwordResetUi = try {
+                graph.library.confirmPasswordReset(graph.session.serverUrl, email, code, newPassword)
+                passwordResetUi.copy(working = false, done = true)
+            } catch (error: Exception) {
+                passwordResetUi.copy(working = false, error = error.message ?: "Couldn't reset your password")
+            }
+        }
+    }
+
+    fun dismissPasswordReset() { passwordResetUi = PasswordResetUiState() }
 
     fun closeReader() {
         opened?.epub?.close()

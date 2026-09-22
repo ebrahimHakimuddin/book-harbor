@@ -4,7 +4,7 @@ enum class DownloadStatus { NOT_DOWNLOADED, DOWNLOADING, AVAILABLE, FAILED }
 
 enum class ShelfFilter(val label: String) { All("All"), Reading("Reading"), Finished("Finished"), Downloaded("Downloaded") }
 
-enum class BookSort(val label: String) { Recent("Recently added"), Title("Title A–Z"), Author("Author A–Z") }
+enum class BookSort(val label: String) { Recent("Recently added"), Title("Title A–Z"), Author("Author A–Z"), Series("Series") }
 
 /** How far through a book counts as finished. */
 const val FINISHED_AT = 0.97
@@ -28,23 +28,40 @@ fun visibleBooks(
     sort: BookSort,
     progress: Map<String, Double>,
     downloadedEditions: Set<String>,
+    /** Only books carrying this tag, or every book when null. */
+    tag: String? = null,
 ): List<Book> {
     val needle = query.trim().lowercase()
     val matching = books.filter { book ->
-        val textMatch = needle.isEmpty() || (listOf(book.title, book.subtitle) + book.authors).any { it.lowercase().contains(needle) }
+        val textMatch = needle.isEmpty() || (listOf(book.title, book.subtitle, book.series) + book.authors + book.tags).any { it.lowercase().contains(needle) }
+        val tagMatch = tag == null || book.tags.any { it.equals(tag, ignoreCase = true) }
         val shelfMatch = when (filter) {
             ShelfFilter.All -> true
             ShelfFilter.Reading -> isReading(progress[book.id])
             ShelfFilter.Finished -> isFinished(progress[book.id])
             ShelfFilter.Downloaded -> book.editions.any { it.id in downloadedEditions }
         }
-        textMatch && shelfMatch
+        textMatch && shelfMatch && tagMatch
     }
     return when (sort) {
         BookSort.Recent -> matching // the server already returns newest first
         BookSort.Title -> matching.sortedBy { it.title.lowercase() }
         BookSort.Author -> matching.sortedWith(compareBy({ it.authors.firstOrNull().isNullOrBlank() }, { it.authors.firstOrNull()?.lowercase().orEmpty() }, { it.title.lowercase() }))
+        // Series together and in reading order; standalone books after them by title.
+        BookSort.Series -> matching.sortedWith(compareBy({ it.series.isBlank() }, { it.series.lowercase() }, { it.seriesIndex }, { it.title.lowercase() }))
     }
+}
+
+/** Every tag in the library, most used first, for the tag filter row. */
+fun libraryTags(books: List<Book>): List<String> =
+    books.flatMap { it.tags }.groupBy { it.lowercase() }.values.sortedWith(compareByDescending<List<String>> { it.size }.thenBy { it.first().lowercase() }).map { it.first() }
+
+/** "Harbor Cycle #2", "Harbor Cycle #2.5", or just the series name when unnumbered. */
+fun seriesLabel(book: Book): String = when {
+    book.series.isBlank() -> ""
+    book.seriesIndex <= 0.0 -> book.series
+    book.seriesIndex % 1.0 == 0.0 -> "${book.series} #${book.seriesIndex.toLong()}"
+    else -> "${book.series} #${book.seriesIndex}"
 }
 
 /** The in-progress book read most recently, for the library's "Continue reading" card. */

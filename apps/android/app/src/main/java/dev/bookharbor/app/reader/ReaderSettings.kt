@@ -20,6 +20,12 @@ enum class ReaderAlignment(val label: String) {
     Justified("Justified"),
 }
 
+enum class ReaderOrientation(val label: String) {
+    Auto("Auto"),
+    Portrait("Portrait"),
+    Landscape("Landscape"),
+}
+
 /** The reader profile. It lives on the device and applies to every book; no server round trip. */
 data class ReaderSettings(
     val theme: ReaderTheme = ReaderTheme.System,
@@ -37,6 +43,16 @@ data class ReaderSettings(
     val nightStart: Int = 21,
     val nightEnd: Int = 7,
     val nightBrightness: Float = 0.15f,
+    /** Volume up/down scroll back/forward a screen. */
+    val volumeKeys: Boolean = false,
+    val orientation: ReaderOrientation = ReaderOrientation.Auto,
+    /** Break long words at line ends, which keeps justified text from gapping. */
+    val hyphenation: Boolean = true,
+    /** Bold the opening letters of each word to guide the eye (the "bionic reading" technique). */
+    val wordEmphasis: Boolean = false,
+    /** Extra space between letters and after each word, in ems. */
+    val letterSpacing: Float = 0f,
+    val wordSpacing: Float = 0f,
 ) {
     /** True when [hour] (0..23) falls in the night window, which may wrap past midnight. */
     fun isNight(hour: Int): Boolean = when {
@@ -62,6 +78,8 @@ data class ReaderSettings(
         put("showProgress", showProgress.toString())
         put("nightSchedule", nightSchedule.toString())
         put("nightStart", nightStart.toString()); put("nightEnd", nightEnd.toString()); put("nightBrightness", nightBrightness.toString())
+        put("volumeKeys", volumeKeys.toString()); put("orientation", orientation.name); put("hyphenation", hyphenation.toString())
+        put("wordEmphasis", wordEmphasis.toString()); put("letterSpacing", letterSpacing.toString()); put("wordSpacing", wordSpacing.toString())
     }
 
     companion object {
@@ -82,6 +100,12 @@ data class ReaderSettings(
             nightStart = (map["nightStart"]?.toIntOrNull() ?: Default.nightStart).coerceIn(0, 23),
             nightEnd = (map["nightEnd"]?.toIntOrNull() ?: Default.nightEnd).coerceIn(0, 23),
             nightBrightness = (map["nightBrightness"]?.toFloatOrNull() ?: Default.nightBrightness).coerceIn(0.05f, 1f),
+            volumeKeys = map["volumeKeys"]?.toBooleanStrictOrNull() ?: Default.volumeKeys,
+            orientation = enumOr(map["orientation"], Default.orientation),
+            hyphenation = map["hyphenation"]?.toBooleanStrictOrNull() ?: Default.hyphenation,
+            wordEmphasis = map["wordEmphasis"]?.toBooleanStrictOrNull() ?: Default.wordEmphasis,
+            letterSpacing = (map["letterSpacing"]?.toFloatOrNull() ?: Default.letterSpacing).coerceIn(0f, 0.15f),
+            wordSpacing = (map["wordSpacing"]?.toFloatOrNull() ?: Default.wordSpacing).coerceIn(0f, 0.6f),
         )
 
         private inline fun <reified T : Enum<T>> enumOr(name: String?, fallback: T): T =
@@ -101,6 +125,6 @@ class ReaderSettingsStore(private val preferences: SharedPreferences) {
 
     private companion object {
         const val PREFIX = "reader."
-        val KEYS = listOf("theme", "typeface", "fontScale", "lineHeight", "paragraphSpacing", "margin", "alignment", "brightness", "showProgress", "nightSchedule", "nightStart", "nightEnd", "nightBrightness")
+        val KEYS = listOf("theme", "typeface", "fontScale", "lineHeight", "paragraphSpacing", "margin", "alignment", "brightness", "showProgress", "nightSchedule", "nightStart", "nightEnd", "nightBrightness", "volumeKeys", "orientation", "hyphenation", "wordEmphasis", "letterSpacing", "wordSpacing")
     }
 }

@@ -68,6 +68,12 @@ sealed interface ReaderAction {
     data class SetNightSchedule(val enabled: Boolean) : ReaderAction
     data class SetNightHours(val start: Int, val end: Int) : ReaderAction
     data class SetNightBrightness(val brightness: Float) : ReaderAction
+    data class SetVolumeKeys(val enabled: Boolean) : ReaderAction
+    data class SetOrientation(val orientation: ReaderOrientation) : ReaderAction
+    data class SetHyphenation(val enabled: Boolean) : ReaderAction
+    data class SetWordEmphasis(val enabled: Boolean) : ReaderAction
+    data class SetLetterSpacing(val em: Float) : ReaderAction
+    data class SetWordSpacing(val em: Float) : ReaderAction
     data object ResetSettings : ReaderAction
 }
 
@@ -95,5 +101,11 @@ fun ReaderState.reduce(action: ReaderAction): ReaderState = when (action) {
     is ReaderAction.SetNightSchedule -> copy(settings = settings.copy(nightSchedule = action.enabled))
     is ReaderAction.SetNightHours -> copy(settings = settings.copy(nightStart = action.start.coerceIn(0, 23), nightEnd = action.end.coerceIn(0, 23)))
     is ReaderAction.SetNightBrightness -> copy(settings = settings.copy(nightBrightness = action.brightness.coerceIn(0.05f, 1f)))
+    is ReaderAction.SetVolumeKeys -> copy(settings = settings.copy(volumeKeys = action.enabled))
+    is ReaderAction.SetOrientation -> copy(settings = settings.copy(orientation = action.orientation))
+    is ReaderAction.SetHyphenation -> copy(settings = settings.copy(hyphenation = action.enabled))
+    is ReaderAction.SetWordEmphasis -> copy(settings = settings.copy(wordEmphasis = action.enabled))
+    is ReaderAction.SetLetterSpacing -> copy(settings = settings.copy(letterSpacing = action.em.coerceIn(0f, 0.15f)))
+    is ReaderAction.SetWordSpacing -> copy(settings = settings.copy(wordSpacing = action.em.coerceIn(0f, 0.6f)))
     ReaderAction.ResetSettings -> copy(settings = ReaderSettings.Default)
 }

@@ -6,10 +6,18 @@ package dev.bookharbor.app.reader.epub
  * is an even step within it; the part after `!` walks the chapter's XHTML.
  */
 data class EpubPosition(val chapterIndex: Int, val path: String, val offset: Int = 0) {
+    /** True for [atChapter]'s position: the chapter heading, before any block. */
+    val isChapterStart: Boolean get() = path == CHAPTER_START
+
     fun toCfi(): String = "epubcfi(/6/${2 * (chapterIndex + 1)}!$path:$offset)"
 
     companion object {
         private val PATTERN = Regex("""^epubcfi\(/6/(\d+)!((?:/\d+)+)(?::(\d+))?\)$""")
+
+        /** The XHTML body element's path; a position there means "the top of the chapter". */
+        const val CHAPTER_START = "/4"
+
+        fun atChapter(chapterIndex: Int) = EpubPosition(chapterIndex, CHAPTER_START)
 
         fun parse(cfi: String): EpubPosition? {
             val match = PATTERN.matchEntire(cfi.trim()) ?: return null

@@ -120,9 +120,10 @@ class SyncEngineTest {
         assertEquals(1.0, first!!.percentage, 0.0) // clamped
         assertEquals(5, store.position("b1")!!.locator.page)
         assertEquals(1, store.pendingCount())
-        assertNull(recorder.record("b1", "ed1", Locator.pdf(5), 0.5)) // unchanged locator
+        assertNull(recorder.record("b1", "ed1", Locator.pdf(5), 1.0)) // nothing changed
+        assertNotNull(recorder.record("b1", "ed1", Locator.pdf(5), 0.0)) // same place, marked unread
         assertNotNull(recorder.record("b1", "ed1", Locator.pdf(6), 0.6))
-        assertEquals(2, recorded)
+        assertEquals(3, recorded)
     }
 
     @Test fun codecMatchesTheServerContract() {

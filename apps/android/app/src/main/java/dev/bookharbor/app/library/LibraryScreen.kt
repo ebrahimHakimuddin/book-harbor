@@ -1,11 +1,22 @@
 package dev.bookharbor.app.library
 
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Switch
+import androidx.core.content.ContextCompat
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,6 +65,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -82,6 +95,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -110,7 +124,10 @@ fun LibraryScreen(controller: AppController) {
         is LibraryUiState.SignIn -> EntryColumn(subtitle = state.instance?.name) {
             Text(state.serverUrl.removePrefix("https://").removePrefix("http://"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
             SignInForm(initialEmail = state.email, onSignIn = controller::signIn)
+            var resetting by rememberSaveable { mutableStateOf(false) }
+            if (state.instance?.passwordResetEnabled == true) TextButton(onClick = { resetting = true }) { Text("Forgot password?") }
             TextButton(onClick = controller::changeServer) { Text("Use a different server") }
+            if (resetting) PasswordResetDialog(controller, state.email, onDismiss = { resetting = false; controller.dismissPasswordReset() })
         }
         LibraryUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -164,6 +181,44 @@ private fun SignInForm(initialEmail: String, onSignIn: (String, String) -> Unit)
     Button(onClick = { onSignIn(email.trim(), password) }, enabled = email.isNotBlank() && password.isNotBlank(), shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp)) { Text("Sign in") }
 }
 
+/** Ask for an emailed code, then set a new password with it. The server never says whether an address has an account. */
+@Composable
+private fun PasswordResetDialog(controller: AppController, initialEmail: String, onDismiss: () -> Unit) {
+    val state = controller.passwordResetUi
+    var email by rememberSaveable { mutableStateOf(initialEmail) }
+    var code by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (state.done) "Password changed" else "Reset your password") },
+        text = {
+            Column(Modifier.animateContentSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when {
+                    state.done -> Text("Sign in with your new password. Every device that was signed in has been signed out.")
+                    !state.codeSent -> {
+                        Text("We'll email you a code to choose a new password.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+                    }
+                    else -> {
+                        Text("If $email has an account, a code is on its way. It expires in 30 minutes.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(code, { code = it.uppercase().filter { c -> c.isLetterOrDigit() }.take(10) }, label = { Text("Code") }, singleLine = true, keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(password, { password = it }, label = { Text("New password") }, supportingText = { Text("At least 12 characters") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            when {
+                state.done -> TextButton(onClick = onDismiss) { Text("Sign in") }
+                !state.codeSent -> TextButton(onClick = { controller.requestPasswordReset(email.trim()) }, enabled = !state.working && email.isNotBlank()) { Text(if (state.working) "Sending…" else "Send code") }
+                else -> TextButton(onClick = { controller.confirmPasswordReset(email.trim(), code, password) }, enabled = !state.working && code.length == 10 && password.length >= 12) { Text(if (state.working) "Saving…" else "Set password") }
+            }
+        },
+        dismissButton = { if (!state.done) TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 @Composable
 private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.Catalog) {
     var tab by rememberSaveable { mutableStateOf(Tab.Library) }
@@ -172,8 +227,16 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
         ListsScreen(controller, onClose = { listsOpen = false })
         return
     }
+    val snackbar = remember { SnackbarHostState() }
+    // Ask for the notification permission once, when the library first appears.
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33 && controller.firstNotificationPrompt()) permission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+    LaunchedEffect(controller.notice) {
+        controller.notice?.let { snackbar.showSnackbar(it); controller.notice = null }
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 Tab.entries.forEach { item ->
@@ -219,8 +282,10 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
     var filter by rememberSaveable { mutableStateOf(ShelfFilter.All) }
     var sort by rememberSaveable { mutableStateOf(BookSort.Recent) }
     var viewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Grid) }
+    var tag by rememberSaveable { mutableStateOf<String?>(null) }
+    val tags = remember(catalog.books) { libraryTags(catalog.books) }
     val downloaded = remember(catalog.downloads) { catalog.downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys }
-    val shown = remember(catalog.books, query, filter, sort, catalog.progress, downloaded) { visibleBooks(catalog.books, query, filter, sort, catalog.progress, downloaded) }
+    val shown = remember(catalog.books, query, filter, sort, catalog.progress, downloaded, tag) { visibleBooks(catalog.books, query, filter, sort, catalog.progress, downloaded, tag) }
     val fullRow: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
 
     PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
@@ -261,6 +326,17 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
                         colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primary, selectedLabelColor = MaterialTheme.colorScheme.onPrimary, containerColor = Color.Transparent),
                     )
                 }
+                if (tags.isNotEmpty()) Box(Modifier.padding(horizontal = 4.dp).size(width = 1.dp, height = 32.dp).align(Alignment.CenterVertically).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)))
+                // Tags narrow whichever shelf is chosen; tapping the active tag clears it.
+                tags.forEach { option ->
+                    FilterChip(
+                        selected = tag == option,
+                        onClick = { tag = if (tag == option) null else option },
+                        label = { Text("#$option") },
+                        shape = CircleShape,
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.secondary, selectedLabelColor = MaterialTheme.colorScheme.onSecondary, containerColor = Color.Transparent),
+                    )
+                }
             }
         }
         if (catalog.offline) item(span = fullRow) {
@@ -271,7 +347,7 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
             }
         }
         if (shown.isEmpty()) {
-            item(span = fullRow) { EmptyShelf(hasBooks = catalog.books.isNotEmpty(), filtering = query.isNotBlank() || filter != ShelfFilter.All) }
+            item(span = fullRow) { EmptyShelf(hasBooks = catalog.books.isNotEmpty(), filtering = query.isNotBlank() || filter != ShelfFilter.All || tag != null) }
         } else if (viewMode == LibraryViewMode.List) {
             items(shown, key = { it.id }, span = { fullRow() }) { book -> BookRow(controller, catalog, book) }
         } else {
@@ -362,9 +438,11 @@ private fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, 
     val statuses = book.editions.map { catalog.downloads[it.id] ?: DownloadStatus.NOT_DOWNLOADED }
     val downloading = statuses.any { it == DownloadStatus.DOWNLOADING }
     val error = book.editions.firstNotNullOfOrNull { edition -> catalog.errors[edition.id]?.takeIf { catalog.downloads[edition.id] == DownloadStatus.FAILED || it.isNotBlank() } }
+    var details by remember { mutableStateOf(false) }
+    if (details) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
     Column {
         Row(
-            Modifier.fillMaxWidth().clickable(onClickLabel = "Open ${book.title}", role = Role.Button) { controller.open(book) }.padding(vertical = 10.dp),
+            Modifier.fillMaxWidth().bookClicks(book, onOpen = { controller.open(book) }, onDetails = { details = true }).padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Cover(book, controller.covers, Modifier.width(52.dp))
@@ -372,6 +450,7 @@ private fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, 
                 Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
                 val by = book.authors.joinToString(", ").ifBlank { book.subtitle }
                 if (by.isNotBlank()) Text(by, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                seriesLabel(book).takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 when {
                     downloading -> Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
@@ -381,7 +460,7 @@ private fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, 
                     else -> Text(statusLine(progress, statuses.any { it == DownloadStatus.AVAILABLE }), style = MaterialTheme.typography.labelMedium, color = if (isReading(progress) || isFinished(progress)) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            BookMenu(controller, catalog, book)
+            BookMenu(controller, catalog, book, onDetails = { details = true })
         }
         HorizontalDivider(Modifier.padding(start = 66.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
     }
@@ -391,17 +470,19 @@ private fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, 
 private fun BookGridCell(controller: AppController, catalog: LibraryUiState.Catalog, book: Book) {
     val progress = catalog.progress[book.id]
     val downloaded = book.editions.any { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
+    var details by remember { mutableStateOf(false) }
+    if (details) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
     Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         Box {
             Cover(
                 book, controller.covers,
-                Modifier.fillMaxWidth().clickable(onClickLabel = "Open ${book.title}", role = Role.Button) { controller.open(book) },
+                Modifier.fillMaxWidth().bookClicks(book, onOpen = { controller.open(book) }, onDetails = { details = true }),
             )
             // A scrim behind the menu button, since the icon's fixed tint would otherwise vanish
             // against whatever color the cover art happens to be.
             Box(
                 Modifier.align(Alignment.TopEnd).padding(2.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)),
-            ) { BookMenu(controller, catalog, book, tint = Color.White) }
+            ) { BookMenu(controller, catalog, book, tint = Color.White, onDetails = { details = true }) }
             if (isReading(progress)) {
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.Black.copy(alpha = 0.25f))) {
                     Box(Modifier.fillMaxWidth((progress ?: 0.0).toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
@@ -426,14 +507,23 @@ private fun statusLine(progress: Double?, offline: Boolean): String {
 }
 
 @Composable
-private fun BookMenu(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, tint: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+private fun BookMenu(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, tint: Color = MaterialTheme.colorScheme.onSurfaceVariant, onDetails: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf<Edition?>(null) }
     var addToListOpen by remember { mutableStateOf(false) }
     Box {
-        val hasAction = book.editions.any { catalog.downloads[it.id] != DownloadStatus.DOWNLOADING }
-        IconButton(onClick = { open = true }, enabled = hasAction) { Icon(BrandIcons.MoreVertical, "More options for ${book.title}", tint = if (hasAction) tint else tint.copy(alpha = 0.38f)) }
+        IconButton(onClick = { open = true }) { Icon(BrandIcons.MoreVertical, "More options for ${book.title}", tint = tint) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("About this book") },
+                leadingIcon = { Icon(BrandIcons.Library, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                onClick = { open = false; onDetails() },
+            )
+            DropdownMenuItem(
+                text = { Text(if (isFinished(catalog.progress[book.id])) "Mark unread" else "Mark read") },
+                leadingIcon = { Icon(BrandIcons.Check, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                onClick = { open = false; controller.markRead(book, !isFinished(catalog.progress[book.id])) },
+            )
             DropdownMenuItem(
                 text = { Text("Add to list") },
                 leadingIcon = { Icon(BrandIcons.Request, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -471,7 +561,7 @@ private fun BookMenu(controller: AppController, catalog: LibraryUiState.Catalog,
 }
 
 @Composable
-private fun AddToListDialog(controller: AppController, book: Book, onDismiss: () -> Unit) {
+internal fun AddToListDialog(controller: AppController, book: Book, onDismiss: () -> Unit) {
     LaunchedEffect(Unit) { controller.loadLists() }
     val lists = controller.listsUi.lists
     var newListName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -512,6 +602,11 @@ private fun AddToListDialog(controller: AppController, book: Book, onDismiss: ()
         )
     }
 }
+
+/** Tap opens the book; press and hold (or TalkBack's long-press action) shows its details. */
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.bookClicks(book: Book, onOpen: () -> Unit, onDetails: () -> Unit): Modifier =
+    combinedClickable(onClickLabel = "Open ${book.title}", role = Role.Button, onLongClickLabel = "About ${book.title}", onLongClick = onDetails, onClick = onOpen)
 
 @Composable
 internal fun Cover(book: Book, loader: CoverLoader, modifier: Modifier = Modifier) {
@@ -669,6 +764,8 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
             }
         }
         ProfileSection(controller)
+        StorageSection(controller, catalog)
+        NotificationsSection(controller)
         if (confirmSignOut) {
             AlertDialog(
                 onDismissRequest = { confirmSignOut = false },
@@ -690,6 +787,58 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
         AboutSection()
     }
     }
+}
+
+@Composable
+private fun NotificationsSection(controller: AppController) {
+    val context = LocalContext.current
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> controller.setNotifications(granted) }
+    SettingsCard {
+        Row(
+            Modifier.fillMaxWidth().toggleable(value = controller.notificationsEnabled, role = Role.Switch) { on ->
+                val needsPermission = on && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                if (needsPermission) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else controller.setNotifications(on)
+            },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(BrandIcons.Bell, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.secondary)
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text("Notifications", style = MaterialTheme.typography.titleMedium)
+                Text("New books, fulfilled requests, and friend requests", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = controller.notificationsEnabled, onCheckedChange = null)
+        }
+    }
+}
+
+/** How much space downloads take, and a one-tap way to free what's already been read. */
+@Composable
+private fun StorageSection(controller: AppController, catalog: LibraryUiState.Catalog) {
+    val bytes by produceState(0L, catalog.downloads) { value = withContext(Dispatchers.IO) { controller.downloadedBytes() } }
+    val count = catalog.downloads.count { it.value == DownloadStatus.AVAILABLE }
+    val finished = catalog.books.count { book -> isFinished(catalog.progress[book.id]) && book.editions.any { catalog.downloads[it.id] == DownloadStatus.AVAILABLE } }
+    var confirm by rememberSaveable { mutableStateOf(false) }
+    SettingsCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(BrandIcons.Storage, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.secondary)
+            Text("Storage", Modifier.padding(start = 12.dp), style = MaterialTheme.typography.titleMedium)
+        }
+        Text(
+            if (count == 0) "No books are downloaded to this device." else "$count ${if (count == 1) "download uses" else "downloads use"} ${formatBytes(bytes)} on this device.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(
+            onClick = { confirm = true }, enabled = finished > 0, shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)),
+        ) { Text(if (finished > 0) "Remove $finished finished ${if (finished == 1) "book" else "books"}" else "No finished books to remove") }
+    }
+    if (confirm) AlertDialog(
+        onDismissRequest = { confirm = false },
+        title = { Text("Remove finished downloads?") },
+        text = { Text("$finished finished ${if (finished == 1) "book is" else "books are"} deleted from this device. Your progress, highlights, and the server's copies stay, and you can download them again any time.") },
+        confirmButton = { TextButton(onClick = { confirm = false; controller.removeFinishedDownloads() }) { Text("Remove", color = cautionColor()) } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
+    )
 }
 
 @Composable

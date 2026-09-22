@@ -1,6 +1,7 @@
 package dev.bookharbor.app.reader
 
 import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -10,6 +11,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -75,10 +77,14 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -124,9 +130,19 @@ fun ReaderScaffold(
     /** Full-text search over the book, or null where the format/platform can't extract text. */
     search: (suspend (String) -> List<SearchHit>)?,
     stats: ReadingStats,
+    /** Scrolls a screen forward (true) or back, for volume-key paging. */
+    onPage: ((Boolean) -> Unit)? = null,
+    /** Read-aloud state and controls, where the format supports it. */
+    readAloud: ReadAloudControls? = null,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     var chromeVisible by remember { mutableStateOf(true) }
+    val currentOnPage by rememberUpdatedState(onPage)
+    DisposableEffect(state.settings.volumeKeys) {
+        if (state.settings.volumeKeys) ReaderKeys.onPage = { forward -> currentOnPage?.let { it(forward); true } ?: false }
+        onDispose { ReaderKeys.onPage = null }
+    }
+    OrientationEffect(state.settings.orientation)
     LifecycleResumeEffect(stats) {
         stats.start()
         onPauseOrDispose { stats.stop() }
@@ -172,6 +188,7 @@ fun ReaderScaffold(
                         state.bookTitle, onClose, onContents = { onAction(ReaderAction.OpenContents) }, contentsLabel = contentsLabel, onSettings = { onAction(ReaderAction.OpenSettings) },
                         bookmarked = bookmark != null,
                         onBookmark = here?.let { (locator, label) -> { annotations.toggleBookmark(locator, label) } },
+                        onReadAloud = readAloud?.takeIf { it.available && !it.playing }?.start,
                     )
                 }
             },
@@ -199,7 +216,17 @@ fun ReaderScaffold(
                             if (!touchExplorationEnabled && offset.x in size.width * 0.3f..size.width * 0.7f) chromeVisible = !chromeVisible
                         })
                     },
-                ) { content(padding) }
+                ) {
+                    content(padding)
+                    readAloud?.let { controls ->
+                        AnimatedVisibility(
+                            visible = controls.playing,
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(padding).padding(bottom = 20.dp),
+                            enter = fadeIn(tween(200)) + slideInVertically(tween(260)) { it / 2 },
+                            exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { it / 2 },
+                        ) { ReadAloudPill(controls) }
+                    }
+                }
             },
         )
         if (state.settingsOpen) {
@@ -233,6 +260,44 @@ private fun ReaderFullscreen(chromeVisible: Boolean) {
     }
 }
 
+/**
+ * The reader's handler for hardware volume keys. MainActivity asks it first; when it returns
+ * true the key turned a page and must not also change the volume.
+ */
+object ReaderKeys {
+    @Volatile var onPage: ((forward: Boolean) -> Boolean)? = null
+}
+
+/** Read-aloud state for the reader chrome: a start button in the top bar, then a floating player. */
+class ReadAloudControls(val available: Boolean, val playing: Boolean, val paused: Boolean, val start: () -> Unit, val togglePause: () -> Unit, val stop: () -> Unit)
+
+@Composable
+private fun ReadAloudPill(controls: ReadAloudControls) {
+    Row(
+        Modifier.shadow(8.dp, CircleShape).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(BrandIcons.Headphones, null, Modifier.padding(start = 12.dp, end = 4.dp).size(18.dp), tint = MaterialTheme.colorScheme.secondary)
+        Text(if (controls.paused) "Paused" else "Reading aloud", style = MaterialTheme.typography.labelLarge)
+        IconButton(onClick = controls.togglePause) { Icon(if (controls.paused) BrandIcons.Play else BrandIcons.Pause, if (controls.paused) "Resume reading aloud" else "Pause reading aloud") }
+        IconButton(onClick = controls.stop) { Icon(BrandIcons.Close, "Stop reading aloud") }
+    }
+}
+
+/** Locks the reader to the chosen orientation, and hands rotation back to the system on close. */
+@Composable
+private fun OrientationEffect(orientation: ReaderOrientation) {
+    val activity = LocalContext.current as? Activity ?: return
+    DisposableEffect(orientation) {
+        activity.requestedOrientation = when (orientation) {
+            ReaderOrientation.Auto -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            ReaderOrientation.Portrait -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            ReaderOrientation.Landscape -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+        onDispose { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+    }
+}
+
 /** Tracks whether a touch-exploration accessibility service (e.g. TalkBack) is active, live. */
 @Composable
 private fun rememberTouchExplorationEnabled(): State<Boolean> {
@@ -259,7 +324,7 @@ private fun BrightnessEffect(brightness: Float?) {
 }
 
 @Composable
-private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () -> Unit, contentsLabel: String, onSettings: () -> Unit, bookmarked: Boolean, onBookmark: (() -> Unit)?) {
+private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () -> Unit, contentsLabel: String, onSettings: () -> Unit, bookmarked: Boolean, onBookmark: (() -> Unit)?, onReadAloud: (() -> Unit)?) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -273,6 +338,7 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
             Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close reader")
         }
         Text(bookTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (onReadAloud != null) IconButton(onClick = onReadAloud) { Icon(BrandIcons.Headphones, "Read aloud from here") }
         IconButton(onClick = { onBookmark?.invoke() }, enabled = onBookmark != null) {
             Icon(
                 if (bookmarked) BrandIcons.BookmarkAdded else BrandIcons.Bookmark,
@@ -570,6 +636,18 @@ private fun ReaderSettingsSheet(
                 SettingSlider("Night brightness", "${(settings.nightBrightness * 100).roundToInt()}%", settings.nightBrightness, 0.05f..1f) { onAction(ReaderAction.SetNightBrightness(it)) }
             }
 
+            if (!fixedLayout) {
+                SettingSwitch("Hyphenation", "Break long words at line ends", settings.hyphenation) { onAction(ReaderAction.SetHyphenation(it)) }
+                SettingSwitch("Word emphasis", "Bold the start of each word to guide your eye", settings.wordEmphasis) { onAction(ReaderAction.SetWordEmphasis(it)) }
+                Spacer(Modifier.height(16.dp))
+                SettingSlider("Letter spacing", if (settings.letterSpacing == 0f) "Normal" else "+${(settings.letterSpacing * 100).roundToInt()}%", settings.letterSpacing, 0f..0.15f) { onAction(ReaderAction.SetLetterSpacing(it)) }
+                SettingSlider("Word spacing", if (settings.wordSpacing == 0f) "Normal" else "+${(settings.wordSpacing * 100).roundToInt()}%", settings.wordSpacing, 0f..0.6f) { onAction(ReaderAction.SetWordSpacing(it)) }
+            }
+            SettingSwitch("Volume keys turn pages", "Volume down scrolls forward a screen, up goes back", settings.volumeKeys) { onAction(ReaderAction.SetVolumeKeys(it)) }
+            Spacer(Modifier.height(16.dp))
+            SettingLabel("Screen orientation")
+            ChoiceRow(ReaderOrientation.entries, settings.orientation, ReaderOrientation::label) { onAction(ReaderAction.SetOrientation(it)) }
+
             Spacer(Modifier.height(16.dp))
             SettingLabel("Sleep timer")
             ChoiceRow(listOf(0, 15, 30, 60), sleepMinutes, { if (it == 0) "Off" else "$it min" }, onSleep)
@@ -585,6 +663,20 @@ private fun ReaderSettingsSheet(
 
 @Composable
 private fun SettingLabel(label: String) = Text(label, style = MaterialTheme.typography.titleMedium)
+
+@Composable
+private fun SettingSwitch(label: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 16.dp).toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            SettingLabel(label)
+            Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
 
 @Composable
 private fun <T> ChoiceRow(choices: List<T>, selected: T, label: (T) -> String, onSelected: (T) -> Unit) {

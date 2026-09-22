@@ -32,6 +32,19 @@ class LibraryModelTest {
         assertEquals(listOf("b1", "b2", "b3"), show(sort = BookSort.Recent))
     }
 
+    @Test fun seriesSortGroupsInReadingOrderAndTagsFilter() {
+        val two = Book("s2", "Zeta", emptyList(), series = "Saga", seriesIndex = 2.0, tags = listOf("Fantasy"))
+        val one = Book("s1", "Alpha", emptyList(), series = "Saga", seriesIndex = 1.0, tags = listOf("fantasy", "Sea"))
+        val solo = Book("s3", "Beta", emptyList())
+        val all = listOf(solo, two, one)
+        assertEquals(listOf("s1", "s2", "s3"), visibleBooks(all, "", ShelfFilter.All, BookSort.Series, emptyMap(), emptySet()).map { it.id })
+        assertEquals(listOf("s2", "s1"), visibleBooks(all, "", ShelfFilter.All, BookSort.Recent, emptyMap(), emptySet(), tag = "FANTASY").map { it.id })
+        assertEquals(listOf("s2", "s1"), visibleBooks(all, "saga", ShelfFilter.All, BookSort.Recent, emptyMap(), emptySet()).map { it.id })
+        assertEquals(listOf("Fantasy", "Sea"), libraryTags(all))
+        assertEquals("Saga #2", seriesLabel(two))
+        assertEquals("", seriesLabel(solo))
+    }
+
     @Test fun opensADownloadedEditionFirstThenPrefersEpub() {
         assertEquals("e3", preferredEdition(hail) { false }!!.id)
         assertEquals("e2", preferredEdition(hail) { it.id == "e2" }!!.id)
@@ -39,7 +52,7 @@ class LibraryModelTest {
     }
 
     @Test fun catalogSurvivesTheOfflineCacheRoundTrip() {
-        val full = Book("b9", "Cached", listOf(edition("e9", "epub").copy(byteLength = 12, sha256 = "ab")), "Sub", listOf("A", "B"), "/api/v1/books/b9/cover", "2026-01-01T00:00:00Z")
+        val full = Book("b9", "Cached", listOf(edition("e9", "epub").copy(byteLength = 12, sha256 = "ab")), "Sub", listOf("A", "B"), "/api/v1/books/b9/cover", "2026-01-01T00:00:00Z", "About it", "Saga", 2.5, listOf("Sci-fi"))
         val page = parseBookPage(encodeBooks(listOf(full)))
         assertEquals(listOf(full), page.books)
         assertEquals(null, page.nextCursor)

@@ -16,8 +16,8 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
 
-data class InstanceInfo(val name: String, val version: String, val setupRequired: Boolean) {
-    companion object { fun fromJson(json: String) = JSONObject(json).let { InstanceInfo(it.optString("name"), it.optString("version"), it.optBoolean("setupRequired")) } }
+data class InstanceInfo(val name: String, val version: String, val setupRequired: Boolean, val passwordResetEnabled: Boolean = false) {
+    companion object { fun fromJson(json: String) = JSONObject(json).let { InstanceInfo(it.optString("name"), it.optString("version"), it.optBoolean("setupRequired"), it.optBoolean("passwordResetEnabled")) } }
 }
 
 data class Edition(val id: String, val format: String, val mediaType: String, val originalFilename: String, val contentUrl: String, val byteLength: Long = 0, val sha256: String = "")
@@ -29,6 +29,11 @@ data class Book(
     val authors: List<String> = emptyList(),
     val coverUrl: String = "",
     val updatedAt: String = "",
+    val description: String = "",
+    val series: String = "",
+    /** Position within [series]; 0 when unnumbered. */
+    val seriesIndex: Double = 0.0,
+    val tags: List<String> = emptyList(),
 )
 data class BookPage(val books: List<Book>, val nextCursor: String?)
 
@@ -43,6 +48,7 @@ fun parseBookPage(json: String): BookPage {
         val book = items.getJSONObject(index)
         val editions = book.optJSONArray("editions") ?: JSONArray()
         val authors = book.optJSONArray("authors") ?: JSONArray()
+        val tags = book.optJSONArray("tags") ?: JSONArray()
         Book(
             id = book.getString("id"),
             title = book.optString("title"),
@@ -50,6 +56,10 @@ fun parseBookPage(json: String): BookPage {
             authors = (0 until authors.length()).map { authors.getString(it) },
             coverUrl = book.optString("coverUrl"),
             updatedAt = book.optString("updatedAt"),
+            description = book.optString("description"),
+            series = book.optString("series"),
+            seriesIndex = book.optDouble("seriesIndex", 0.0).takeUnless { it.isNaN() } ?: 0.0,
+            tags = (0 until tags.length()).map { tags.getString(it) },
             editions = (0 until editions.length()).map { editionIndex ->
                 val edition = editions.getJSONObject(editionIndex)
                 Edition(edition.getString("id"), edition.optString("format"), edition.optString("mediaType"), edition.optString("originalFilename"), edition.optString("contentUrl"), edition.optLong("byteLength", 0), edition.optString("sha256"))
@@ -232,6 +242,15 @@ class LibraryClient(private val api: ApiClient) {
         return updated
     }
 
+    /** Emails a reset code if [email] has an account; the server answers the same either way. */
+    fun requestPasswordReset(url: String, email: String) {
+        api.request(url.trimEnd('/') + "/api/v1/password-resets", "POST", JSONObject().put("email", email).toString())
+    }
+
+    fun confirmPasswordReset(url: String, email: String, code: String, newPassword: String) {
+        api.request(url.trimEnd('/') + "/api/v1/password-resets/confirm", "POST", JSONObject().put("email", email).put("code", code).put("newPassword", newPassword).toString())
+    }
+
     /** Every book, following the server's pagination cursor. */
     fun books(): List<Book> {
         val all = mutableListOf<Book>()
@@ -266,6 +285,8 @@ fun encodeBooks(books: List<Book>): String = JSONObject().put("items", JSONArray
         items.put(JSONObject().apply {
             put("id", book.id); put("title", book.title); put("subtitle", book.subtitle); put("coverUrl", book.coverUrl); put("updatedAt", book.updatedAt)
             put("authors", JSONArray(book.authors))
+            put("description", book.description); put("series", book.series); put("seriesIndex", book.seriesIndex)
+            put("tags", JSONArray(book.tags))
             put("editions", JSONArray().also { editions ->
                 book.editions.forEach { e ->
                     editions.put(JSONObject().put("id", e.id).put("format", e.format).put("mediaType", e.mediaType).put("originalFilename", e.originalFilename).put("contentUrl", e.contentUrl).put("byteLength", e.byteLength).put("sha256", e.sha256))

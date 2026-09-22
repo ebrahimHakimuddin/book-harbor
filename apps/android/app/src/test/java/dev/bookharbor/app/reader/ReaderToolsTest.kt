@@ -10,6 +10,32 @@ class ReaderToolsTest {
     private val today = LocalDate.of(2026, 9, 22)
 
     @Test
+    fun wordEmphasisBoldsTheStartOfEachWordButNotPunctuation() {
+        val text = "A lighthouse, far off."
+        val bold = emphasisRanges(text).map { text.substring(it.first, it.last + 1) }
+        assertEquals(listOf("A", "ligh", "f", "o"), bold)
+    }
+
+    @Test
+    fun longParagraphsSplitForSpeechAtSentenceBreaks() {
+        val text = "The first sentence is right here now. " + "word ".repeat(30)
+        val parts = chunks(text, 60)
+        assertEquals("The first sentence is right here now.", parts.first())
+        parts.forEach { assert(it.length <= 60) }
+        assertEquals(text.split(" ").filter { it.isNotBlank() }, parts.flatMap { it.split(" ") }.filter { it.isNotBlank() })
+    }
+
+    @Test
+    fun paceLearnsFromSteadyReadingAndIgnoresJumps() {
+        assertNull(blendPace(2000.0, 500.0, 10.0)) // too short to mean anything
+        assertNull(blendPace(2000.0, 100_000.0, 60.0)) // a jump, not reading
+        assertEquals(2000.0 * 0.8 + 3000.0 * 0.2, blendPace(2000.0, 3000.0, 60.0)!!, 0.001)
+        assertEquals("3 min left in chapter", minutesLeftLabel(5000.0, 2000.0))
+        assertEquals("1 h 5 min left in chapter", minutesLeftLabel(130_000.0, 2000.0))
+        assertNull(minutesLeftLabel(0.0, 2000.0))
+    }
+
+    @Test
     fun streakCountsBackFromTodayOrYesterday() {
         val days = setOf(today.minusDays(1), today.minusDays(2), today.minusDays(4))
         assertEquals(2, streak(days, today)) // not read yet today: yesterday's run still counts

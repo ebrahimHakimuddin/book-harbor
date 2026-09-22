@@ -12,6 +12,22 @@ import androidx.compose.ui.graphics.luminance
 import android.util.LruCache
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -210,6 +226,8 @@ private fun PdfPages(
     }
     BackHandler(onBack = ::closeAndFlush)
 
+    val scope = rememberCoroutineScope()
+
     // "Contents" for a PDF is a page list; choosing a page scrolls there.
     var jumpTarget by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(jumpTarget) {
@@ -248,6 +266,11 @@ private fun PdfPages(
         onGoTo = { goToPage(it.page) },
         search = search,
         stats = stats,
+        onPage = { forward ->
+            val info = listState.layoutInfo
+            val distance = (info.viewportEndOffset - info.viewportStartOffset) * 0.9f
+            scope.launch { listState.animateScrollBy(if (forward) distance else -distance, tween(260)) }
+        },
     ) { padding -> PageList(book, ratios, listState, padding) }
 }
 
@@ -265,17 +288,54 @@ private fun PageList(book: PdfBook, ratios: List<Float>?, listState: LazyListSta
     // From the applied colors, not the stored theme, so "System" in dark mode and the night
     // schedule invert pages too.
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
-        val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }.coerceIn(200, 1600)
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Pinch to zoom (1x-4x). The page column simply gets wider and scrolls sideways, so vertical
+    // scrolling stays the list's own; pages re-render at the settled zoom so text stays sharp.
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var renderZoom by remember { mutableFloatStateOf(1f) }
+    val horizontal = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { snapshotFlow { zoom }.debounce(250).collect { renderZoom = (Math.round(it * 2) / 2f).coerceIn(1f, 4f) } }
+    BoxWithConstraints(
+        Modifier.fillMaxSize().padding(padding).pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                do {
+                    // Initial pass: two fingers are ours before the list can scroll with them.
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (event.changes.count { it.pressed } >= 2) {
+                        val factor = event.calculateZoom()
+                        if (factor != 1f) {
+                            val old = zoom
+                            zoom = (zoom * factor).coerceIn(1f, 4f)
+                            // Keep the point between the fingers where it was.
+                            val focus = event.calculateCentroid(useCurrent = true).x
+                            val target = ((horizontal.value + focus) * (zoom / old) - focus).toInt()
+                            scope.launch { horizontal.scrollTo(target.coerceAtLeast(0)) }
+                        }
+                        event.changes.forEach { it.consume() }
+                    }
+                } while (event.changes.any { it.pressed })
+            }
+        },
+    ) {
+        val baseWidth = maxWidth
+        val widthPx = with(LocalDensity.current) { (baseWidth * renderZoom).roundToPx() }.coerceIn(200, 2400)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxHeight().horizontalScroll(horizontal, enabled = zoom > 1f).requiredWidth(baseWidth * zoom),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             itemsIndexed(ratios, key = { index, _ -> index }) { index, ratio ->
-                val bitmap by produceState<Bitmap?>(null, index, widthPx) { value = withContext(Dispatchers.IO) { runCatching { book.render(index, widthPx) }.getOrNull() } }
+                val bitmap by produceState<Bitmap?>(null, index, widthPx) {
+                    // Keep showing the previous rendering while a sharper one is made.
+                    value = withContext(Dispatchers.IO) { runCatching { book.render(index, widthPx) }.getOrNull() } ?: value
+                }
                 val page = bitmap
                 Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant)) {
                     if (page != null) {
                         Image(page.asImageBitmap(), contentDescription = "Page ${index + 1}", modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth, colorFilter = if (dark) InvertLuminance else null)
                     } else {
-                        Box(Modifier.fillMaxWidth().aspectRatio(1f / ratio), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                        Box(Modifier.fillMaxWidth().aspectRatio(1f / ratio), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp) }
                     }
                 }
             }

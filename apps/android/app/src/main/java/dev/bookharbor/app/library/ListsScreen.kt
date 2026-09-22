@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import dev.bookharbor.app.ui.BrandIcons
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -110,6 +112,7 @@ private fun ListDetailScreen(controller: AppController, list: BookList, books: L
             TopAppBar(
                 title = { Text(list.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to your lists") } },
+                actions = { if (books.isNotEmpty()) TextButton(onClick = { controller.downloadAll(books) }) { Icon(BrandIcons.Download, null, Modifier.size(18.dp)); Text("  Download all") } },
             )
         },
     ) { padding ->

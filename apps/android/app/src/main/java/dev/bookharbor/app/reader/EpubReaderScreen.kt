@@ -1,6 +1,15 @@
 package dev.bookharbor.app.reader
 
 import android.content.Intent
+import android.app.SearchManager
+import android.content.Context
+import android.os.SystemClock
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.foundation.Image
@@ -38,6 +47,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,6 +79,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -135,7 +147,7 @@ fun EpubReaderScreen(
     LaunchedEffect(chapterIndex, blocks) {
         val loaded = blocks ?: return@LaunchedEffect
         val target = pendingRestore?.takeIf { it.chapterIndex == chapterIndex }
-        val index = target?.let { loaded.indexOfPath(it.path) + HEADER_ITEMS } ?: 0
+        val index = target?.takeUnless { it.isChapterStart }?.let { loaded.indexOfPath(it.path) + HEADER_ITEMS } ?: 0
         pendingRestore = null
         listState.scrollToItem(index)
         ready = true
@@ -153,6 +165,20 @@ fun EpubReaderScreen(
         recorder.record(bookId, editionId, Locator.epub(cfi), percentage)
     }
 
+    // Learns the reader's pace from steady forward reading: a sample spans at least 20 seconds,
+    // and idle stretches, going back, or jumping ahead start a fresh one instead of skewing it.
+    var paceMark by remember { mutableStateOf<Pair<Long, Double>?>(null) }
+    fun samplePace(position: Pair<Int, Double>) {
+        val now = SystemClock.elapsedRealtime()
+        val bytes = book.overallProgress(chapterIndex, position.second) * book.totalWeight
+        val mark = paceMark
+        val seconds = mark?.let { (now - it.first) / 1000.0 } ?: 0.0
+        when {
+            mark == null || seconds > 600 || bytes < mark.second -> paceMark = now to bytes
+            seconds >= 20 -> { stats.recordPace(bytes - mark.second, seconds); paceMark = now to bytes }
+        }
+    }
+
     // A bounded cadence while scrolling; the flush below covers stopping and closing.
     LaunchedEffect(chapterIndex, ready, blocks) {
         val loaded = blocks
@@ -161,7 +187,7 @@ fun EpubReaderScreen(
             .distinctUntilChanged()
             .onEach { latest = it; dispatch(ReaderAction.RecordProgress(it.second.toFloat())) }
             .debounce(400)
-            .collect { position -> withContext(Dispatchers.IO) { persist(position) } }
+            .collect { position -> samplePace(position); withContext(Dispatchers.IO) { persist(position) } }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { latest?.let(::persist) }
     // Keyed on chapterIndex, not Unit: a keyless DisposableEffect's onDispose closure is
@@ -195,6 +221,31 @@ fun EpubReaderScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // Read aloud follows the text: the block being spoken is tinted and kept on screen.
+    val speech = remember { ReadAloud(context) }
+    DisposableEffect(Unit) { onDispose { speech.shutdown() } }
+    LaunchedEffect(chapterIndex) { speech.stop() }
+    LaunchedEffect(speech.speaking) {
+        val index = (speech.speaking ?: return@LaunchedEffect) + HEADER_ITEMS
+        if (listState.layoutInfo.visibleItemsInfo.none { it.index == index && it.offset >= 0 }) listState.animateScrollToItem(index)
+    }
+    val readAloud = ReadAloudControls(
+        available = speech.available && !blocks.isNullOrEmpty(),
+        playing = speech.speaking != null,
+        paused = speech.paused,
+        start = { blocks?.let { loaded -> speech.play(loaded.map { it.text() }, latest?.first ?: 0) } },
+        togglePause = speech::togglePause,
+        stop = speech::stop,
+    )
+
+    /** Scrolls one screen, less a line of overlap so the reader doesn't lose their place. */
+    fun page(forward: Boolean) {
+        val info = listState.layoutInfo
+        val distance = (info.viewportEndOffset - info.viewportStartOffset) * 0.9f
+        scope.launch { listState.animateScrollBy(if (forward) distance else -distance, tween(260)) }
+    }
+    val pace = remember { stats.bytesPerMinute() }
 
     /** Jumps to a block anywhere in the book: scrolls within this chapter, or swaps chapters and restores there. */
     fun goTo(position: EpubPosition) {
@@ -250,7 +301,8 @@ fun EpubReaderScreen(
         state = state,
         onAction = dispatch,
         onClose = ::closeAndFlush,
-        progressLabel = "Chapter ${chapterIndex + 1} of ${state.chapters.size} · ${state.chapter.title}",
+        progressLabel = "Chapter ${chapterIndex + 1} of ${state.chapters.size} · " +
+            (minutesLeftLabel(book.chapters[chapterIndex].weight * (1.0 - state.currentChapterProgress), pace) ?: state.chapter.title),
         progress = state.currentChapterProgress,
         percentage = (state.currentChapterProgress * 100).roundToInt(),
         isScrolling = listState.isScrollInProgress,
@@ -259,8 +311,10 @@ fun EpubReaderScreen(
         onGoTo = { locator -> EpubPosition.parse(locator.value)?.let(::goTo) },
         search = ::search,
         stats = stats,
+        onPage = ::page,
+        readAloud = readAloud,
     ) { padding ->
-        ChapterList(book, state, blocks, listState, padding, annotations, onLinkClick = ::openLink, onNextChapter = { dispatch(ReaderAction.NextChapter) }, onFinishBook = ::finishBook)
+        ChapterList(book, state, blocks, listState, padding, annotations, speaking = speech.speaking, onLinkClick = ::openLink, onNextChapter = { dispatch(ReaderAction.NextChapter) }, onFinishBook = ::finishBook)
     }
 }
 
@@ -282,6 +336,7 @@ private fun ChapterList(
     listState: LazyListState,
     padding: PaddingValues,
     annotations: BookAnnotations,
+    speaking: Int?,
     onLinkClick: (String) -> Unit,
     onNextChapter: () -> Unit,
     onFinishBook: () -> Unit,
@@ -294,6 +349,9 @@ private fun ChapterList(
         fontSize = fontSize,
         lineHeight = fontSize * settings.lineHeight,
         textAlign = if (settings.alignment == ReaderAlignment.Justified) TextAlign.Justify else TextAlign.Start,
+        hyphens = if (settings.hyphenation) Hyphens.Auto else Hyphens.None,
+        letterSpacing = settings.letterSpacing.em,
+        lineBreak = LineBreak.Paragraph,
     )
     val gap = (14 * settings.paragraphSpacing).dp
 
@@ -301,6 +359,7 @@ private fun ChapterList(
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
+    CompositionLocalProvider(LocalTextAids provides TextAids(settings.wordEmphasis, settings.wordSpacing)) {
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
         item(key = "header") {
             Measure(settings) {
@@ -315,8 +374,9 @@ private fun ChapterList(
         val highlights = annotations.items.filter { it.kind == AnnotationKind.Highlight }
             .mapNotNull { a -> EpubPosition.parse(a.locator.value)?.takeIf { it.chapterIndex == state.chapterIndex }?.let { it.path to a } }
             .groupBy({ it.first }, { it.second })
-        itemsIndexed(blocks, key = { index, _ -> index }) { _, block ->
-            Measure(settings) {
+        itemsIndexed(blocks, key = { index, _ -> index }) { index, block ->
+            val spoken by animateColorAsState(if (index == speaking) MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f) else Color.Transparent, tween(300), label = "spoken")
+            Measure(settings, Modifier.background(spoken)) {
                 val text = block.text()
                 val href = book.chapters[state.chapterIndex].href
                 if (text == null) BlockView(book, href, block, body, gap, onLinkClick)
@@ -335,6 +395,7 @@ private fun ChapterList(
                 Spacer(Modifier.height(64.dp))
             }
         }
+    }
     }
 }
 
@@ -366,6 +427,7 @@ private fun HighlightableBlock(
     var menu by remember { mutableStateOf(false) }
     var editingNote by remember { mutableStateOf(false) }
     var choosingPassage by remember { mutableStateOf(false) }
+    var lookingUp by remember { mutableStateOf(false) }
     fun highlight(range: IntRange): Annotation {
         val whole = range.first == 0 && range.last == text.lastIndex
         return annotations.add(
@@ -396,6 +458,7 @@ private fun HighlightableBlock(
             }
             DropdownMenuItem(text = { Text("Highlight a passage…") }, onClick = { menu = false; choosingPassage = true })
             DropdownMenuItem(text = { Text(if (highlights.firstOrNull()?.note.isNullOrBlank()) "Add note" else "Edit note") }, onClick = { menu = false; editingNote = true })
+            DropdownMenuItem(text = { Text("Look up a word…") }, onClick = { menu = false; lookingUp = true })
             DropdownMenuItem(text = { Text("Copy") }, onClick = { menu = false; clipboard.setText(AnnotatedString(text)) })
             DropdownMenuItem(text = { Text("Share") }, onClick = { menu = false; shareText(context, quote(text, annotations.bookTitle, chapterTitle)) })
         }
@@ -412,31 +475,54 @@ private fun HighlightableBlock(
         )
     }
     if (choosingPassage) PassageDialog(text, onHighlight = { highlight(it); choosingPassage = false }, onDismiss = { choosingPassage = false })
+    if (lookingUp) PassageDialog(
+        text, title = "Look up", hint = "Press and hold a word to select it, then look it up in your dictionary app.", action = "Look up",
+        onHighlight = { range -> lookUp(context, text.substring(range.first, range.last + 1)) }, onDismiss = { lookingUp = false },
+    )
 }
 
 /** The paragraph as selectable text: the reader drags the system selection handles to pick a passage. */
 @Composable
-private fun PassageDialog(text: String, onHighlight: (IntRange) -> Unit, onDismiss: () -> Unit) {
+private fun PassageDialog(
+    text: String,
+    onHighlight: (IntRange) -> Unit,
+    onDismiss: () -> Unit,
+    title: String = "Highlight a passage",
+    hint: String = "Press and hold a word, then drag the handles to cover the passage.",
+    action: String = "Highlight",
+) {
     var value by remember { mutableStateOf(TextFieldValue(text)) }
     val selection = value.selection
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Highlight a passage") },
+        title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Press and hold a word, then drag the handles to cover the passage.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(value, { value = it.copy(text = text) }, readOnly = true, maxLines = 12, modifier = Modifier.fillMaxWidth())
             }
         },
-        confirmButton = { TextButton(onClick = { onHighlight(selection.min until selection.max) }, enabled = !selection.collapsed) { Text("Highlight") } },
+        confirmButton = { TextButton(onClick = { onHighlight(selection.min until selection.max) }, enabled = !selection.collapsed) { Text(action) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
+/**
+ * Hands [word] to a dictionary or translate app through the system "process text" action, or a
+ * web search when no such app is installed.
+ */
+internal fun lookUp(context: Context, word: String) {
+    val process = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
+        .putExtra(Intent.EXTRA_PROCESS_TEXT, word.trim()).putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
+    val intent = if (context.packageManager.queryIntentActivities(process, 0).isNotEmpty()) Intent.createChooser(process, "Look up \"${word.trim()}\"")
+    else Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, "define ${word.trim()}")
+    runCatching { context.startActivity(intent) }
+}
+
 /** The reading column: capped width, centred, with the reader's chosen margin. */
 @Composable
-private fun Measure(settings: ReaderSettings, content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+private fun Measure(settings: ReaderSettings, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 680.dp).fillMaxWidth().padding(horizontal = settings.horizontalMargin.dp)) { content() }
     }
 }
@@ -460,21 +546,54 @@ private fun BlockView(book: EpubBook, chapterHref: String, block: Block, body: T
     }
 }
 
-/** [text] with each of [links] underlined and tappable and each of [marks] highlighted. */
+/** Reading aids that restyle the text itself, set once per chapter for every block. */
+private data class TextAids(val emphasis: Boolean = false, val wordSpacing: Float = 0f)
+
+private val LocalTextAids = staticCompositionLocalOf { TextAids() }
+
+/**
+ * [text] with each of [links] underlined and tappable, each of [marks] highlighted, and the
+ * reader's word emphasis and word spacing applied. Built once per block, not every frame.
+ */
 @Composable
 private fun linkedText(text: String, links: List<LinkSpan>, onLinkClick: (String) -> Unit, marks: List<IntRange> = emptyList()): AnnotatedString {
-    if (links.isEmpty() && marks.isEmpty()) return AnnotatedString(text)
+    val aids = LocalTextAids.current
+    if (links.isEmpty() && marks.isEmpty() && aids == TextAids()) return AnnotatedString(text)
     val color = MaterialTheme.colorScheme.secondary
     val tint = color.copy(alpha = 0.22f)
-    return buildAnnotatedString {
+    val click by rememberUpdatedState(onLinkClick)
+    return remember(text, links, marks, aids, color) { buildAnnotatedString {
         append(text)
+        if (aids.emphasis) emphasisRanges(text).forEach { addStyle(SpanStyle(fontWeight = FontWeight.Bold), it.first, it.last + 1) }
+        // Letter spacing on just the spaces widens the gaps between words.
+        if (aids.wordSpacing > 0f) text.forEachIndexed { i, c -> if (c == ' ') addStyle(SpanStyle(letterSpacing = aids.wordSpacing.em), i, i + 1) }
         marks.forEach { if (!it.isEmpty()) addStyle(SpanStyle(background = tint), it.first, it.last + 1) }
         links.forEach { link ->
             if (link.start !in 0..text.length || link.end !in link.start..text.length) return@forEach
             addStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline), link.start, link.end)
-            addLink(LinkAnnotation.Clickable(link.href) { onLinkClick(link.href) }, link.start, link.end)
+            addLink(LinkAnnotation.Clickable(link.href) { click(link.href) }, link.start, link.end)
+        }
+    } }
+}
+
+/**
+ * The opening letters of each word to embolden: one letter of a short word, about 40% of a
+ * longer one. Words are runs of letters or digits, so punctuation is never bolded.
+ */
+internal fun emphasisRanges(text: String): List<IntRange> {
+    val ranges = ArrayList<IntRange>()
+    var start = -1
+    for (i in 0..text.length) {
+        val inWord = i < text.length && text[i].isLetterOrDigit()
+        if (inWord && start < 0) start = i
+        if (!inWord && start >= 0) {
+            val length = i - start
+            val bold = if (length <= 3) 1 else kotlin.math.ceil(length * 0.4).toInt()
+            ranges += start until start + bold
+            start = -1
         }
     }
+    return ranges
 }
 
 @Composable

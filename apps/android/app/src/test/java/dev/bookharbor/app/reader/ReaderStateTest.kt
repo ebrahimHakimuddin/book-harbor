@@ -70,7 +70,7 @@ class ReaderStateTest {
 
     @Test
     fun settingsRoundTripAndTolerateCorruptStoredValues() {
-        val custom = ReaderSettings(theme = ReaderTheme.Sepia, fontScale = 1.2f, alignment = ReaderAlignment.Justified, brightness = 0.4f, showProgress = false)
+        val custom = ReaderSettings(theme = ReaderTheme.Sepia, fontScale = 1.2f, alignment = ReaderAlignment.Justified, brightness = 0.4f, showProgress = false, volumeKeys = true, orientation = ReaderOrientation.Landscape, hyphenation = false)
         assertEquals(custom, ReaderSettings.fromMap(custom.toMap()))
         val corrupt = ReaderSettings.fromMap(mapOf("theme" to "Neon", "fontScale" to "huge", "margin" to "999", "brightness" to "9"))
         assertEquals(ReaderTheme.System, corrupt.theme)

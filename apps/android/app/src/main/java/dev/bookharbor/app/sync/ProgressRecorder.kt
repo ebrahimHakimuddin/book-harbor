@@ -16,7 +16,8 @@ class ProgressRecorder(
     /** Returns the event, or null when nothing changed since the last recorded position. */
     fun record(bookId: String, editionId: String, locator: Locator, percentage: Double): ProgressEvent? {
         val clamped = percentage.coerceIn(0.0, 1.0)
-        store.position(bookId)?.let { if (it.editionId == editionId && it.locator == locator) return null }
+        // A changed percentage at the same place still counts: marking a book read or unread.
+        store.position(bookId)?.let { if (it.editionId == editionId && it.locator == locator && it.percentage == clamped) return null }
         val event = ProgressEvent(
             eventId = "progress_" + UUID.randomUUID().toString().replace("-", ""),
             deviceId = deviceId, bookId = bookId, editionId = editionId,

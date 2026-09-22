@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -25,6 +26,7 @@ import dev.bookharbor.app.library.LibraryScreen
 import dev.bookharbor.app.library.LibraryUiState
 import dev.bookharbor.app.reader.EpubReaderScreen
 import dev.bookharbor.app.reader.PdfReaderScreen
+import dev.bookharbor.app.reader.ReaderKeys
 import dev.bookharbor.app.reader.ReaderSettingsStore
 import dev.bookharbor.app.reader.ReaderTheme
 import dev.bookharbor.app.ui.theme.BookHarborTheme
@@ -39,6 +41,18 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (state == null) openRequest.value = intent.getStringExtra(ContinueReadingWidget.EXTRA_BOOK_ID)
         setContent { BookHarborApp(openRequest) }
+    }
+
+    // Volume keys turn pages while a book is open, if the reader turned that on.
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val forward = when (keyCode) { KeyEvent.KEYCODE_VOLUME_DOWN -> true; KeyEvent.KEYCODE_VOLUME_UP -> false; else -> null }
+        if (forward != null && ReaderKeys.onPage?.invoke(forward) == true) return true
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP) && ReaderKeys.onPage != null) return true
+        return super.onKeyUp(keyCode, event)
     }
 
     override fun onNewIntent(intent: Intent) {

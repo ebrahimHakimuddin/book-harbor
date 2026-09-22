@@ -9,6 +9,7 @@ import dev.bookharbor.app.library.FriendsClient
 import dev.bookharbor.app.library.LibraryClient
 import dev.bookharbor.app.library.ListsClient
 import dev.bookharbor.app.library.SessionStore
+import dev.bookharbor.app.notify.Notifications
 import dev.bookharbor.app.reader.AnnotationStore
 import dev.bookharbor.app.reader.ReadingStats
 import dev.bookharbor.app.sync.AnnotationSyncEngine
@@ -50,6 +51,7 @@ class AppGraph private constructor(context: Context) {
 
     init {
         SyncScheduler.schedulePeriodic(app)
+        if (Notifications.enabled(prefs)) Notifications.schedule(app)
     }
 
     companion object {
