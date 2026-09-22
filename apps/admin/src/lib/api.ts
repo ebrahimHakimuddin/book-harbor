@@ -89,6 +89,10 @@ export interface BookRequest {
   fulfilledBookId: string | null
   createdAt: string
   requestedByEmail?: string
+  requestedByName?: string
+  sourceProvider?: string
+  sourceId?: string
+  resolvedAt?: string
 }
 
 export interface AuditEntry {
@@ -104,10 +108,12 @@ export interface AuditEntry {
 export class APIError extends Error {
   status: number
   code: string | undefined
-  constructor(status: number, code: string | undefined, message: string) {
+  details: Record<string, string> | undefined
+  constructor(status: number, code: string | undefined, message: string, details?: Record<string, string>) {
     super(message)
     this.status = status
     this.code = code
+    this.details = details
   }
 }
 
@@ -198,7 +204,7 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
 
 async function toError(response: Response): Promise<APIError> {
   const payload = await response.json().catch(() => ({}))
-  return new APIError(response.status, payload.code, payload.message ?? `Request failed with status ${response.status}.`)
+  return new APIError(response.status, payload.code, payload.message ?? `Request failed with status ${response.status}.`, payload.details)
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -225,7 +231,7 @@ function upload<T>(path: string, body: FormData, onProgress?: (fraction: number)
     if (result.status === 401 && (await refreshSession())) result = await attempt()
     const payload = result.text ? JSON.parse(result.text) : {}
     if (result.status < 200 || result.status >= 300) {
-      throw new APIError(result.status, payload.code, payload.message ?? `Request failed with status ${result.status}.`)
+      throw new APIError(result.status, payload.code, payload.message ?? `Request failed with status ${result.status}.`, payload.details)
     }
     return payload as T
   })()
@@ -283,7 +289,7 @@ export const api = {
 
   audit: (limit = 100) => request<{ items: AuditEntry[] }>(`/api/v1/admin/audit?limit=${limit}`),
 
-  bookRequests: () => request<{ items: BookRequest[] }>("/api/v1/admin/book-requests"),
+  bookRequests: (status: "open" | "resolved" = "open") => request<{ items: BookRequest[] }>(`/api/v1/admin/book-requests?status=${status}`),
   fulfillBookRequest: (id: string, bookId: string) =>
     request<void>(`/api/v1/admin/book-requests/${enc(id)}/fulfill`, { method: "POST", body: { bookId } }),
   declineBookRequest: (id: string) => request<void>(`/api/v1/admin/book-requests/${enc(id)}/decline`, { method: "POST" }),

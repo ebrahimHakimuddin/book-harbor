@@ -307,7 +307,11 @@ func (s *server) writeImportError(w http.ResponseWriter, err error) {
 	var duplicate *library.DuplicateError
 	switch {
 	case errors.As(err, &duplicate):
-		writeError(w, http.StatusConflict, "duplicate_book", "this file is already in the library as \""+duplicate.Title+"\"")
+		// details.bookId lets a client offer the existing book instead (e.g. to fulfill a request).
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"code": "duplicate_book", "message": "this file is already in the library as \"" + duplicate.Title + "\"",
+			"details": map[string]string{"bookId": duplicate.BookID},
+		})
 	case errors.Is(err, library.ErrTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "book_too_large", "uploaded book exceeds the configured size limit")
 	case errors.Is(err, library.ErrUnsupportedFormat):

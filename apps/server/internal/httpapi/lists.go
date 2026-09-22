@@ -16,9 +16,9 @@ type listResponse struct {
 	BookCount int    `json:"bookCount"`
 	// BookIDs is included in the index (newest first) so clients can show covers and membership
 	// without fetching each list.
-	BookIDs []string `json:"bookIds,omitempty"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	BookIDs   []string `json:"bookIds,omitempty"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt"`
 }
 
 func newListResponse(list lists.List) listResponse {

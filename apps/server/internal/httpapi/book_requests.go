@@ -20,6 +20,12 @@ type bookRequestResponse struct {
 	FulfilledBookID  *string `json:"fulfilledBookId"`
 	CreatedAt        string  `json:"createdAt"`
 	RequestedByEmail string  `json:"requestedByEmail,omitempty"`
+	RequestedByName  string  `json:"requestedByName,omitempty"`
+	// SourceProvider/SourceID identify the catalogue entry, so several readers asking for the
+	// same book can be grouped.
+	SourceProvider string  `json:"sourceProvider,omitempty"`
+	SourceID       string  `json:"sourceId,omitempty"`
+	ResolvedAt     *string `json:"resolvedAt,omitempty"`
 }
 
 func newBookRequestResponse(request requests.Request) bookRequestResponse {
@@ -30,6 +36,10 @@ func newBookRequestResponse(request requests.Request) bookRequestResponse {
 	if request.FulfilledBookID != "" {
 		fulfilledBookID := request.FulfilledBookID
 		response.FulfilledBookID = &fulfilledBookID
+	}
+	if !request.ResolvedAt.IsZero() {
+		resolvedAt := request.ResolvedAt.Format(time.RFC3339Nano)
+		response.ResolvedAt = &resolvedAt
 	}
 	return response
 }
@@ -117,10 +127,20 @@ func (s *server) bookRequest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// adminBookRequests handles GET /api/v1/admin/book-requests: the open queue, each with the
-// requester's email so an admin knows who asked.
+// adminBookRequests handles GET /api/v1/admin/book-requests: the open queue by default, or
+// with ?status=resolved the most recent fulfilled and declined ones, each with who asked.
 func (s *server) adminBookRequests(w http.ResponseWriter, r *http.Request) {
-	items, err := s.requests.ListOpen(r.Context())
+	var items []requests.Request
+	var err error
+	switch r.URL.Query().Get("status") {
+	case "", "open":
+		items, err = s.requests.ListOpen(r.Context())
+	case "resolved":
+		items, err = s.requests.ListResolved(r.Context(), 200)
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_status", "status must be open or resolved")
+		return
+	}
 	if err != nil {
 		s.logger.Error("list open book requests", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to list book requests")
@@ -129,8 +149,10 @@ func (s *server) adminBookRequests(w http.ResponseWriter, r *http.Request) {
 	responses := make([]bookRequestResponse, len(items))
 	for i, item := range items {
 		response := newBookRequestResponse(item)
+		response.SourceProvider, response.SourceID = item.SourceProvider, item.SourceID
 		if user, err := s.users.GetUser(r.Context(), item.RequestedBy); err == nil {
 			response.RequestedByEmail = user.Email
+			response.RequestedByName = user.DisplayName
 		}
 		responses[i] = response
 	}

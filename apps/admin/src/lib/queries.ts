@@ -166,7 +166,8 @@ export function useCoverSrc(url: string) {
   return isPrivate ? query.data : url || undefined
 }
 
-export const useBookRequests = () => useQuery({ queryKey: keys.bookRequests, queryFn: async () => (await api.bookRequests()).items })
+export const useBookRequests = (status: "open" | "resolved" = "open") =>
+  useQuery({ queryKey: [...keys.bookRequests, status], queryFn: async () => (await api.bookRequests(status)).items })
 
 function useResolveBookRequest() {
   const client = useQueryClient()

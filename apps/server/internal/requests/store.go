@@ -82,6 +82,11 @@ func (s *Store) ListOpen(ctx context.Context) ([]Request, error) {
 	return s.list(ctx, `WHERE status = 'open' ORDER BY created_at ASC`)
 }
 
+// ListResolved returns fulfilled and declined requests, most recently resolved first.
+func (s *Store) ListResolved(ctx context.Context, limit int) ([]Request, error) {
+	return s.list(ctx, `WHERE status != 'open' ORDER BY resolved_at DESC LIMIT ?`, limit)
+}
+
 func (s *Store) list(ctx context.Context, whereAndOrder string, args ...any) ([]Request, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, requested_by, title, author, cover_url, source_provider, source_id, status, fulfilled_book_id, created_at, resolved_at

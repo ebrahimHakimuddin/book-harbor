@@ -79,6 +79,21 @@ func TestFulfillBookRequestRequiresUploadedBook(t *testing.T) {
 		t.Fatalf("requester's requests after fulfill = %#v", mineList.Items)
 	}
 
+	// The open queue is now empty; the resolved history has it, with who asked and when it closed.
+	var open bookRequestsListResponse
+	json.NewDecoder(call(t, handler, admin.AccessToken, http.MethodGet, "/api/v1/admin/book-requests", "").Body).Decode(&open)
+	if len(open.Items) != 0 {
+		t.Fatalf("open queue after fulfill = %#v", open.Items)
+	}
+	var history bookRequestsListResponse
+	json.NewDecoder(call(t, handler, admin.AccessToken, http.MethodGet, "/api/v1/admin/book-requests?status=resolved", "").Body).Decode(&history)
+	if len(history.Items) != 1 || history.Items[0].RequestedByName != "Alice" || history.Items[0].ResolvedAt == nil {
+		t.Fatalf("resolved history = %#v", history.Items)
+	}
+	if r := call(t, handler, admin.AccessToken, http.MethodGet, "/api/v1/admin/book-requests?status=bogus", ""); r.Code != http.StatusBadRequest {
+		t.Fatalf("bad status filter = %d", r.Code)
+	}
+
 	stillOpen := call(t, handler, admin.AccessToken, http.MethodGet, "/api/v1/admin/book-requests", "")
 	var openList bookRequestsListResponse
 	if err := json.NewDecoder(stillOpen.Body).Decode(&openList); err != nil {
