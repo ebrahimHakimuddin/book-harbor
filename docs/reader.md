@@ -121,6 +121,33 @@ The library shows a **Continue reading** card for the unfinished book read
 most recently. A home-screen widget shows the same book and opens it directly.
 The widget reads only data stored on the device, so it works offline.
 
+## Library conveniences
+
+Press and hold a book (or choose **About this book**) for its details: series,
+tags, description, formats and sizes, progress, and actions to mark it read or
+unread, add it to a list, or remove its download. For a downloaded book the
+sheet lists its chapters (or takes a PDF page number); choosing one opens the
+book there instead of at the saved place. Marking read or unread records an
+ordinary progress event at 100% or 0%, so it syncs like reading does.
+
+The library can sort by series (in series order) and filter by tag. The More
+tab shows how much space downloads use and can remove every finished book's
+download at once; a list can download all of its books. A background check
+every six hours notifies the reader of new books, fulfilled requests, and
+friend requests.
+
+## Reading aids
+
+Besides typography, the settings sheet offers hyphenation, word emphasis
+(bolding the first part of each word to guide the eye), extra letter and word
+spacing, an orientation lock, and paging with the volume keys. The footer
+estimates the minutes left in the chapter from the reader's own pace, learned
+from steady forward reading and ignoring jumps and idle time. **Read aloud**
+(the headphones button) speaks the chapter from the current paragraph with the
+device's text-to-speech engine, tinting and following the spoken paragraph.
+**Look up a word** in a paragraph's menu hands the word to an installed
+dictionary or translate app. PDFs zoom with a pinch, from 1x to 4x.
+
 ## Acceptance criteria
 
 - A downloaded EPUB and PDF can be opened, navigated, customized, closed, and

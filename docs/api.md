@@ -14,6 +14,8 @@ POST   /bootstrap
 POST   /sessions
 POST   /sessions/refresh
 DELETE /sessions/current
+POST   /password-resets
+POST   /password-resets/confirm
 GET    /me
 GET    /admin/users                    administrator only
 POST   /admin/users                    administrator only
@@ -63,6 +65,16 @@ refresh token pair. The exchanged tokens stop working immediately:
 
 Protected routes use `Authorization: Bearer <accessToken>`. Deleting the current
 session revokes both its access and refresh tokens.
+
+`POST /password-resets` takes `{"email"}` and emails a single-use,
+10-character code when the address belongs to an active account. It answers
+`202` either way, sends at most one code a minute per account, and returns
+`422 password_reset_unavailable` when the server has no mail configured
+(`GET /instance` reports this as `passwordResetEnabled`). `POST
+/password-resets/confirm` takes `{"email", "code", "newPassword"}`; a code
+expires after 30 minutes and is burned after five wrong guesses, and any
+failure is the same `422 invalid_reset_code`. Success returns `204`, revokes
+every session, and is audited as `user.password_reset`.
 
 Administrators create reader accounts explicitly; there is no public
 registration. `POST /admin/users` accepts `displayName`, `email`, and a password
@@ -117,8 +129,12 @@ removes it. Covers from other sites keep their absolute `https` URL.
 
 `POST /books` accepts `multipart/form-data` with exactly one `file` part and an
 optional `title` field. The server validates the file contents rather than its
-extension, extracts an EPUB title when available, and preserves the original
-bytes. The default upload limit is 512 MiB and can be changed with
+extension and preserves the original bytes. From an EPUB it also reads the
+title, authors, description (as plain text), series (Calibre's
+`calibre:series`/`series_index` or an EPUB 3 `belongs-to-collection`), and
+embedded cover. A file byte-identical to an existing edition, here or through
+`POST /books/{bookId}/editions`, returns `409 duplicate_book` naming the book
+it matches. The default upload limit is 512 MiB and can be changed with
 `BOOKHARBOR_MAX_UPLOAD_BYTES`.
 
 An edition response includes format, byte length, media type, SHA-256 checksum,
@@ -126,7 +142,8 @@ and an authenticated content URL. Content supports `GET`, `HEAD`, and standard
 byte ranges so Android can verify and resume a partial download.
 
 `PATCH /books/{bookId}` accepts any non-empty subset of `title`, `subtitle`,
-`description`, `authors`, `coverUrl`, and a reviewed external metadata `source`:
+`description`, `authors`, `coverUrl`, `series`, `seriesIndex` (0 for
+unnumbered), `tags`, and a reviewed external metadata `source`:
 
 ```json
 {
@@ -135,6 +152,9 @@ byte ranges so Android can verify and resume a partial download.
   "authors": ["Ursula K. Le Guin"],
   "description": "...",
   "coverUrl": "https://...",
+  "series": "Hainish Cycle",
+  "seriesIndex": 4,
+  "tags": ["Science fiction", "Book club"],
   "source": { "provider": "hardcover", "id": "12345" }
 }
 ```
