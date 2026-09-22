@@ -6,7 +6,6 @@ import androidx.compose.runtime.setValue
 import dev.bookharbor.app.AppGraph
 import dev.bookharbor.app.reader.epub.EpubBook
 import dev.bookharbor.app.sync.LocalPosition
-import dev.bookharbor.app.sync.SyncScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -99,9 +98,19 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         load(quiet = true)
     }
 
+    /**
+     * Offline first: a signed-in reader gets their saved library immediately, and the network only
+     * refreshes it. A slow or unreachable server never stands between them and their books.
+     */
     fun load(quiet: Boolean = false) {
-        if (!quiet) ui = LibraryUiState.Loading
+        if (!quiet && ui !is LibraryUiState.Catalog) ui = LibraryUiState.Loading
         scope.launch(Dispatchers.IO) {
+            if (ui !is LibraryUiState.Catalog && graph.session.tokens != null) {
+                cache.load()?.let { (name, books) ->
+                    ui = catalog(name, books, offline = false)
+                    refreshing = true // the saved copy is up; show that it's being checked
+                }
+            }
             try {
                 val instance = graph.library.instance(graph.session.serverUrl)
                 ui = when {
@@ -110,7 +119,6 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                     else -> {
                         val books = graph.library.books()
                         cache.save(instance.name, books)
-                        SyncScheduler.schedule(graph.context)
                         catalog(instance.name, books, offline = false)
                     }
                 }
@@ -123,6 +131,8 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             }
             refreshing = false
             refreshSync()
+            // Back online: push queued progress and pull other devices' positions into the library now.
+            if ((ui as? LibraryUiState.Catalog)?.offline == false) syncNow()
         }
     }
 

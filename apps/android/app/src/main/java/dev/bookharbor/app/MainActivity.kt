@@ -1,5 +1,7 @@
 package dev.bookharbor.app
 
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -8,11 +10,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import dev.bookharbor.app.library.AppController
 import dev.bookharbor.app.library.LibraryScreen
 import dev.bookharbor.app.library.LibraryUiState
@@ -39,6 +43,18 @@ fun BookHarborApp() {
     val settings = remember { ReaderSettingsStore(graph.prefs) }
 
     LaunchedEffect(Unit) { if (controller.ui == LibraryUiState.Loading) controller.load() }
+    // When the network comes back while the app is open, refresh an offline library (which also
+    // syncs progress) instead of waiting for the reader to pull to refresh.
+    DisposableEffect(Unit) {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                scope.launch { if ((controller.ui as? LibraryUiState.Catalog)?.offline == true) controller.refresh() }
+            }
+        }
+        runCatching { connectivity?.registerDefaultNetworkCallback(callback) }
+        onDispose { runCatching { connectivity?.unregisterNetworkCallback(callback) } }
+    }
 
     val opened = controller.opened
     if (opened != null) {

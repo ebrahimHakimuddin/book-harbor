@@ -31,7 +31,7 @@ class ApiClient(
         val connection = openConnection(url)
         try {
             connection.requestMethod = method
-            connection.connectTimeout = 15_000
+            connection.connectTimeout = 8_000 // an unreachable home server should fail fast, not hang the UI
             connection.readTimeout = readTimeoutMillis
             connection.setRequestProperty("Accept", "application/json")
             if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
