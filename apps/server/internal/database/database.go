@@ -175,6 +175,20 @@ var migrations = []string{
 	) STRICT;
 	CREATE INDEX annotations_user_revision_idx ON annotations(user_id, revision);
 	CREATE TABLE annotation_revisions (revision INTEGER PRIMARY KEY AUTOINCREMENT) STRICT;`,
+	// Series and free-form tags for grouping; series_index 0 means unnumbered. The sha256 index
+	// backs duplicate detection on import.
+	`ALTER TABLE books ADD COLUMN series TEXT NOT NULL DEFAULT '';
+	ALTER TABLE books ADD COLUMN series_index REAL NOT NULL DEFAULT 0;
+	ALTER TABLE books ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+	CREATE INDEX editions_sha256_idx ON editions(sha256);`,
+	// At most one outstanding emailed reset code per user; only the code's hash is stored, and
+	// too many wrong guesses burn it.
+	`CREATE TABLE password_resets (
+		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		code_hash TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		attempts INTEGER NOT NULL DEFAULT 0
+	) STRICT;`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

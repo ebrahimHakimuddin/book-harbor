@@ -106,7 +106,7 @@ func TestImportPDFUsesProvidedOrFilenameTitle(t *testing.T) {
 
 	fallback, err := store.Import(context.Background(), ImportInput{
 		Filename:  "second-book.pdf",
-		Content:   bytes.NewReader(pdf),
+		Content:   bytes.NewReader(append(pdf, "%second\n"...)),
 		CreatedBy: "usr_test",
 	})
 	if err != nil {
@@ -265,32 +265,7 @@ func testLibraryStore(t *testing.T, maxBytes int64) (*Store, *sql.DB, string) {
 
 func validEPUB(t *testing.T, title string) []byte {
 	t.Helper()
-	var buffer bytes.Buffer
-	writer := zip.NewWriter(&buffer)
-
-	mimetypeHeader := &zip.FileHeader{Name: "mimetype", Method: zip.Store}
-	mimetype, err := writer.CreateHeader(mimetypeHeader)
-	if err != nil {
-		t.Fatalf("create mimetype: %v", err)
-	}
-	if _, err := mimetype.Write([]byte("application/epub+zip")); err != nil {
-		t.Fatalf("write mimetype: %v", err)
-	}
-	container, err := writer.Create("META-INF/container.xml")
-	if err != nil {
-		t.Fatalf("create container.xml: %v", err)
-	}
-	if _, err := io.WriteString(container, `<?xml version="1.0"?>
-<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-  <rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></rootfiles>
-</container>`); err != nil {
-		t.Fatalf("write container.xml: %v", err)
-	}
-	packageDocument, err := writer.Create("EPUB/package.opf")
-	if err != nil {
-		t.Fatalf("create package document: %v", err)
-	}
-	if _, err := io.WriteString(packageDocument, `<?xml version="1.0"?>
+	return epubWithPackage(t, `<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="id">test-id</dc:identifier>
@@ -298,8 +273,32 @@ func validEPUB(t *testing.T, title string) []byte {
     <dc:language>en</dc:language>
   </metadata>
   <manifest/><spine/>
-</package>`); err != nil {
-		t.Fatalf("write package document: %v", err)
+</package>`, nil)
+}
+
+// epubWithPackage builds a minimal EPUB around packageXML (stored at EPUB/package.opf)
+// plus any extra archive entries.
+func epubWithPackage(t *testing.T, packageXML string, extra map[string][]byte) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	write := func(name string, content []byte, method uint16) {
+		entry, err := writer.CreateHeader(&zip.FileHeader{Name: name, Method: method})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		if _, err := entry.Write(content); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("mimetype", []byte("application/epub+zip"), zip.Store)
+	write("META-INF/container.xml", []byte(`<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>`), zip.Deflate)
+	write("EPUB/package.opf", []byte(packageXML), zip.Deflate)
+	for name, content := range extra {
+		write(name, content, zip.Deflate)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close EPUB: %v", err)

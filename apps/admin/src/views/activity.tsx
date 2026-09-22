@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 const ACTIONS: Record<string, string> = {
-  "user.create": "Reader added", "user.update": "Account changed", "user.update_self": "Account updated", "user.delete": "Account removed",
+  "user.create": "Reader added", "user.update": "Account changed", "user.update_self": "Account updated", "user.delete": "Account removed", "user.password_reset": "Password reset by email",
   "book.import": "Book imported", "book.update": "Book edited", "book.delete": "Book deleted", "export.create": "Export downloaded",
   "friend.request": "Friend request sent", "friend.accept": "Friend request accepted", "friend.decline": "Friend request declined",
   "friend.cancel": "Friend request cancelled", "friend.remove": "Friend removed", "social_settings.update": "Sharing settings updated",

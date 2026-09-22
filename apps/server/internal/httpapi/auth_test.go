@@ -14,6 +14,8 @@ type fakeMailer struct {
 	configured bool
 	sentTo     string
 	sentBody   string
+	// bodies, when set, also receives every body, for sends made off the request goroutine.
+	bodies chan string
 }
 
 func (f *fakeMailer) Configured() bool { return f.configured }
@@ -21,6 +23,9 @@ func (f *fakeMailer) Configured() bool { return f.configured }
 func (f *fakeMailer) Send(_ context.Context, toEmail, _, _, body string) error {
 	f.sentTo = toEmail
 	f.sentBody = body
+	if f.bodies != nil {
+		f.bodies <- body
+	}
 	return nil
 }
 

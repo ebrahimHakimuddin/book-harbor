@@ -3,8 +3,10 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -116,9 +118,14 @@ func TestHTTPProgressSyncValidatesPayload(t *testing.T) {
 	}
 }
 
+var testUploads atomic.Int64
+
+// uploadProgressTestBook uploads testPDF plus a unique trailing comment, since the server
+// refuses byte-identical files.
 func uploadProgressTestBook(t *testing.T, handler http.Handler, accessToken string) bookResponse {
 	t.Helper()
-	body, contentType := multipartBook(t, "file", "progress.pdf", "Progress Book", testPDF)
+	pdf := append(append([]byte{}, testPDF...), fmt.Sprintf("%%upload %d\n", testUploads.Add(1))...)
+	body, contentType := multipartBook(t, "file", "progress.pdf", "Progress Book", pdf)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/books", body)
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Content-Type", contentType)

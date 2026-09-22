@@ -22,6 +22,9 @@ type bookResponse struct {
 	Description string              `json:"description"`
 	Authors     []string            `json:"authors"`
 	CoverURL    string              `json:"coverUrl"`
+	Series      string              `json:"series"`
+	SeriesIndex float64             `json:"seriesIndex"`
+	Tags        []string            `json:"tags"`
 	Source      *bookMetadataSource `json:"source,omitempty"`
 	CreatedBy   string              `json:"createdBy"`
 	CreatedAt   time.Time           `json:"createdAt"`
@@ -121,6 +124,9 @@ func (s *server) patchBook(w http.ResponseWriter, r *http.Request) {
 		Description *string   `json:"description"`
 		Authors     *[]string `json:"authors"`
 		CoverURL    *string   `json:"coverUrl"`
+		Series      *string   `json:"series"`
+		SeriesIndex *float64  `json:"seriesIndex"`
+		Tags        *[]string `json:"tags"`
 		Source      *struct {
 			Provider string `json:"provider"`
 			ID       string `json:"id"`
@@ -130,13 +136,15 @@ func (s *server) patchBook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be one valid JSON object")
 		return
 	}
-	if request.Title == nil && request.Subtitle == nil && request.Description == nil && request.Authors == nil && request.CoverURL == nil && request.Source == nil {
+	if request.Title == nil && request.Subtitle == nil && request.Description == nil && request.Authors == nil && request.CoverURL == nil && request.Source == nil &&
+		request.Series == nil && request.SeriesIndex == nil && request.Tags == nil {
 		writeError(w, http.StatusUnprocessableEntity, "no_metadata_changes", "at least one metadata field is required")
 		return
 	}
 	update := library.BookUpdate{
 		Title: request.Title, Subtitle: request.Subtitle, Description: request.Description,
 		Authors: request.Authors, CoverURL: request.CoverURL,
+		Series: request.Series, SeriesIndex: request.SeriesIndex, Tags: request.Tags,
 	}
 	if request.Source != nil {
 		update.MetadataProvider = &request.Source.Provider
@@ -296,7 +304,10 @@ func (s *server) importBook(w http.ResponseWriter, r *http.Request, createdBy st
 }
 
 func (s *server) writeImportError(w http.ResponseWriter, err error) {
+	var duplicate *library.DuplicateError
 	switch {
+	case errors.As(err, &duplicate):
+		writeError(w, http.StatusConflict, "duplicate_book", "this file is already in the library as \""+duplicate.Title+"\"")
 	case errors.Is(err, library.ErrTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "book_too_large", "uploaded book exceeds the configured size limit")
 	case errors.Is(err, library.ErrUnsupportedFormat):
@@ -333,7 +344,8 @@ func newBookResponse(book library.Book) bookResponse {
 	}
 	return bookResponse{
 		ID: book.ID, Title: book.Title, Subtitle: book.Subtitle, Description: book.Description,
-		Authors: book.Authors, CoverURL: book.CoverURL, Source: source, CreatedBy: book.CreatedBy,
+		Authors: book.Authors, CoverURL: book.CoverURL, Series: book.Series, SeriesIndex: book.SeriesIndex,
+		Tags: book.Tags, Source: source, CreatedBy: book.CreatedBy,
 		CreatedAt: book.CreatedAt, UpdatedAt: book.UpdatedAt, Editions: editions,
 	}
 }

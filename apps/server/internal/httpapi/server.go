@@ -71,6 +71,8 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/bootstrap", requireMethod(http.MethodPost, http.HandlerFunc(s.bootstrap)))
 	mux.Handle("/api/v1/sessions", requireMethod(http.MethodPost, http.HandlerFunc(s.createSession)))
 	mux.Handle("/api/v1/sessions/refresh", requireMethod(http.MethodPost, http.HandlerFunc(s.refreshSession)))
+	mux.Handle("/api/v1/password-resets", requireMethod(http.MethodPost, http.HandlerFunc(s.requestPasswordReset)))
+	mux.Handle("/api/v1/password-resets/confirm", requireMethod(http.MethodPost, http.HandlerFunc(s.confirmPasswordReset)))
 	mux.Handle("/api/v1/sessions/current", requireMethod(http.MethodDelete, s.requireAuthentication(s.deleteCurrentSession)))
 	mux.Handle("/api/v1/me", s.requireAuthentication(s.me))
 	mux.Handle("/api/v1/admin/users", s.requireAuthentication(s.adminUsers))
@@ -113,21 +115,24 @@ func (s *server) instance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, struct {
-		Name            string   `json:"name"`
-		Version         string   `json:"version"`
-		Commit          string   `json:"commit"`
-		SetupRequired   bool     `json:"setupRequired"`
-		Formats         []string `json:"formats"`
-		InvitesEnabled  bool     `json:"invitesEnabled"`
-		MetadataEnabled bool     `json:"metadataEnabled"`
+		Name           string   `json:"name"`
+		Version        string   `json:"version"`
+		Commit         string   `json:"commit"`
+		SetupRequired  bool     `json:"setupRequired"`
+		Formats        []string `json:"formats"`
+		InvitesEnabled bool     `json:"invitesEnabled"`
+		// Password reset emails a code, so it needs the same mail setup as invites.
+		PasswordResetEnabled bool `json:"passwordResetEnabled"`
+		MetadataEnabled      bool `json:"metadataEnabled"`
 	}{
-		Name:            s.config.Name,
-		Version:         s.build.Version,
-		Commit:          s.build.Commit,
-		SetupRequired:   setupRequired,
-		Formats:         []string{"epub", "pdf"},
-		InvitesEnabled:  s.mailer != nil && s.mailer.Configured(),
-		MetadataEnabled: s.metadata != nil && s.metadata.Configured(),
+		Name:                 s.config.Name,
+		Version:              s.build.Version,
+		Commit:               s.build.Commit,
+		SetupRequired:        setupRequired,
+		Formats:              []string{"epub", "pdf"},
+		InvitesEnabled:       s.mailer != nil && s.mailer.Configured(),
+		PasswordResetEnabled: s.mailer != nil && s.mailer.Configured(),
+		MetadataEnabled:      s.metadata != nil && s.metadata.Configured(),
 	})
 }
 

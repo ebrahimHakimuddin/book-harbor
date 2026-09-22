@@ -14,11 +14,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/bookharbor/bookharbor/apps/server/internal/export"
+	"html"
 	"io"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -40,6 +43,15 @@ var (
 	ErrTooLarge          = errors.New("book file exceeds size limit")
 	ErrUnsupportedFormat = errors.New("unsupported book format")
 )
+
+// DuplicateError reports that an uploaded file is byte-identical to an edition
+// already in the library.
+type DuplicateError struct {
+	BookID string
+	Title  string
+}
+
+func (e *DuplicateError) Error() string { return "this file is already in the library as " + e.Title }
 
 type Store struct {
 	db       *sql.DB
@@ -64,6 +76,9 @@ type Book struct {
 	CoverURL           string
 	MetadataProvider   string
 	MetadataProviderID string
+	Series             string
+	SeriesIndex        float64
+	Tags               []string
 	CreatedBy          string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -78,6 +93,9 @@ type BookUpdate struct {
 	CoverURL           *string
 	MetadataProvider   *string
 	MetadataProviderID *string
+	Series             *string
+	SeriesIndex        *float64
+	Tags               *[]string
 }
 
 type Edition struct {
@@ -114,12 +132,12 @@ func NewStore(db *sql.DB, dataDir string, maxBytes int64) (*Store, error) {
 
 // stagedUpload is a validated upload waiting in the temporary directory.
 type stagedUpload struct {
-	path           string
-	format         string
-	mediaType      string
-	extractedTitle string
-	checksum       string
-	size           int64
+	path      string
+	format    string
+	mediaType string
+	metadata  epubMetadata
+	checksum  string
+	size      int64
 }
 
 // stageUpload copies content to a private temporary file, enforcing the size
@@ -155,7 +173,7 @@ func (s *Store) stageUpload(content io.Reader) (stagedUpload, error) {
 	}
 	staged.size = written
 	staged.checksum = hex.EncodeToString(digest.Sum(nil))
-	if staged.format, staged.mediaType, staged.extractedTitle, err = inspectBook(temporary, written); err != nil {
+	if staged.format, staged.mediaType, staged.metadata, err = inspectBook(temporary, written); err != nil {
 		return fail(err)
 	}
 	if err := temporary.Close(); err != nil {
@@ -181,13 +199,22 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	defer os.Remove(temporaryPath)
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
-		title = strings.TrimSpace(staged.extractedTitle)
+		title = strings.TrimSpace(staged.metadata.Title)
 	}
 	if title == "" {
 		title = titleFromFilename(filename)
 	}
 	if !validTitle(title) {
 		return Book{}, ErrInvalidTitle
+	}
+
+	if err := s.checkDuplicate(ctx, staged.checksum); err != nil {
+		return Book{}, err
+	}
+	extracted := staged.metadata.sanitized()
+	authorsJSON, err := json.Marshal(extracted.Authors)
+	if err != nil {
+		return Book{}, fmt.Errorf("encode book authors: %w", err)
 	}
 
 	bookID, err := newID("book_")
@@ -218,9 +245,10 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO books (id, title, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, bookID, title, input.CreatedBy, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		INSERT INTO books (id, title, description, authors_json, series, series_index, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, bookID, title, extracted.Description, string(authorsJSON), extracted.Series, extracted.SeriesIndex,
+		input.CreatedBy, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return Book{}, fmt.Errorf("create book: %w", err)
 	}
 	checksum := staged.checksum
@@ -242,26 +270,29 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 		return Book{}, fmt.Errorf("commit book import: %w", err)
 	}
 	cleanupBookDirectory = false
-
-	edition := Edition{
-		ID:               editionID,
-		BookID:           bookID,
-		Format:           format,
-		MediaType:        mediaType,
-		OriginalFilename: filename,
-		ByteLength:       written,
-		SHA256:           checksum,
-		CreatedAt:        now,
+	// The embedded cover is a convenience: a bad or unsupported image leaves the book coverless
+	// rather than failing an import that already succeeded.
+	if len(staged.metadata.Cover) > 0 {
+		if book, err := s.SetCover(ctx, bookID, bytes.NewReader(staged.metadata.Cover)); err == nil {
+			return book, nil
+		}
 	}
-	return Book{
-		ID:        bookID,
-		Title:     title,
-		Authors:   []string{},
-		CreatedBy: input.CreatedBy,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Editions:  []Edition{edition},
-	}, nil
+	return s.Get(ctx, bookID)
+}
+
+// checkDuplicate refuses a file whose exact bytes are already stored as an edition.
+func (s *Store) checkDuplicate(ctx context.Context, checksum string) error {
+	var bookID, title string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT b.id, b.title FROM editions e JOIN books b ON b.id = e.book_id WHERE e.sha256 = ? LIMIT 1
+	`, checksum).Scan(&bookID, &title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check duplicate edition: %w", err)
+	}
+	return &DuplicateError{BookID: bookID, Title: title}
 }
 
 // List returns books newest first. Pass the returned next cursor to fetch the
@@ -272,7 +303,8 @@ func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Boo
 	}
 	query := `
 		SELECT id, title, subtitle, description, authors_json, cover_url,
-			metadata_provider, metadata_provider_id, created_by, created_at, updated_at
+			metadata_provider, metadata_provider_id, series, series_index, tags_json,
+			created_by, created_at, updated_at
 		FROM books`
 	args := []any{}
 	if cursor != "" {
@@ -320,7 +352,8 @@ func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Boo
 func (s *Store) Get(ctx context.Context, bookID string) (Book, error) {
 	book, err := scanBook(s.db.QueryRowContext(ctx, `
 		SELECT id, title, subtitle, description, authors_json, cover_url,
-			metadata_provider, metadata_provider_id, created_by, created_at, updated_at
+			metadata_provider, metadata_provider_id, series, series_index, tags_json,
+			created_by, created_at, updated_at
 		FROM books
 		WHERE id = ?
 	`, bookID))
@@ -366,6 +399,15 @@ func (s *Store) UpdateMetadata(ctx context.Context, bookID string, update BookUp
 	if update.MetadataProviderID != nil {
 		book.MetadataProviderID = strings.TrimSpace(*update.MetadataProviderID)
 	}
+	if update.Series != nil {
+		book.Series = strings.TrimSpace(*update.Series)
+	}
+	if update.SeriesIndex != nil {
+		book.SeriesIndex = *update.SeriesIndex
+	}
+	if update.Tags != nil {
+		book.Tags = normalizeAuthors(*update.Tags) // same trim/dedupe rules
+	}
 	if !validMetadata(book) {
 		return Book{}, ErrInvalidMetadata
 	}
@@ -373,14 +415,20 @@ func (s *Store) UpdateMetadata(ctx context.Context, bookID string, update BookUp
 	if err != nil {
 		return Book{}, fmt.Errorf("encode book authors: %w", err)
 	}
+	tagsJSON, err := json.Marshal(book.Tags)
+	if err != nil {
+		return Book{}, fmt.Errorf("encode book tags: %w", err)
+	}
 	book.UpdatedAt = s.now().UTC()
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE books
 		SET title = ?, subtitle = ?, description = ?, authors_json = ?, cover_url = ?,
-			metadata_provider = ?, metadata_provider_id = ?, updated_at = ?
+			metadata_provider = ?, metadata_provider_id = ?, series = ?, series_index = ?, tags_json = ?,
+			updated_at = ?
 		WHERE id = ?
 	`, book.Title, book.Subtitle, book.Description, string(authorsJSON), book.CoverURL,
-		book.MetadataProvider, book.MetadataProviderID, book.UpdatedAt.Format(time.RFC3339Nano), bookID)
+		book.MetadataProvider, book.MetadataProviderID, book.Series, book.SeriesIndex, string(tagsJSON),
+		book.UpdatedAt.Format(time.RFC3339Nano), bookID)
 	if err != nil {
 		return Book{}, fmt.Errorf("update book metadata: %w", err)
 	}
@@ -436,10 +484,11 @@ type scanner interface {
 
 func scanBook(row scanner) (Book, error) {
 	var book Book
-	var authorsJSON, createdAt, updatedAt string
+	var authorsJSON, tagsJSON, createdAt, updatedAt string
 	if err := row.Scan(
 		&book.ID, &book.Title, &book.Subtitle, &book.Description, &authorsJSON,
 		&book.CoverURL, &book.MetadataProvider, &book.MetadataProviderID,
+		&book.Series, &book.SeriesIndex, &tagsJSON,
 		&book.CreatedBy, &createdAt, &updatedAt,
 	); err != nil {
 		return Book{}, err
@@ -449,6 +498,12 @@ func scanBook(row scanner) (Book, error) {
 	}
 	if book.Authors == nil {
 		book.Authors = []string{}
+	}
+	if err := json.Unmarshal([]byte(tagsJSON), &book.Tags); err != nil {
+		return Book{}, fmt.Errorf("decode book tags: %w", err)
+	}
+	if book.Tags == nil {
+		book.Tags = []string{}
 	}
 	var err error
 	book.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
@@ -484,8 +539,16 @@ func validMetadata(book Book) bool {
 	if utf8.RuneCountInString(book.Subtitle) > 300 || utf8.RuneCountInString(book.Description) > 10_000 {
 		return false
 	}
-	if len(book.Authors) > 50 {
+	if len(book.Authors) > 50 || len(book.Tags) > 50 || utf8.RuneCountInString(book.Series) > 300 {
 		return false
+	}
+	if book.SeriesIndex < 0 || book.SeriesIndex > 100_000 {
+		return false
+	}
+	for _, tag := range book.Tags {
+		if utf8.RuneCountInString(tag) > 100 {
+			return false
+		}
 	}
 	for _, author := range book.Authors {
 		if utf8.RuneCountInString(author) < 1 || utf8.RuneCountInString(author) > 200 {
@@ -540,30 +603,30 @@ func (s *Store) listEditions(ctx context.Context, bookID string) ([]Edition, err
 	return editions, nil
 }
 
-func inspectBook(file *os.File, size int64) (format, mediaType, title string, err error) {
+func inspectBook(file *os.File, size int64) (format, mediaType string, metadata epubMetadata, err error) {
 	header := make([]byte, 8)
 	if _, err := file.ReadAt(header, 0); err != nil && !errors.Is(err, io.EOF) {
-		return "", "", "", fmt.Errorf("read book header: %w", err)
+		return "", "", metadata, fmt.Errorf("read book header: %w", err)
 	}
 	if bytes.HasPrefix(header, []byte("PK\x03\x04")) {
-		title, err := inspectEPUB(file, size)
+		metadata, err := inspectEPUB(file, size)
 		if err != nil {
-			return "", "", "", err
+			return "", "", metadata, err
 		}
-		return "epub", "application/epub+zip", title, nil
+		return "epub", "application/epub+zip", metadata, nil
 	}
 	if validPDFHeader(header) {
 		trailerSize := min(size, 4096)
 		trailer := make([]byte, trailerSize)
 		if _, err := file.ReadAt(trailer, size-trailerSize); err != nil && !errors.Is(err, io.EOF) {
-			return "", "", "", fmt.Errorf("read PDF trailer: %w", err)
+			return "", "", metadata, fmt.Errorf("read PDF trailer: %w", err)
 		}
 		if !bytes.Contains(trailer, []byte("%%EOF")) {
-			return "", "", "", ErrInvalidBook
+			return "", "", metadata, ErrInvalidBook
 		}
-		return "pdf", "application/pdf", "", nil
+		return "pdf", "application/pdf", metadata, nil
 	}
-	return "", "", "", ErrUnsupportedFormat
+	return "", "", metadata, ErrUnsupportedFormat
 }
 
 func validPDFHeader(header []byte) bool {
@@ -573,39 +636,40 @@ func validPDFHeader(header []byte) bool {
 	return (header[5] == '1' && header[7] >= '0' && header[7] <= '7') || (header[5] == '2' && header[7] == '0')
 }
 
-func inspectEPUB(file *os.File, size int64) (string, error) {
+func inspectEPUB(file *os.File, size int64) (epubMetadata, error) {
+	var none epubMetadata
 	archive, err := zip.NewReader(file, size)
 	if err != nil {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	if len(archive.File) == 0 || archive.File[0].Name != "mimetype" || archive.File[0].Method != zip.Store {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	entries := make(map[string]*zip.File, len(archive.File))
 	for _, entry := range archive.File {
 		if !safeArchivePath(entry.Name) {
-			return "", ErrInvalidBook
+			return none, ErrInvalidBook
 		}
 		if _, exists := entries[entry.Name]; exists {
-			return "", ErrInvalidBook
+			return none, ErrInvalidBook
 		}
 		entries[entry.Name] = entry
 	}
 	mimetype, ok := entries["mimetype"]
 	if !ok {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	mimetypeContent, err := readZipEntry(mimetype, 128)
 	if err != nil || string(mimetypeContent) != "application/epub+zip" {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	containerEntry, ok := entries["META-INF/container.xml"]
 	if !ok {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	containerContent, err := readZipEntry(containerEntry, maxMetadataBytes)
 	if err != nil {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	var container struct {
 		Rootfiles []struct {
@@ -613,34 +677,137 @@ func inspectEPUB(file *os.File, size int64) (string, error) {
 		} `xml:"rootfiles>rootfile"`
 	}
 	if err := xml.Unmarshal(containerContent, &container); err != nil || len(container.Rootfiles) == 0 {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	packagePath := container.Rootfiles[0].FullPath
 	if !safeArchivePath(packagePath) {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	packageEntry, ok := entries[packagePath]
 	if !ok {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	packageContent, err := readZipEntry(packageEntry, maxMetadataBytes)
 	if err != nil {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
 	var packageDocument struct {
 		Metadata struct {
-			Titles []string `xml:"title"`
+			Titles       []string `xml:"title"`
+			Creators     []string `xml:"creator"`
+			Descriptions []string `xml:"description"`
+			Metas        []struct {
+				Name     string `xml:"name,attr"`
+				Content  string `xml:"content,attr"`
+				Property string `xml:"property,attr"`
+				ID       string `xml:"id,attr"`
+				Refines  string `xml:"refines,attr"`
+				Value    string `xml:",chardata"`
+			} `xml:"meta"`
 		} `xml:"metadata"`
+		Items []struct {
+			ID         string `xml:"id,attr"`
+			Href       string `xml:"href,attr"`
+			MediaType  string `xml:"media-type,attr"`
+			Properties string `xml:"properties,attr"`
+		} `xml:"manifest>item"`
 	}
 	if err := xml.Unmarshal(packageContent, &packageDocument); err != nil {
-		return "", ErrInvalidBook
+		return none, ErrInvalidBook
 	}
+	var metadata epubMetadata
 	for _, title := range packageDocument.Metadata.Titles {
 		if title = strings.TrimSpace(title); title != "" {
-			return title, nil
+			metadata.Title = title
+			break
 		}
 	}
-	return "", nil
+	metadata.Authors = packageDocument.Metadata.Creators
+	if len(packageDocument.Metadata.Descriptions) > 0 {
+		metadata.Description = packageDocument.Metadata.Descriptions[0]
+	}
+	coverID := ""
+	collectionID := ""
+	for _, meta := range packageDocument.Metadata.Metas {
+		switch {
+		case meta.Name == "cover":
+			coverID = meta.Content
+		case meta.Name == "calibre:series":
+			metadata.Series = meta.Content
+		case meta.Name == "calibre:series_index":
+			metadata.SeriesIndex, _ = strconv.ParseFloat(strings.TrimSpace(meta.Content), 64)
+		case meta.Property == "belongs-to-collection" && metadata.Series == "":
+			metadata.Series, collectionID = meta.Value, meta.ID
+		}
+	}
+	// EPUB 3 numbers a collection with a refining "group-position" meta.
+	for _, meta := range packageDocument.Metadata.Metas {
+		if collectionID != "" && meta.Property == "group-position" && meta.Refines == "#"+collectionID {
+			metadata.SeriesIndex, _ = strconv.ParseFloat(strings.TrimSpace(meta.Value), 64)
+		}
+	}
+	coverHref := ""
+	for _, item := range packageDocument.Items {
+		if strings.Contains(" "+item.Properties+" ", " cover-image ") || (coverID != "" && item.ID == coverID && strings.HasPrefix(item.MediaType, "image/")) {
+			coverHref = item.Href
+			break
+		}
+	}
+	if coverHref != "" {
+		if unescaped, err := url.PathUnescape(coverHref); err == nil {
+			coverHref = unescaped
+		}
+		coverPath := path.Join(path.Dir(packagePath), coverHref)
+		if entry, ok := entries[coverPath]; ok && safeArchivePath(coverPath) {
+			if cover, err := readZipEntry(entry, maxCoverBytes); err == nil {
+				metadata.Cover = cover
+			}
+		}
+	}
+	return metadata, nil
+}
+
+// epubMetadata is what an EPUB says about itself. Every field is optional.
+type epubMetadata struct {
+	Title       string
+	Authors     []string
+	Description string
+	Series      string
+	SeriesIndex float64
+	Cover       []byte
+}
+
+var markupTag = regexp.MustCompile(`<[^>]*>`)
+
+// sanitized trims the metadata to what validMetadata accepts, so a sloppy
+// package document can never fail an otherwise valid import.
+func (m epubMetadata) sanitized() epubMetadata {
+	clip := func(value string, limit int) string {
+		value = strings.Join(strings.Fields(value), " ")
+		if utf8.RuneCountInString(value) > limit {
+			value = string([]rune(value)[:limit])
+		}
+		return value
+	}
+	authors := make([]string, 0, len(m.Authors))
+	for _, author := range normalizeAuthors(m.Authors) {
+		if len(authors) < 50 {
+			authors = append(authors, clip(author, 200))
+		}
+	}
+	// Descriptions are often HTML; keep the text.
+	description := html.UnescapeString(markupTag.ReplaceAllString(m.Description, " "))
+	index := m.SeriesIndex
+	if index < 0 || index > 100_000 {
+		index = 0
+	}
+	return epubMetadata{
+		Title:       m.Title,
+		Authors:     authors,
+		Description: clip(description, 10_000),
+		Series:      clip(m.Series, 300),
+		SeriesIndex: index,
+	}
 }
 
 func readZipEntry(entry *zip.File, limit int64) ([]byte, error) {

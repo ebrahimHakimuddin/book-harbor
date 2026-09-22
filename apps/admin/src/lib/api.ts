@@ -33,6 +33,9 @@ export interface Book {
   description: string
   authors: string[]
   coverUrl: string
+  series: string
+  seriesIndex: number
+  tags: string[]
   source?: { provider: string; id: string }
   createdAt: string
   updatedAt: string
@@ -50,6 +53,9 @@ export interface BookUpdate {
   description?: string
   authors?: string[]
   coverUrl?: string
+  series?: string
+  seriesIndex?: number
+  tags?: string[]
   source?: { provider: string; id: string }
 }
 
@@ -59,6 +65,7 @@ export interface Instance {
   setupRequired: boolean
   formats: string[]
   invitesEnabled: boolean
+  passwordResetEnabled: boolean
   metadataEnabled: boolean
 }
 

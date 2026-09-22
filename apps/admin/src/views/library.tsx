@@ -58,7 +58,7 @@ export function LibraryView() {
         }
       />
 
-      {importing && <ImportPanel onCancel={() => setImporting(false)} onDone={(book) => { setImporting(false); setSelectedId(book.id) }} />}
+      {importing && <ImportPanel onCancel={() => setImporting(false)} onDone={(book) => { setImporting(false); if (book) setSelectedId(book.id) }} />}
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <div className="relative w-full max-w-sm">

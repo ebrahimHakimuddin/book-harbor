@@ -16,12 +16,13 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 
-interface Form { title: string; subtitle: string; authors: string; description: string; coverUrl: string; source?: { provider: string; id: string } }
+interface Form { title: string; subtitle: string; authors: string; description: string; coverUrl: string; series: string; seriesIndex: string; tags: string; source?: { provider: string; id: string } }
 
 const isUploaded = (book: Book) => book.coverUrl.startsWith("/")
 const fromBook = (book: Book): Form => ({
   title: book.title, subtitle: book.subtitle, authors: book.authors.join("\n"), description: book.description,
-  coverUrl: isUploaded(book) ? "" : book.coverUrl, source: book.source,
+  coverUrl: isUploaded(book) ? "" : book.coverUrl, series: book.series ?? "", seriesIndex: book.seriesIndex ? String(book.seriesIndex) : "",
+  tags: (book.tags ?? []).join(", "), source: book.source,
 })
 const splitAuthors = (value: string) => value.split(/\n|,/).map((v) => v.trim()).filter(Boolean)
 
@@ -92,6 +93,7 @@ function DetailsTab({ book, form, set, dirty, onSaved, onDeleted }: {
       id: book.id,
       update: {
         title: form.title, subtitle: form.subtitle, description: form.description, authors: splitAuthors(form.authors),
+        series: form.series, seriesIndex: Number(form.seriesIndex) || 0, tags: splitAuthors(form.tags),
         ...(!uploaded && form.coverUrl !== book.coverUrl ? { coverUrl: form.coverUrl } : {}),
         ...(form.source ? { source: form.source } : {}),
       },
@@ -113,6 +115,11 @@ function DetailsTab({ book, form, set, dirty, onSaved, onDeleted }: {
         <Field label="Title"><Input value={form.title} onChange={(e) => set({ title: e.target.value })} maxLength={300} required /></Field>
         <Field label="Subtitle"><Input value={form.subtitle} onChange={(e) => set({ subtitle: e.target.value })} maxLength={300} /></Field>
         <Field label="Authors"><Textarea value={form.authors} onChange={(e) => set({ authors: e.target.value })} rows={2} maxLength={2000} placeholder="One author per line" /></Field>
+        <div className="grid grid-cols-[1fr_7rem] gap-3">
+          <Field label="Series"><Input value={form.series} onChange={(e) => set({ series: e.target.value })} maxLength={300} placeholder="Not part of a series" /></Field>
+          <Field label="Number"><Input type="number" inputMode="decimal" min={0} step="any" value={form.seriesIndex} onChange={(e) => set({ seriesIndex: e.target.value })} disabled={!form.series.trim()} placeholder="—" /></Field>
+        </div>
+        <Field label="Tags" hint="Separate with commas. Readers can filter the library by tag."><Input value={form.tags} onChange={(e) => set({ tags: e.target.value })} maxLength={2000} placeholder="Fantasy, Book club" /></Field>
         <Field label="Description"><Textarea value={form.description} onChange={(e) => set({ description: e.target.value })} rows={6} maxLength={10000} /></Field>
         <Field label="Cover URL" hint={uploaded ? "An uploaded cover is in use. Remove it on the Cover & files tab to use a web address instead." : undefined}>
           <Input type="url" value={form.coverUrl} onChange={(e) => set({ coverUrl: e.target.value })} maxLength={2048} placeholder={uploaded ? "Using uploaded image" : "https://"} disabled={uploaded} />

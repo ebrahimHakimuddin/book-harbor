@@ -3,6 +3,8 @@ package httpapi
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -87,7 +89,7 @@ func TestAdminExportContainsBooksAndScrubbedDatabase(t *testing.T) {
 	var got bytes.Buffer
 	got.ReadFrom(rc)
 	rc.Close()
-	if !bytes.Equal(got.Bytes(), testPDF) {
+	if sum := sha256.Sum256(got.Bytes()); hex.EncodeToString(sum[:]) != book.Editions[0].SHA256 {
 		t.Fatal("exported file differs from the original")
 	}
 	var manifest struct{ Books []struct{ BookID string } }

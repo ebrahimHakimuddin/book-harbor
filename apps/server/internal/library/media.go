@@ -37,6 +37,9 @@ func (s *Store) AddEdition(ctx context.Context, bookID, rawFilename string, cont
 		return Book{}, err
 	}
 	defer os.Remove(staged.path)
+	if err := s.checkDuplicate(ctx, staged.checksum); err != nil {
+		return Book{}, err
+	}
 	editionID, err := newID("ed_")
 	if err != nil {
 		return Book{}, err
