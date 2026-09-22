@@ -55,6 +55,13 @@ class LibraryModelTest {
         assertEquals(listOf("A" to listOf("a1", "a2"), "B" to listOf("x1")), seriesGroups(listOf(a2, b1, a1, anon)).map { (name, books) -> name to books.map { it.id } })
     }
 
+    @Test fun chapterPreviewCentersNearTheCurrentChapterAndStaysInBounds() {
+        assertEquals(listOf(0, 1, 2), previewWindow(3, 2, 5))
+        assertEquals(listOf(0, 1, 2, 3, 4), previewWindow(150, 0, 5))
+        assertEquals(listOf(40, 41, 42, 43, 44), previewWindow(150, 41, 5))
+        assertEquals(listOf(145, 146, 147, 148, 149), previewWindow(150, 149, 5))
+    }
+
     @Test fun opensADownloadedEditionFirstThenPrefersEpub() {
         assertEquals("e3", preferredEdition(hail) { false }!!.id)
         assertEquals("e2", preferredEdition(hail) { it.id == "e2" }!!.id)

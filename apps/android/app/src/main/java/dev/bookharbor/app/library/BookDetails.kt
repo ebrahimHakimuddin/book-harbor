@@ -103,7 +103,7 @@ fun BookDetailsPage(controller: AppController, catalog: LibraryUiState.Catalog, 
     val haptics = LocalHapticFeedback.current
     var addToList by remember { mutableStateOf(false) }
     androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
             IconButton(onClick = onDismiss, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp).offset(x = (-12).dp)) {
                 Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
@@ -253,73 +253,144 @@ private fun JumpToSection(controller: AppController, catalog: LibraryUiState.Cat
         val explicit = controller.chapterMarks(book.id)
         chapterReadStates(list.size, explicit, if (finishedBook) list.size else current)
     }
+    val readCount = states.count { it }
+    val open: (Int) -> Unit = { index ->
+        haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+        onOpened()
+        controller.open(book, edition, Locator.epub(EpubPosition.atChapter(index).toCfi()))
+    }
+    var showAll by rememberSaveable { mutableStateOf(false) }
+
+    // A short preview around where the reader is; every chapter -- search, filters, sort, and
+    // marking -- lives on its own page, so a 300-chapter book is as easy as a 5-chapter one.
+    Row(Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
+        Column(Modifier.weight(1f)) {
+            Text("CHAPTERS", Modifier.semantics { heading() }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, letterSpacing = 1.2.sp)
+            Text("$readCount of ${list.size} read", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    val preview = remember(list.size, current) { previewWindow(list.size, current ?: 0, PREVIEW_SIZE) }
+    GroupCard {
+        preview.forEach { index ->
+            ChapterRow(index + 1, list[index], states[index], index == current, selecting = false, selected = false, onTap = { open(index) }, onLongPress = { showAll = true })
+            RowDivider(inset = 60.dp)
+        }
+        AppRow(
+            if (list.size > preview.size) "All ${list.size} chapters" else "Manage chapters",
+            "Search, filter, and mark chapters read", icon = BrandIcons.List, onClick = { showAll = true },
+        )
+    }
+    if (showAll) ChaptersPage(book.title, list, states, current, controller, book, onOpen = { index -> showAll = false; open(index) }, onBack = { showAll = false })
+}
+
+private const val PREVIEW_SIZE = 5
+
+/** Up to [size] chapter indices starting just before [current], shifted to stay within the book. */
+internal fun previewWindow(count: Int, current: Int, size: Int): List<Int> {
+    if (count <= size) return (0 until count).toList()
+    val start = (current - 1).coerceIn(0, count - size)
+    return (start until start + size).toList()
+}
+
+/**
+ * Every chapter on a page of its own: search by title, read/unread filter, sort, and multi-select
+ * with a fixed action bar. Opens scrolled to the reader's current chapter.
+ */
+@Composable
+private fun ChaptersPage(
+    bookTitle: String,
+    titles: List<String>,
+    states: List<Boolean>,
+    current: Int?,
+    controller: AppController,
+    book: Book,
+    onOpen: (Int) -> Unit,
+    onBack: () -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(ChapterFilter.All) }
     var descending by rememberSaveable { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<Int>()) }
     val selecting = selected.isNotEmpty()
-    androidx.activity.compose.BackHandler(enabled = selecting) { selected = emptySet() }
+    androidx.activity.compose.BackHandler { if (selecting) selected = emptySet() else onBack() }
     val readCount = states.count { it }
-    val visible = remember(states, filter, descending) {
-        list.indices.filter { when (filter) { ChapterFilter.All -> true; ChapterFilter.Unread -> !states[it]; ChapterFilter.Read -> states[it] } }
-            .let { if (descending) it.reversed() else it }
+    val visible = remember(states, filter, descending, query) {
+        val needle = query.trim().lowercase()
+        titles.indices.filter { index ->
+            val matchesFilter = when (filter) { ChapterFilter.All -> true; ChapterFilter.Unread -> !states[index]; ChapterFilter.Read -> states[index] }
+            matchesFilter && (needle.isEmpty() || titles[index].lowercase().contains(needle) || "${index + 1}" == needle)
+        }.let { if (descending) it.reversed() else it }
     }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = visible.indexOf(current ?: 0).coerceAtLeast(0))
 
-    // Header: counts and sort, or -- while selecting -- the selection's actions.
-    Row(Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 10.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-        Crossfade(selecting, Modifier.weight(1f), label = "chapter header") { isSelecting ->
-            if (!isSelecting) Column {
-                Text("CHAPTERS", Modifier.semantics { heading() }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, letterSpacing = 1.2.sp)
-                Text("$readCount of ${list.size} read", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else Text("${selected.size} selected", style = MaterialTheme.typography.titleMedium)
-        }
-        if (!selecting) {
-            IconButton(onClick = { descending = !descending }) {
-                Icon(BrandIcons.Sort, if (descending) "Sorted last to first. Sort first to last" else "Sorted first to last. Sort last to first", Modifier.size(20.dp).graphicsLayer { scaleY = if (descending) -1f else 1f }, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            TextButton(onClick = { selected = emptySet() }) { Text("Cancel") }
-        }
-    }
-    if (!selecting) Row(Modifier.padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ChapterFilter.entries.forEach { option ->
-            val count = when (option) { ChapterFilter.All -> list.size; ChapterFilter.Unread -> list.size - readCount; ChapterFilter.Read -> readCount }
-            ShelfChip(option.label, count, filter == option) { filter = option }
-        }
-    } else Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SecondaryButton("Mark read", onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChapters(book, selected, true); selected = emptySet() }, modifier = Modifier.weight(1f))
-            SecondaryButton("Mark unread", onClick = { controller.markChapters(book, selected, false); selected = emptySet() }, modifier = Modifier.weight(1f))
-        }
-        if (selected.size == 1) {
-            val upTo = selected.first()
-            SecondaryButton(
-                if (upTo == 0) "Mark chapter 1 as read" else "Mark chapters 1–${upTo + 1} as read",
-                onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChaptersReadUpTo(book, upTo); selected = emptySet() },
-                modifier = Modifier.fillMaxWidth(), icon = BrandIcons.Check,
-            )
-        }
-    }
-
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = ((current ?: 0) - 2).coerceAtLeast(0).coerceAtMost((visible.size - 1).coerceAtLeast(0)))
-    GroupCard {
-        if (visible.isEmpty()) Text(
-            if (filter == ChapterFilter.Unread) "Every chapter is read." else "No chapters marked read yet.",
-            Modifier.padding(20.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        // Bounded height: the sheet scrolls as a whole, the chapter list scrolls within it.
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), state = state) {
-            itemsIndexed(visible, key = { _, index -> index }) { position, index ->
-                ChapterRow(
-                    number = index + 1, title = list[index], read = states[index], isCurrent = index == current,
-                    selecting = selecting, selected = index in selected,
-                    onTap = {
-                        if (selecting) selected = if (index in selected) selected - index else selected + index
-                        else { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onOpened(); controller.open(book, edition, Locator.epub(EpubPosition.atChapter(index).toCfi())) }
-                    },
-                    onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); selected = selected + index },
-                    modifier = Modifier.animateItem(),
-                )
-                if (position < visible.lastIndex) RowDivider(inset = 60.dp)
+    androidx.compose.ui.window.Dialog(onDismissRequest = onBack, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { if (selecting) selected = emptySet() else onBack() }) {
+                        Icon(if (selecting) BrandIcons.Close else androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, if (selecting) "Cancel selection" else "Back")
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(if (selecting) "${selected.size} selected" else "Chapters", style = MaterialTheme.typography.titleLarge)
+                        if (!selecting) Text("$bookTitle · $readCount of ${titles.size} read", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (selecting) TextButton(onClick = { selected = visible.toSet() }) { Text("Select all") }
+                    else IconButton(onClick = { descending = !descending }) {
+                        Icon(BrandIcons.Sort, if (descending) "Sorted last to first. Sort first to last" else "Sorted first to last. Sort last to first", Modifier.size(20.dp).graphicsLayer { scaleY = if (descending) -1f else 1f })
+                    }
+                }
+                Column(Modifier.padding(horizontal = 20.dp)) {
+                    dev.bookharbor.app.ui.SearchPill(query, { query = it }, "Find a chapter by name or number", onSearch = {})
+                    Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ChapterFilter.entries.forEach { option ->
+                            val count = when (option) { ChapterFilter.All -> titles.size; ChapterFilter.Unread -> titles.size - readCount; ChapterFilter.Read -> readCount }
+                            ShelfChip(option.label, count, filter == option) { filter = option }
+                        }
+                    }
+                }
+                LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 20.dp, end = 20.dp, bottom = 16.dp)) {
+                    if (visible.isEmpty()) item {
+                        Text(
+                            when { query.isNotBlank() -> "No chapter matches \"$query\"."; filter == ChapterFilter.Unread -> "Every chapter is read."; else -> "No chapters marked read yet." },
+                            Modifier.padding(vertical = 24.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    itemsIndexed(visible, key = { _, index -> index }) { position, index ->
+                        val shape = when {
+                            visible.size == 1 -> RoundedCornerShape(20.dp)
+                            position == 0 -> RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+                            position == visible.lastIndex -> RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
+                            else -> RoundedCornerShape(0.dp)
+                        }
+                        Column(Modifier.animateItem().clip(shape).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                            ChapterRow(
+                                number = index + 1, title = titles[index], read = states[index], isCurrent = index == current,
+                                selecting = selecting, selected = index in selected,
+                                onTap = { if (selecting) selected = if (index in selected) selected - index else selected + index else onOpen(index) },
+                                onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); selected = selected + index },
+                            )
+                            if (position < visible.lastIndex) RowDivider(inset = 60.dp)
+                        }
+                    }
+                }
+                // The selection's actions stay put at the bottom, however far the list scrolls.
+                AnimatedVisibility(selecting) {
+                    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SecondaryButton("Mark read", onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChapters(book, selected, true); selected = emptySet() }, modifier = Modifier.weight(1f))
+                            SecondaryButton("Mark unread", onClick = { controller.markChapters(book, selected, false); selected = emptySet() }, modifier = Modifier.weight(1f))
+                        }
+                        if (selected.size == 1) {
+                            val upTo = selected.first()
+                            SecondaryButton(
+                                if (upTo == 0) "Mark chapter 1 as read" else "Mark chapters 1–${upTo + 1} as read",
+                                onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChaptersReadUpTo(book, upTo); selected = emptySet() },
+                                modifier = Modifier.fillMaxWidth(), icon = BrandIcons.Check,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
