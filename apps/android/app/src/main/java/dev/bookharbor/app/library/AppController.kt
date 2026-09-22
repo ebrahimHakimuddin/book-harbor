@@ -85,6 +85,9 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         private set
     var profileUi by mutableStateOf(ProfileUiState())
         private set
+    /** The friend page on screen: null while loading, or after an error ([friendsUi] has it). */
+    var friendProfile by mutableStateOf<FriendProfile?>(null)
+        private set
     var bookRequestsUi by mutableStateOf(BookRequestsUiState())
         private set
     var listsUi by mutableStateOf(ListsUiState())
@@ -501,6 +504,17 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         }
     }
 
+    fun loadFriendProfile(userId: String) {
+        if (friendProfile?.friend?.userId != userId) friendProfile = null
+        scope.launch(Dispatchers.IO) {
+            try {
+                friendProfile = graph.friends.profile(userId)
+            } catch (error: Exception) {
+                friendsUi = friendsUi.copy(error = error.message ?: "Couldn't load that profile")
+            }
+        }
+    }
+
     fun removeFriend(userId: String) {
         scope.launch(Dispatchers.IO) {
             try {
@@ -635,7 +649,17 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     fun closeList() { listsUi = listsUi.copy(openList = null, booksInOpenList = emptyList()) }
 
     /** Adding is idempotent server-side, so this never needs to check membership first. */
+    /** Shows a membership change at once; the reload after the server call reconciles it. */
+    private fun optimisticMembership(listId: String, bookId: String, member: Boolean) {
+        listsUi = listsUi.copy(lists = listsUi.lists.map { list ->
+            if (list.id != listId || (bookId in list.bookIds) == member) list
+            else if (member) list.copy(bookIds = listOf(bookId) + list.bookIds, bookCount = list.bookCount + 1)
+            else list.copy(bookIds = list.bookIds - bookId, bookCount = (list.bookCount - 1).coerceAtLeast(0))
+        })
+    }
+
     fun addBookToList(listId: String, book: Book) {
+        optimisticMembership(listId, book.id, true)
         scope.launch(Dispatchers.IO) {
             try {
                 graph.lists.addBook(listId, book.id)
@@ -648,6 +672,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     }
 
     fun removeBookFromList(listId: String, bookId: String) {
+        optimisticMembership(listId, bookId, false)
         scope.launch(Dispatchers.IO) {
             try {
                 graph.lists.removeBook(listId, bookId)

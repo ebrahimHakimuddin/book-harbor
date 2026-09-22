@@ -14,6 +14,9 @@ type listResponse struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	BookCount int    `json:"bookCount"`
+	// BookIDs is included in the index (newest first) so clients can show covers and membership
+	// without fetching each list.
+	BookIDs []string `json:"bookIds,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }
@@ -43,6 +46,14 @@ func (s *server) userLists(w http.ResponseWriter, r *http.Request) {
 		responses := make([]listResponse, len(items))
 		for i, item := range items {
 			responses[i] = newListResponse(item)
+			// ponytail: one query per list, like the rest of this API; lists per reader stay small.
+			ids, err := s.lists.BookIDs(r.Context(), principal.User.ID, item.ID)
+			if err != nil {
+				s.logger.Error("list book ids", "error", err)
+				writeError(w, http.StatusInternalServerError, "internal_error", "unable to list your lists")
+				return
+			}
+			responses[i].BookIDs = ids
 		}
 		writeJSON(w, http.StatusOK, struct {
 			Items []listResponse `json:"items"`

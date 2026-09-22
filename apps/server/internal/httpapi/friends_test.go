@@ -97,11 +97,36 @@ func TestFriendsFlowEndToEnd(t *testing.T) {
 		t.Fatalf("bob finishedThisYear = %v, want 1", bobEntry.FinishedThisYear)
 	}
 
+	// Bob's profile shows what he finished; after Alice starts the same book, they share it.
+	bobID := bobUserID(t, handler, admin.AccessToken)
+	profile := decodeFriendProfile(t, call(t, handler, alice.AccessToken, http.MethodGet, "/api/v1/friends/"+bobID, ""))
+	if len(profile.Finished) != 1 || profile.Finished[0].BookID != book.ID || profile.FinishedTotal == nil || *profile.FinishedTotal != 1 {
+		t.Fatalf("bob profile finished = %#v total = %v", profile.Finished, profile.FinishedTotal)
+	}
+	if profile.BooksInCommon == nil || *profile.BooksInCommon != 0 {
+		t.Fatalf("books in common before alice reads = %v", profile.BooksInCommon)
+	}
+	postProgressSync(t, handler, alice.AccessToken, map[string]any{
+		"cursor": 0,
+		"changes": []any{map[string]any{
+			"eventId": "alice_start", "deviceId": "alice_device", "bookId": book.ID, "editionId": book.Editions[0].ID,
+			"occurredAt": time.Now().UTC().Add(-time.Minute), "locator": map[string]any{"kind": "pdf-page", "page": 3}, "percentage": 0.2,
+		}},
+	})
+	profile = decodeFriendProfile(t, call(t, handler, alice.AccessToken, http.MethodGet, "/api/v1/friends/"+bobID, ""))
+	if profile.BooksInCommon == nil || *profile.BooksInCommon != 1 {
+		t.Fatalf("books in common after alice reads = %v", profile.BooksInCommon)
+	}
+
 	// Bob turns sharing back off; Alice loses visibility into his activity again.
 	call(t, handler, bob.AccessToken, http.MethodPut, "/api/v1/me/social-settings", `{"activityVisible":false,"goalYear":0,"goalBooks":0}`)
 	aliceFriends = decodeFriends(t, call(t, handler, alice.AccessToken, http.MethodGet, "/api/v1/friends", ""))
 	if aliceFriends.Items[0].FinishedThisYear != nil {
 		t.Fatalf("bob finishedThisYear after opting out = %v, want nil", aliceFriends.Items[0].FinishedThisYear)
+	}
+	profile = decodeFriendProfile(t, call(t, handler, alice.AccessToken, http.MethodGet, "/api/v1/friends/"+bobID, ""))
+	if len(profile.Finished) != 0 || profile.FinishedTotal != nil || profile.BooksInCommon != nil {
+		t.Fatalf("private profile leaked activity: %#v", profile)
 	}
 
 	// Either side can unfriend.
@@ -113,6 +138,21 @@ func TestFriendsFlowEndToEnd(t *testing.T) {
 	if len(aliceFriends.Items) != 0 {
 		t.Fatalf("alice friends after unfriend = %#v, want none", aliceFriends.Items)
 	}
+	if r := call(t, handler, alice.AccessToken, http.MethodGet, "/api/v1/friends/"+bobID, ""); r.Code != http.StatusNotFound {
+		t.Fatalf("former friend's profile status = %d, want 404", r.Code)
+	}
+}
+
+func decodeFriendProfile(t *testing.T, response *httptest.ResponseRecorder) friendProfileResponse {
+	t.Helper()
+	if response.Code != http.StatusOK {
+		t.Fatalf("profile status = %d; body = %s", response.Code, response.Body.String())
+	}
+	var profile friendProfileResponse
+	if err := json.NewDecoder(response.Body).Decode(&profile); err != nil {
+		t.Fatalf("decode profile: %v", err)
+	}
+	return profile
 }
 
 func TestFriendRequestDeclineAndCancel(t *testing.T) {

@@ -13,6 +13,30 @@ data class Friend(
     val finishedThisYear: Int? = null,
     val goalBooks: Int? = null,
 )
+data class FinishedBook(val bookId: String, val title: String, val coverUrl: String, val finishedAt: String)
+
+/** A friend's page: their shared reading, or just who they are when they keep it private. */
+data class FriendProfile(
+    val friend: Friend,
+    val readingNow: List<FriendActivityBook>,
+    val finished: List<FinishedBook>,
+    val finishedTotal: Int?,
+    val booksInCommon: Int?,
+)
+
+fun parseFriendProfile(json: String): FriendProfile {
+    val root = JSONObject(json)
+    val reading = root.optJSONArray("readingNow") ?: JSONArray()
+    val finished = root.optJSONArray("finished") ?: JSONArray()
+    return FriendProfile(
+        friend = parseFriend(root),
+        readingNow = (0 until reading.length()).map { parseActivityBook(reading.getJSONObject(it)) },
+        finished = (0 until finished.length()).map { i -> finished.getJSONObject(i).let { FinishedBook(it.getString("bookId"), it.optString("title"), it.optString("coverUrl"), it.optString("finishedAt")) } },
+        finishedTotal = if (root.isNull("finishedTotal")) null else root.optInt("finishedTotal"),
+        booksInCommon = if (root.isNull("booksInCommon")) null else root.optInt("booksInCommon"),
+    )
+}
+
 data class FriendRequest(val userId: String, val displayName: String, val email: String, val direction: String, val createdAt: String)
 data class FriendRequests(val incoming: List<FriendRequest>, val outgoing: List<FriendRequest>)
 data class SocialSettings(val activityVisible: Boolean, val goalYear: Int, val goalBooks: Int, val finishedThisYear: Int = 0)
@@ -75,6 +99,8 @@ class FriendsClient(private val api: ApiClient) {
     fun removeRequest(userId: String) {
         api.authorized("/api/v1/friends/requests/$userId", "DELETE")
     }
+
+    fun profile(userId: String): FriendProfile = parseFriendProfile(api.authorized("/api/v1/friends/$userId"))
 
     fun removeFriend(userId: String) {
         api.authorized("/api/v1/friends/$userId", "DELETE")

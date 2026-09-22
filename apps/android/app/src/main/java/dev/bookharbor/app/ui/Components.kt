@@ -196,3 +196,31 @@ fun EmptyState(icon: ImageVector, title: String, body: String, modifier: Modifie
         action?.let { Box(Modifier.padding(top = 8.dp)) { it() } }
     }
 }
+
+/** A rounded search field matching the library's search bar, for searches that run on submit. */
+@Composable
+fun SearchPill(query: String, onQuery: (String) -> Unit, placeholder: String, onSearch: () -> Unit, modifier: Modifier = Modifier, busy: Boolean = false) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier.fillMaxWidth().height(52.dp).clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.surfaceVariant).padding(start = 18.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(BrandIcons.Search, null, Modifier.size(20.dp), tint = muted)
+        androidx.compose.foundation.text.BasicTextField(
+            query, onQuery, Modifier.weight(1f).padding(horizontal = 12.dp),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.secondary),
+            keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+            decorationBox = { field ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (query.isEmpty()) Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    field()
+                }
+            },
+        )
+        if (busy) CircularProgressIndicator(Modifier.padding(end = 12.dp).size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
+        else if (query.isNotBlank()) androidx.compose.material3.TextButton(onClick = onSearch) { Text("Search") }
+    }
+}

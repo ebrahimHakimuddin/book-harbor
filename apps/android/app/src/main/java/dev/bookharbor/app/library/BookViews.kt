@@ -304,49 +304,6 @@ internal fun BookMenu(
     if (addToListOpen) AddToListDialog(controller, book, onDismiss = { addToListOpen = false })
 }
 
-@Composable
-internal fun AddToListDialog(controller: AppController, book: Book, onDismiss: () -> Unit) {
-    LaunchedEffect(Unit) { controller.loadLists() }
-    val lists = controller.listsUi.lists
-    var newListName by rememberSaveable { mutableStateOf<String?>(null) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add \"${book.title}\" to a list") },
-        text = {
-            Column {
-                if (lists.isEmpty()) Text("No lists yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                lists.forEach { list ->
-                    TextButton(onClick = { controller.addBookToList(list.id, book); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
-                        Text(list.name, Modifier.weight(1f), textAlign = TextAlign.Start)
-                    }
-                }
-                TextButton(onClick = { newListName = "" }, modifier = Modifier.fillMaxWidth()) { Text("New list…", Modifier.weight(1f), textAlign = TextAlign.Start) }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
-    if (newListName != null) {
-        var name by rememberSaveable(newListName) { mutableStateOf(newListName.orEmpty()) }
-        AlertDialog(
-            onDismissRequest = { newListName = null },
-            title = { Text("New list") },
-            text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Name") }, modifier = Modifier.fillMaxWidth()) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        controller.createList(name.trim()) { created -> controller.addBookToList(created.id, book) }
-                        newListName = null
-                        onDismiss()
-                    },
-                    enabled = name.isNotBlank(),
-                ) { Text("Create") }
-            },
-            dismissButton = { TextButton(onClick = { newListName = null }) { Text("Cancel") } },
-        )
-    }
-}
-
 /**
  * Tap shows the book's details; press and hold (or TalkBack's long-press action) opens its quick
  * actions with a haptic tick -- the same menu as the "⋮". Covers ([scale]) sink under the finger.

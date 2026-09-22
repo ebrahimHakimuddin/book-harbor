@@ -467,3 +467,40 @@ func decodeLocator(kind, value string) (Locator, error) {
 	}
 	return Locator{}, fmt.Errorf("unknown stored locator kind %q", kind)
 }
+
+// FinishedBook is one book a user finished, and when.
+type FinishedBook struct {
+	BookID     string
+	FinishedAt time.Time
+}
+
+// FinishedBooks returns the user's finished books, most recently finished first, and how many
+// they have finished in total.
+func (s *Store) FinishedBooks(ctx context.Context, userID string, limit int) ([]FinishedBook, int, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reading_progress WHERE user_id = ? AND finished_at IS NOT NULL`, userID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count finished books: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT book_id, finished_at FROM reading_progress
+		WHERE user_id = ? AND finished_at IS NOT NULL
+		ORDER BY finished_at DESC LIMIT ?
+	`, userID, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list finished books: %w", err)
+	}
+	defer rows.Close()
+	books := make([]FinishedBook, 0)
+	for rows.Next() {
+		var book FinishedBook
+		var finishedAt string
+		if err := rows.Scan(&book.BookID, &finishedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan finished book: %w", err)
+		}
+		if book.FinishedAt, err = time.Parse(time.RFC3339Nano, finishedAt); err != nil {
+			return nil, 0, fmt.Errorf("parse finished time: %w", err)
+		}
+		books = append(books, book)
+	}
+	return books, total, rows.Err()
+}

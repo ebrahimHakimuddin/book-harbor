@@ -3,9 +3,13 @@ package dev.bookharbor.app.library
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class BookList(val id: String, val name: String, val bookCount: Int)
+/** A reader's list; [bookIds] (newest first) comes with the index, for covers and membership. */
+data class BookList(val id: String, val name: String, val bookCount: Int, val bookIds: List<String> = emptyList())
 
-private fun parseList(json: JSONObject) = BookList(id = json.getString("id"), name = json.optString("name"), bookCount = json.optInt("bookCount"))
+private fun parseList(json: JSONObject) = BookList(
+    id = json.getString("id"), name = json.optString("name"), bookCount = json.optInt("bookCount"),
+    bookIds = json.optJSONArray("bookIds")?.let { ids -> (0 until ids.length()).map { ids.getString(it) } }.orEmpty(),
+)
 
 fun parseLists(json: String): List<BookList> {
     val items = JSONObject(json).optJSONArray("items") ?: JSONArray()

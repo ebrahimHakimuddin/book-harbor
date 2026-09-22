@@ -289,8 +289,12 @@ func (s *server) friend(w http.ResponseWriter, r *http.Request) {
 		notFound(w, r)
 		return
 	}
+	if r.Method == http.MethodGet {
+		s.friendProfile(w, r, principal.User.ID, friendID)
+		return
+	}
 	if r.Method != http.MethodDelete {
-		writeMethodNotAllowed(w, "DELETE")
+		writeMethodNotAllowed(w, "GET, DELETE")
 		return
 	}
 	if err := s.social.RemoveFriend(r.Context(), principal.User.ID, friendID); err != nil {
@@ -385,4 +389,96 @@ func (s *server) writeSocialError(w http.ResponseWriter, err error) {
 		s.logger.Error("social request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to complete the request")
 	}
+}
+
+type finishedBookResponse struct {
+	BookID     string `json:"bookId"`
+	Title      string `json:"title"`
+	CoverURL   string `json:"coverUrl"`
+	FinishedAt string `json:"finishedAt"`
+}
+
+type friendProfileResponse struct {
+	friendResponse
+	ReadingNow    []friendActivityBookResponse `json:"readingNow"`
+	Finished      []finishedBookResponse       `json:"finished"`
+	FinishedTotal *int                         `json:"finishedTotal"`
+	// BooksInCommon counts books both people have started or finished.
+	BooksInCommon *int `json:"booksInCommon"`
+}
+
+const friendProfileLimit = 50
+
+// friendProfile serves GET /friends/{id}: a friend's reading, when they share it. Anyone who
+// isn't an accepted friend gets 404, so the route can't be used to probe other accounts.
+func (s *server) friendProfile(w http.ResponseWriter, r *http.Request, viewerID, friendID string) {
+	friends, err := s.social.AreFriends(r.Context(), viewerID, friendID)
+	if err != nil {
+		s.logger.Error("check friendship", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read friend")
+		return
+	}
+	if !friends {
+		notFound(w, r)
+		return
+	}
+	base, err := s.newFriendResponse(r, viewerID, friendID)
+	if err != nil {
+		s.logger.Error("build friend profile", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read friend")
+		return
+	}
+	profile := friendProfileResponse{friendResponse: base, ReadingNow: []friendActivityBookResponse{}, Finished: []finishedBookResponse{}}
+	canView, err := s.social.CanViewActivity(r.Context(), viewerID, friendID)
+	if err != nil || !canView {
+		if err != nil {
+			s.logger.Error("check activity visibility", "error", err)
+		}
+		writeJSON(w, http.StatusOK, profile)
+		return
+	}
+	snapshot, err := s.reading.SnapshotForUser(r.Context(), friendID, 200)
+	if err == nil {
+		for _, progress := range snapshot {
+			if progress.Percentage <= 0 || progress.Percentage >= reading.FinishedThreshold || len(profile.ReadingNow) >= friendProfileLimit {
+				continue
+			}
+			if book, err := s.library.Get(r.Context(), progress.BookID); err == nil {
+				profile.ReadingNow = append(profile.ReadingNow, friendActivityBookResponse{
+					BookID: book.ID, Title: book.Title, CoverURL: book.CoverURL,
+					Percentage: progress.Percentage, UpdatedAt: progress.OccurredAt.Format(time.RFC3339Nano),
+				})
+			}
+		}
+	}
+	finished, total, err := s.reading.FinishedBooks(r.Context(), friendID, friendProfileLimit)
+	if err == nil {
+		profile.FinishedTotal = &total
+		for _, item := range finished {
+			if book, err := s.library.Get(r.Context(), item.BookID); err == nil {
+				profile.Finished = append(profile.Finished, finishedBookResponse{
+					BookID: book.ID, Title: book.Title, CoverURL: book.CoverURL, FinishedAt: item.FinishedAt.Format(time.RFC3339Nano),
+				})
+			}
+		}
+	}
+	// ponytail: two bounded snapshots intersected in memory; fine at a household's library size.
+	mine, err := s.reading.SnapshotForUser(r.Context(), viewerID, 1000)
+	if err == nil {
+		theirs, _ := s.reading.SnapshotForUser(r.Context(), friendID, 1000)
+		started := make(map[string]bool, len(mine))
+		for _, progress := range mine {
+			if progress.Percentage > 0 {
+				started[progress.BookID] = true
+			}
+		}
+		common := 0
+		for _, progress := range theirs {
+			if progress.Percentage > 0 && started[progress.BookID] {
+				common++
+			}
+		}
+		profile.BooksInCommon = &common
+	}
+	writeJSON(w, http.StatusOK, profile)
 }

@@ -234,6 +234,20 @@ func (s *Store) listRequests(ctx context.Context, userID, directionFilter string
 	return requests, rows.Err()
 }
 
+// AreFriends reports whether a and b are accepted friends.
+func (s *Store) AreFriends(ctx context.Context, a, b string) (bool, error) {
+	lo, hi := canonicalPair(a, b)
+	var status string
+	err := s.db.QueryRowContext(ctx, `SELECT status FROM friendships WHERE user_id = ? AND friend_id = ?`, lo, hi).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check friendship: %w", err)
+	}
+	return status == "accepted", nil
+}
+
 // CanViewActivity reports whether viewerID may see targetID's reading activity:
 // they must be accepted friends, and targetID must have opted in to sharing.
 func (s *Store) CanViewActivity(ctx context.Context, viewerID, targetID string) (bool, error) {

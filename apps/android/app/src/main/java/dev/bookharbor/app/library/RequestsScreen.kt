@@ -37,86 +37,106 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import dev.bookharbor.app.ui.AppRow
+import dev.bookharbor.app.ui.BrandIcons
+import dev.bookharbor.app.ui.EmptyState
+import dev.bookharbor.app.ui.GroupCard
+import dev.bookharbor.app.ui.RowDivider
+import dev.bookharbor.app.ui.ScreenTitle
+import dev.bookharbor.app.ui.SearchPill
+import dev.bookharbor.app.ui.SectionHeader
 
-/** Ask for a book Hardcover knows about but the library doesn't have, and track your own requests. */
+/** Ask for a book the library doesn't have yet, and follow what happens to your requests. */
 @Composable
 fun RequestsTab(controller: AppController) {
     LaunchedEffect(Unit) { controller.loadBookRequests() }
     val state = controller.bookRequestsUi
     var query by rememberSaveable { mutableStateOf("") }
+    val open = state.mine.count { it.status == "open" }
 
     PullToRefreshBox(isRefreshing = state.loading, onRefresh = controller::loadBookRequests, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp)) {
-        item { Text("Requests", style = MaterialTheme.typography.headlineLarge) }
-        item {
-            Text(
-                "Can't find a book? Search for it and ask for it to be added.",
-                Modifier.padding(top = 8.dp, bottom = 14.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = query, onValueChange = { query = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                label = { Text("Search by title or author") }, shape = RoundedCornerShape(12.dp),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { controller.searchForRequest(query) }),
-                trailingIcon = { if (state.searching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) },
-            )
-        }
-        if (state.error != null) item {
-            Text(state.error, Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-        }
-        if (state.searchResults.isNotEmpty()) {
-            item { SectionLabel("Results") }
-            items(state.searchResults, key = { it.provider + it.id }) { candidate ->
-                CandidateRow(candidate, onRequest = { controller.requestBook(candidate) })
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp)) {
+            item { ScreenTitle("Requests", if (open > 0) "$open waiting for review" else "Ask for a book to be added") }
+            item {
+                Box(Modifier.padding(top = 14.dp)) {
+                    SearchPill(query, { query = it }, "Search by title or author", onSearch = { controller.searchForRequest(query) }, busy = state.searching)
+                }
+            }
+            if (state.error != null) item {
+                Text(state.error, Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (state.searchResults.isNotEmpty()) {
+                item { SectionHeader("Results") }
+                item {
+                    GroupCard {
+                        state.searchResults.forEachIndexed { index, candidate ->
+                            CandidateRow(controller, candidate, onRequest = { controller.requestBook(candidate) })
+                            if (index < state.searchResults.lastIndex) RowDivider(inset = 70.dp)
+                        }
+                    }
+                }
+            }
+            item { SectionHeader("Your requests") }
+            if (state.mine.isEmpty() && !state.loading) item {
+                EmptyState(BrandIcons.Request, "No requests yet", "Search above for a book that isn't in the library, and ask for it. You'll see here when it's added.")
+            } else item {
+                GroupCard {
+                    state.mine.forEachIndexed { index, request ->
+                        BookRequestRow(controller, request, onCancel = { controller.cancelBookRequest(request.id) })
+                        if (index < state.mine.lastIndex) RowDivider(inset = 70.dp)
+                    }
+                }
             }
         }
-        item { SectionLabel("Your requests") }
-        if (state.mine.isEmpty() && !state.loading) item {
-            Text("No requests yet.", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        items(state.mine, key = { it.id }) { request -> BookRequestRow(request, onCancel = { controller.cancelBookRequest(request.id) }) }
-    }
     }
 }
 
 @Composable
-private fun CandidateRow(candidate: MetadataCandidate, onRequest: () -> Unit) {
+private fun CandidateRow(controller: AppController, candidate: MetadataCandidate, onRequest: () -> Unit) {
     var requested by remember(candidate) { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(candidate.title, style = MaterialTheme.typography.titleSmall)
-            if (candidate.authors.isNotEmpty()) Text(candidate.authors.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        TextButton(onClick = { requested = true; onRequest() }, enabled = !requested) { Text(if (requested) "Requested" else "Request") }
-    }
+    AppRow(
+        candidate.title, candidate.authors.joinToString(", ").ifBlank { null },
+        leading = { Cover(Book(candidate.provider + candidate.id, candidate.title, emptyList(), coverUrl = candidate.coverUrl), controller.covers, Modifier.width(40.dp)) },
+        trailing = {
+            TextButton(onClick = { requested = true; onRequest() }, enabled = !requested) { Text(if (requested) "Requested" else "Request") }
+        },
+    )
 }
 
 @Composable
-private fun BookRequestRow(request: BookRequest, onCancel: () -> Unit) {
+private fun BookRequestRow(controller: AppController, request: BookRequest, onCancel: () -> Unit) {
     var confirmCancel by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(request.title, style = MaterialTheme.typography.titleSmall)
-            val (label, color) = when (request.status) {
-                "fulfilled" -> "Added to the library" to MaterialTheme.colorScheme.secondary
-                "declined" -> "Declined" to MaterialTheme.colorScheme.error
-                else -> "Waiting for review" to MaterialTheme.colorScheme.onSurfaceVariant
+    AppRow(
+        request.title, request.author.ifBlank { null },
+        leading = { Cover(Book(request.id, request.title, emptyList(), coverUrl = request.coverUrl), controller.covers, Modifier.width(40.dp)) },
+        trailing = {
+            Column(horizontalAlignment = Alignment.End) {
+                StatusPill(request.status)
+                if (request.status == "open") TextButton(onClick = { confirmCancel = true }) { Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            Text(label, style = MaterialTheme.typography.bodySmall, color = color)
-        }
-        if (request.status == "open") {
-            TextButton(onClick = { confirmCancel = true }) { Text("Cancel") }
-            if (confirmCancel) {
-                AlertDialog(
-                    onDismissRequest = { confirmCancel = false },
-                    title = { Text("Cancel this request?") },
-                    text = { Text("\"${request.title}\" will no longer be waiting for review.") },
-                    confirmButton = { TextButton(onClick = { confirmCancel = false; onCancel() }) { Text("Cancel request", color = MaterialTheme.colorScheme.error) } },
-                    dismissButton = { TextButton(onClick = { confirmCancel = false }) { Text("Keep it") } },
-                )
-            }
-        }
+        },
+    )
+    if (confirmCancel) AlertDialog(
+        onDismissRequest = { confirmCancel = false },
+        title = { Text("Cancel this request?") },
+        text = { Text("\"${request.title}\" will no longer be waiting for review.") },
+        confirmButton = { TextButton(onClick = { confirmCancel = false; onCancel() }) { Text("Cancel request", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = { confirmCancel = false }) { Text("Keep it") } },
+    )
+}
+
+/** A request's status as a small colored pill: waiting, added, or declined. */
+@Composable
+private fun StatusPill(status: String) {
+    val (label, color) = when (status) {
+        "fulfilled" -> "Added" to MaterialTheme.colorScheme.secondary
+        "declined" -> "Declined" to MaterialTheme.colorScheme.error
+        else -> "Waiting" to MaterialTheme.colorScheme.onSurfaceVariant
     }
+    Text(label, Modifier.clip(CircleShape).background(color.copy(alpha = 0.14f)).padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, color = color)
 }
