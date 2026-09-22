@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package dev.bookharbor.app.reader
 
 import android.app.Activity
@@ -34,6 +36,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -189,60 +193,58 @@ fun ReaderScaffold(
     ReaderFullscreen(chromeVisible)
     BookHarborTheme(readerTheme = effective.theme) {
         BrightnessEffect(effective.brightness)
-        Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            contentWindowInsets = WindowInsets(0),
-            topBar = {
+        // The bars float over the page instead of taking layout space, and the page's padding is
+        // fixed from the system bar sizes whether or not they're showing -- so showing or hiding
+        // the chrome (and going fullscreen) never moves the text.
+        val topInset = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues().calculateTopPadding()
+        val bottomInset = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()
+        val pagePadding = PaddingValues(top = topInset + TopBarHeight, bottom = bottomInset + (if (state.settings.showProgress) ProgressBarHeight else 0.dp))
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            // A tap in the middle band shows/hides the chrome; a link or other clickable span
+            // inside the content consumes its own tap first, so this never fires for it.
+            Box(
+                Modifier.fillMaxSize().pointerInput(touchExplorationEnabled) {
+                    detectTapGestures(onTap = { offset ->
+                        if (!touchExplorationEnabled && offset.x in size.width * 0.3f..size.width * 0.7f) chromeVisible = !chromeVisible
+                    })
+                },
+            ) { content(pagePadding) }
+            AnimatedVisibility(
+                visible = chromeVisible,
+                modifier = Modifier.align(Alignment.TopCenter),
+                enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { -it },
+                exit = fadeOut(tween(220)) + slideOutVertically(tween(220)) { -it },
+            ) {
+                ReaderTopBar(
+                    state.bookTitle, onClose, onContents = { onAction(ReaderAction.OpenContents) }, contentsLabel = contentsLabel, onSettings = { onAction(ReaderAction.OpenSettings) },
+                    bookmarked = bookmark != null,
+                    onBookmark = here?.let { (locator, label) -> { annotations.toggleBookmark(locator, label) } },
+                    onReadAloud = readAloud?.takeIf { it.available && !it.playing }?.start,
+                )
+            }
+            AnimatedVisibility(
+                visible = chromeVisible && state.settings.showProgress,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { it },
+                exit = fadeOut(tween(220)) + slideOutVertically(tween(220)) { it },
+            ) {
+                val unit = if (fixedLayout) "page" else "chapter"
+                ReaderProgressBar(
+                    progress = progress, label = progressLabel, percentage = percentage,
+                    onPrevious = { onAction(ReaderAction.SelectChapter(state.chapterIndex - 1)) }.takeIf { state.chapterIndex > 0 },
+                    onNext = { onAction(ReaderAction.SelectChapter(state.chapterIndex + 1)) }.takeIf { state.chapterIndex < state.chapters.lastIndex },
+                    previousLabel = "Previous $unit", nextLabel = "Next $unit",
+                )
+            }
+            readAloud?.let { controls ->
                 AnimatedVisibility(
-                    visible = chromeVisible,
-                    enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { -it },
-                    exit = fadeOut(tween(220)) + slideOutVertically(tween(220)) { -it },
-                ) {
-                    ReaderTopBar(
-                        state.bookTitle, onClose, onContents = { onAction(ReaderAction.OpenContents) }, contentsLabel = contentsLabel, onSettings = { onAction(ReaderAction.OpenSettings) },
-                        bookmarked = bookmark != null,
-                        onBookmark = here?.let { (locator, label) -> { annotations.toggleBookmark(locator, label) } },
-                        onReadAloud = readAloud?.takeIf { it.available && !it.playing }?.start,
-                    )
-                }
-            },
-            bottomBar = {
-                AnimatedVisibility(
-                    visible = chromeVisible && state.settings.showProgress,
-                    enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { it },
-                    exit = fadeOut(tween(220)) + slideOutVertically(tween(220)) { it },
-                ) {
-                    val unit = if (fixedLayout) "page" else "chapter"
-                    ReaderProgressBar(
-                        progress = progress, label = progressLabel, percentage = percentage,
-                        onPrevious = { onAction(ReaderAction.SelectChapter(state.chapterIndex - 1)) }.takeIf { state.chapterIndex > 0 },
-                        onNext = { onAction(ReaderAction.SelectChapter(state.chapterIndex + 1)) }.takeIf { state.chapterIndex < state.chapters.lastIndex },
-                        previousLabel = "Previous $unit", nextLabel = "Next $unit",
-                    )
-                }
-            },
-            content = { padding ->
-                // A tap in the middle band shows/hides the chrome; a link or other clickable
-                // span inside the content consumes its own tap first, so this never fires for it.
-                Box(
-                    Modifier.fillMaxSize().pointerInput(touchExplorationEnabled) {
-                        detectTapGestures(onTap = { offset ->
-                            if (!touchExplorationEnabled && offset.x in size.width * 0.3f..size.width * 0.7f) chromeVisible = !chromeVisible
-                        })
-                    },
-                ) {
-                    content(padding)
-                    readAloud?.let { controls ->
-                        AnimatedVisibility(
-                            visible = controls.playing,
-                            modifier = Modifier.align(Alignment.BottomCenter).padding(padding).padding(bottom = 20.dp),
-                            enter = fadeIn(tween(200)) + slideInVertically(tween(260)) { it / 2 },
-                            exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { it / 2 },
-                        ) { ReadAloudPill(controls) }
-                    }
-                }
-            },
-        )
+                    visible = controls.playing,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(pagePadding).padding(bottom = 20.dp),
+                    enter = fadeIn(tween(200)) + slideInVertically(tween(260)) { it / 2 },
+                    exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { it / 2 },
+                ) { ReadAloudPill(controls) }
+            }
+        }
         if (state.settingsOpen) {
             ReaderSettingsSheet(
                 state.settings, fixedLayout, onAction, stats,
@@ -255,6 +257,10 @@ fun ReaderScaffold(
         }
     }
 }
+
+private val TopBarHeight = 58.dp
+/** The footer: a 2dp progress line over a 48dp row. */
+private val ProgressBarHeight = 50.dp
 
 /** Hides the system status/navigation bars in step with the reader chrome, so hiding chrome
  * gives a genuinely fullscreen page rather than just a page with no title bar. A swipe from the
@@ -343,8 +349,8 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .padding(WindowInsets.statusBars.asPaddingValues())
-            .height(58.dp)
+            .padding(WindowInsets.statusBarsIgnoringVisibility.asPaddingValues())
+            .height(TopBarHeight)
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -386,14 +392,14 @@ private fun ReaderProgressBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()),
+            .padding(bottom = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()),
     ) {
         val shown by animateFloatAsState(progress.coerceIn(0f, 1f), tween(300), label = "reading progress")
         Box(Modifier.fillMaxWidth().height(2.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
             Box(Modifier.fillMaxWidth(shown).height(2.dp).background(MaterialTheme.colorScheme.secondary))
         }
         Row(
-            modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 4.dp),
+            modifier = Modifier.fillMaxWidth().height(ProgressBarHeight - 2.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = { onPrevious?.invoke() }, enabled = onPrevious != null) {

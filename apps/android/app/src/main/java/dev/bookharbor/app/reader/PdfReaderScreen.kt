@@ -275,7 +275,8 @@ private fun PdfPages(
 }
 
 private fun firstVisiblePage(state: LazyListState): Int {
-    val item = state.layoutInfo.visibleItemsInfo.firstOrNull { it.offset + it.size > 96 } ?: return 1
+    val top = state.layoutInfo.beforeContentPadding + 96
+    val item = state.layoutInfo.visibleItemsInfo.firstOrNull { it.offset + it.size > top } ?: return 1
     return item.index + 1
 }
 
@@ -296,7 +297,7 @@ private fun PageList(book: PdfBook, ratios: List<Float>?, listState: LazyListSta
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { snapshotFlow { zoom }.debounce(250).collect { renderZoom = (Math.round(it * 2) / 2f).coerceIn(1f, 4f) } }
     BoxWithConstraints(
-        Modifier.fillMaxSize().padding(padding).pointerInput(Unit) {
+        Modifier.fillMaxSize().pointerInput(Unit) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
                 do {
@@ -323,6 +324,7 @@ private fun PageList(book: PdfBook, ratios: List<Float>?, listState: LazyListSta
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxHeight().horizontalScroll(horizontal, enabled = zoom > 1f).requiredWidth(baseWidth * zoom),
+            contentPadding = padding,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             itemsIndexed(ratios, key = { index, _ -> index }) { index, ratio ->

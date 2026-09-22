@@ -144,12 +144,10 @@ internal fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog,
     val downloading = statuses.any { it == DownloadStatus.DOWNLOADING }
     val fraction = book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }
     val error = book.editions.firstNotNullOfOrNull { edition -> catalog.errors[edition.id]?.takeIf { catalog.downloads[edition.id] == DownloadStatus.FAILED || it.isNotBlank() } }
-    var details by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    if (details) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
     Column {
         Row(
-            Modifier.fillMaxWidth().bookClicks(book, scale = false, onTap = { details = true }, onLongPress = { menu = true }).padding(vertical = 10.dp),
+            Modifier.fillMaxWidth().bookClicks(book, scale = false, onTap = { controller.showDetails(book) }, onLongPress = { menu = true }).padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Cover(book, controller.covers, Modifier.width(52.dp))
@@ -167,7 +165,7 @@ internal fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog,
                     else -> StatusLine(progress, statuses.any { it == DownloadStatus.AVAILABLE })
                 }
             }
-            BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { details = true })
+            BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { controller.showDetails(book) })
         }
         HorizontalDivider(Modifier.padding(start = 66.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
     }
@@ -179,14 +177,12 @@ internal fun BookGridCell(controller: AppController, catalog: LibraryUiState.Cat
     val downloaded = book.editions.any { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
     val downloading = book.editions.any { catalog.downloads[it.id] == DownloadStatus.DOWNLOADING }
     val fraction = book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }
-    var details by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    if (details) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
     Column(Modifier.fillMaxWidth().padding(bottom = 18.dp)) {
         Box {
             Cover(
                 book, controller.covers,
-                Modifier.fillMaxWidth().bookClicks(book, onTap = { details = true }, onLongPress = { menu = true }),
+                Modifier.fillMaxWidth().bookClicks(book, onTap = { controller.showDetails(book) }, onLongPress = { menu = true }),
             )
             // Already on the reader's shelf: a small check, so Browse shows what they have at a glance.
             if (showOwned && isOnShelf(book, catalog.progress, catalog.downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys)) {
@@ -217,7 +213,8 @@ internal fun BookGridCell(controller: AppController, catalog: LibraryUiState.Cat
                     style = MaterialTheme.typography.labelMedium, color = if (isReading(progress)) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
                 )
             }
-            Box(Modifier.offset(x = 10.dp, y = (-6).dp)) { BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { details = true }, compact = true) }
+            // No "⋮" in the narrow grid: press and hold opens the same menu, anchored here.
+            BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { controller.showDetails(book) }, showButton = false)
         }
     }
 }
@@ -356,17 +353,15 @@ internal val CoverGradient = Brush.linearGradient(listOf(HarborNavy, Color(0xFF3
 /** A cover with its title and author, for Browse's horizontal rows. */
 @Composable
 internal fun BookShelfCard(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, modifier: Modifier = Modifier) {
-    var details by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    if (details) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
     val onShelf = isOnShelf(book, catalog.progress, catalog.downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys)
     Column(modifier.width(112.dp)) {
         Box {
-            Cover(book, controller.covers, Modifier.fillMaxWidth().bookClicks(book, onTap = { details = true }, onLongPress = { menu = true }))
+            Cover(book, controller.covers, Modifier.fillMaxWidth().bookClicks(book, onTap = { controller.showDetails(book) }, onLongPress = { menu = true }))
             if (onShelf) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondary), contentAlignment = Alignment.Center) {
                 Icon(BrandIcons.Check, "On your shelf", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondary)
             }
-            BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { details = true }, showButton = false)
+            BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { controller.showDetails(book) }, showButton = false)
         }
         Text(book.title, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(

@@ -329,7 +329,9 @@ fun EpubReaderScreen(
 /** Index of the first block that is clearly on screen, and how far through the chapter it is. */
 private fun firstVisibleBlock(state: LazyListState, blockCount: Int): Pair<Int, Double> {
     val visible = state.layoutInfo.visibleItemsInfo
-    val item = visible.firstOrNull { it.index >= HEADER_ITEMS && it.offset + it.size > 48 } ?: return 0 to 0.0
+    // Offsets count from the list's top edge, which sits under the floating top bar.
+    val top = state.layoutInfo.beforeContentPadding + 48
+    val item = visible.firstOrNull { it.index >= HEADER_ITEMS && it.offset + it.size > top } ?: return 0 to 0.0
     val block = (item.index - HEADER_ITEMS).coerceIn(0, (blockCount - 1).coerceAtLeast(0))
     val atEnd = item.index >= blockCount + HEADER_ITEMS
     val fraction = if (atEnd) 1.0 else if (blockCount <= 1) 0.0 else block.toDouble() / (blockCount - 1)
@@ -382,7 +384,7 @@ private fun ChapterList(
     val appear = remember(state.chapterIndex) { Animatable(0f) }
     LaunchedEffect(state.chapterIndex) { appear.animateTo(1f, tween(220)) }
     CompositionLocalProvider(LocalTextAids provides TextAids(settings.wordEmphasis, settings.wordSpacing)) {
-    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding).graphicsLayer { alpha = appear.value }) {
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }, contentPadding = padding) {
         item(key = "header") {
             Measure(settings) {
                 Spacer(Modifier.height(30.dp))

@@ -96,6 +96,12 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     var unsyncedOnSignOut by mutableStateOf<Int?>(null)
         private set
     var notice by mutableStateOf<String?>(null)
+    /** The book whose details page is open, over whichever screen opened it. */
+    var detailsBook by mutableStateOf<Book?>(null)
+        private set
+
+    fun showDetails(book: Book) { detailsBook = book }
+    fun closeDetails() { detailsBook = null }
     var passwordResetUi by mutableStateOf(PasswordResetUiState())
         private set
     val covers = CoverLoader(graph.api, graph.cacheDir)

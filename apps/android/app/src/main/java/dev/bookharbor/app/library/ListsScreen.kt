@@ -182,12 +182,10 @@ private fun ListDetailScreen(controller: AppController, catalog: LibraryUiState.
         } else item(span = fullRow) {
             GroupCard {
                 books.forEachIndexed { index, book ->
-                    var details by remember { mutableStateOf(false) }
-                    if (details) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
                     AppRow(
                         book.title, listOfNotNull(book.authors.firstOrNull(), seriesLabel(book).takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { null },
                         leading = { Cover(book, controller.covers, Modifier.width(44.dp)) },
-                        onClick = { details = true },
+                        onClick = { controller.showDetails(book) },
                         trailing = {
                             IconButton(onClick = { controller.removeBookFromList(list.id, book.id); controller.notice = "Removed from ${list.name}" }) {
                                 Icon(BrandIcons.Close, "Remove ${book.title} from this list", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

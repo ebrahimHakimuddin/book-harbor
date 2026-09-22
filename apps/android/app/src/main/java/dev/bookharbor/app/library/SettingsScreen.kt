@@ -89,14 +89,14 @@ internal fun SettingsTab(controller: AppController, catalog: LibraryUiState.Cata
     var confirmFreeUp by rememberSaveable { mutableStateOf(false) }
 
     PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 24.dp, bottom = 32.dp)) {
-            Text("Settings", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.semantics { heading() })
-            Spacer(Modifier.height(20.dp))
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+            dev.bookharbor.app.ui.ScreenTitle("Settings")
+            Spacer(Modifier.height(16.dp))
             ProfileHeader(controller, catalog, onEdit = { editName = true })
 
             SettingsGroup("Account") {
-                SettingsRow(BrandIcons.User, "Display name", controller.displayName.ifBlank { "Not set" }, onClick = { editName = true })
                 SettingsRow(BrandIcons.Lock, "Password", "Change the password you sign in with", onClick = { editPassword = true })
+                dev.bookharbor.app.ui.RowDivider()
                 SettingsRow(BrandIcons.Server, "Server", controller.serverUrl.removePrefix("https://").removePrefix("http://"), onClick = { confirmSwitchServer = true }, trailing = { RowAction("Change") })
             }
 
@@ -151,7 +151,8 @@ private fun ProfileHeader(controller: AppController, catalog: LibraryUiState.Cat
             Text(controller.displayName.ifBlank { "Signed in" }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(catalog.instanceName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Icon(BrandIcons.ChevronRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        // The one place to change your name; Account below holds sign-in details only.
+        Text("Edit", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
     }
 }
 

@@ -84,7 +84,7 @@ fun FriendsTab(controller: AppController) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp)) {
             item {
                 ScreenTitle("Friends") {
-                    IconButton(onClick = { adding = true }) { Icon(BrandIcons.Friends, "Add a friend", tint = MaterialTheme.colorScheme.secondary) }
+                    IconButton(onClick = { adding = true }) { Icon(BrandIcons.UserPlus, "Add a friend", tint = MaterialTheme.colorScheme.secondary) }
                 }
             }
             item { Box(Modifier.padding(top = 16.dp)) { YourReadingCard(controller, state.settings, onEditGoal = { editingGoal = true }) } }
@@ -318,10 +318,8 @@ private fun Stat(label: String, value: Int, modifier: Modifier) {
 @Composable
 private fun ActivityCover(controller: AppController, catalog: LibraryUiState.Catalog?, bookId: String, title: String, coverUrl: String, percentage: Double) {
     val book = catalog?.books?.firstOrNull { it.id == bookId }
-    var details by rememberSaveable { mutableStateOf(false) }
-    if (details && book != null && catalog != null) BookDetailsSheet(controller, catalog, book, onDismiss = { details = false })
     Column(Modifier.width(104.dp)) {
-        Cover(book ?: Book(bookId, title, emptyList(), coverUrl = coverUrl), controller.covers, Modifier.fillMaxWidth().clickable(enabled = book != null, onClickLabel = "Details for $title", role = Role.Button) { details = true })
+        Cover(book ?: Book(bookId, title, emptyList(), coverUrl = coverUrl), controller.covers, Modifier.fillMaxWidth().clickable(enabled = book != null, onClickLabel = "Details for $title", role = Role.Button) { book?.let(controller::showDetails) })
         Box(Modifier.padding(top = 8.dp).fillMaxWidth().height(4.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
             Box(Modifier.fillMaxWidth(percentage.toFloat().coerceIn(0f, 1f)).fillMaxHeight().clip(CircleShape).background(MaterialTheme.colorScheme.secondary))
         }

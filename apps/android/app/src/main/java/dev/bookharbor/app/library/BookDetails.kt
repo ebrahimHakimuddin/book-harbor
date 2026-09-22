@@ -38,6 +38,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -85,22 +90,25 @@ import dev.bookharbor.app.ui.theme.cautionColor
 import kotlin.math.roundToInt
 
 /**
- * Everything about one book: its description, series and tags, reading progress, and the
- * actions on it -- including opening straight at a chosen chapter or page.
+ * Everything about one book, as its own page: description, series and tags, reading progress,
+ * and the actions on it -- including opening straight at a chosen chapter or page.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BookDetailsSheet(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, onDismiss: () -> Unit) {
+fun BookDetailsPage(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, onDismiss: () -> Unit) {
+    androidx.activity.compose.BackHandler(onBack = onDismiss)
     val progress = catalog.progress[book.id]
     val downloaded = book.editions.filter { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
     val downloading = book.editions.any { catalog.downloads[it.id] == DownloadStatus.DOWNLOADING }
     val fraction = book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }
     val haptics = LocalHapticFeedback.current
     var addToList by remember { mutableStateOf(false) }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
+    androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
+            IconButton(onClick = onDismiss, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp).offset(x = (-12).dp)) {
+                Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, "Back")
+            }
             Row(verticalAlignment = Alignment.Top) {
-                Cover(book, controller.covers, Modifier.width(104.dp).shadow(10.dp, RoundedCornerShape(6.dp)))
+                Cover(book, controller.covers, Modifier.width(116.dp).shadow(12.dp, RoundedCornerShape(6.dp)))
                 Column(Modifier.weight(1f).padding(start = 18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     seriesLabel(book).takeIf { it.isNotBlank() }?.let {
                         Text(it.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, letterSpacing = 1.2.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -214,15 +222,12 @@ private fun JumpToSection(controller: AppController, catalog: LibraryUiState.Cat
     val edition = downloaded.firstOrNull { it.format == "epub" } ?: downloaded.firstOrNull()
     if (edition == null) {
         SectionHeader("Chapters")
-        val preferred = preferredEdition(book) { false }
         val downloading = book.editions.any { catalog.downloads[it.id] == DownloadStatus.DOWNLOADING }
-        GroupCard {
-            AppRow(
-                "Download to see chapters", "Then open the book at any chapter, and track which you've read.", icon = BrandIcons.Download,
-                trailing = { if (downloading) DownloadRing(book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }, Modifier.size(22.dp)) else RowAction("Download") },
-                onClick = { if (!downloading) preferred?.let { controller.download(it) } },
-            )
-        }
+        // The Download button above is the action; this just says what downloading unlocks.
+        Text(
+            if (downloading) "Chapters appear here once the download finishes." else "Download the book to open it at any chapter and track which ones you've read.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         return
     }
     val entries by produceState<List<String>?>(null, edition.id) { value = controller.tableOfContents(edition) }
@@ -280,10 +285,19 @@ private fun JumpToSection(controller: AppController, catalog: LibraryUiState.Cat
             val count = when (option) { ChapterFilter.All -> list.size; ChapterFilter.Unread -> list.size - readCount; ChapterFilter.Read -> readCount }
             ShelfChip(option.label, count, filter == option) { filter = option }
         }
-    } else Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        SecondaryButton("Read", onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChapters(book, selected, true); selected = emptySet() }, modifier = Modifier.weight(1f), icon = BrandIcons.Check)
-        SecondaryButton("Unread", onClick = { controller.markChapters(book, selected, false); selected = emptySet() }, modifier = Modifier.weight(1f))
-        if (selected.size == 1) SecondaryButton("All up to here", onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChaptersReadUpTo(book, selected.first()); selected = emptySet() }, modifier = Modifier.weight(1.4f))
+    } else Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryButton("Mark read", onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChapters(book, selected, true); selected = emptySet() }, modifier = Modifier.weight(1f))
+            SecondaryButton("Mark unread", onClick = { controller.markChapters(book, selected, false); selected = emptySet() }, modifier = Modifier.weight(1f))
+        }
+        if (selected.size == 1) {
+            val upTo = selected.first()
+            SecondaryButton(
+                if (upTo == 0) "Mark chapter 1 as read" else "Mark chapters 1–${upTo + 1} as read",
+                onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChaptersReadUpTo(book, upTo); selected = emptySet() },
+                modifier = Modifier.fillMaxWidth(), icon = BrandIcons.Check,
+            )
+        }
     }
 
     val state = rememberLazyListState(initialFirstVisibleItemIndex = ((current ?: 0) - 2).coerceAtLeast(0).coerceAtMost((visible.size - 1).coerceAtLeast(0)))

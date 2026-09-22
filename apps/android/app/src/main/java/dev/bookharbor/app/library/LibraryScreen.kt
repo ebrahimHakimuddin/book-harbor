@@ -18,6 +18,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.input.ImeAction
 import dev.bookharbor.app.ui.AppTextField
 import dev.bookharbor.app.ui.PrimaryButton
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
@@ -314,6 +318,33 @@ private fun PasswordResetDialog(controller: AppController, initialEmail: String,
 
 @Composable
 private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.Catalog) {
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(controller.notice) {
+        controller.notice?.let { snackbar.showSnackbar(it); controller.notice = null }
+    }
+    // The last book shown, so the page keeps its content while it slides away.
+    var lastDetails by remember { mutableStateOf<Book?>(null) }
+    controller.detailsBook?.let { lastDetails = it }
+    Box(Modifier.fillMaxSize()) {
+        CatalogContent(controller, catalog)
+        // Book details open as their own page over whatever opened them, entering from the side
+        // they leave by. The catalog's copy is used so download state stays live.
+        AnimatedVisibility(
+            visible = controller.detailsBook != null,
+            enter = slideInHorizontally(tween(300)) { it } + fadeIn(tween(200)),
+            exit = slideOutHorizontally(tween(260)) { it } + fadeOut(tween(200)),
+        ) {
+            lastDetails?.let { shown ->
+                val book = catalog.books.firstOrNull { it.id == shown.id } ?: shown
+                BookDetailsPage(controller, catalog, book, onDismiss = controller::closeDetails)
+            }
+        }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (controller.detailsBook == null) 80.dp else 8.dp))
+    }
+}
+
+@Composable
+private fun CatalogContent(controller: AppController, catalog: LibraryUiState.Catalog) {
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     var listsOpen by rememberSaveable { mutableStateOf(false) }
     var historyOpen by rememberSaveable { mutableStateOf(false) }
@@ -326,16 +357,14 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
         HistoryTab(controller, catalog, onBack = { historyOpen = false })
         return
     }
-    val snackbar = remember { SnackbarHostState() }
     // Ask for the notification permission once, when the library first appears.
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33 && controller.firstNotificationPrompt()) permission.launch(Manifest.permission.POST_NOTIFICATIONS) }
-    LaunchedEffect(controller.notice) {
-        controller.notice?.let { snackbar.showSnackbar(it); controller.notice = null }
-    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbar) },
+        // Each tab pads for the status bar itself; the scaffold padding it too doubled the gap.
+        // The navigation bar handles its own bottom inset.
+        contentWindowInsets = WindowInsets(0),
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 Tab.entries.forEach { item ->
