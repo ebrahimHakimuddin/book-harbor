@@ -90,6 +90,37 @@ progress, settings, and close. Controls meet Android
 touch-target and contrast requirements, respect system font scaling and reduced
 motion, work with TalkBack and switch access, and never rely on color alone.
 
+## Bookmarks, highlights, and search
+
+The bookmark button in the top bar marks the current passage (EPUB block or PDF
+page). Press and hold an EPUB paragraph to highlight all of it or to choose a
+passage within it. The same menu adds a note, copies the paragraph, or shares
+it as a quote. To choose a passage, drag the system selection handles in a
+dialog that shows the paragraph. The Contents sheet has three tabs: **Contents**, **Notes** (every
+bookmark and highlight in reading order, with an **Export all** action that
+shares them as plain text), and **Search**, which searches the full text of
+the book. PDF search needs Android 15 or later, where the platform can extract
+text from a PDF.
+
+Annotations are saved on the device first, then synced to the reader's account
+with `POST /annotations/sync` (see [`api.md`](api.md)) whenever there is a
+connection. This uses the same background job as reading progress. Signing out
+tries to sync them first, warns if any are still unsynced, and then clears
+them from the device.
+
+## Night reading and stats
+
+The settings sheet shows how many minutes the reader has read today and their
+streak of consecutive reading days. The **night schedule** switches to a dark
+theme and dims the screen during hours the reader chooses (9 PM to 7 AM by
+default), at a night brightness they can adjust. The **sleep timer** (15, 30, or
+60 minutes) keeps the screen on, then closes the book, saving the reading
+position, so the device can sleep.
+
+The library shows a **Continue reading** card for the unfinished book read
+most recently. A home-screen widget shows the same book and opens it directly.
+The widget reads only data stored on the device, so it works offline.
+
 ## Acceptance criteria
 
 - A downloaded EPUB and PDF can be opened, navigated, customized, closed, and

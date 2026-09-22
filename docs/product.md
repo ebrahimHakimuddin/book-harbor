@@ -45,7 +45,6 @@ following:
 
 ## Explicitly deferred
 
-- Highlights, annotations, and bookmarks
 - OPDS compatibility
 - Audiobooks, comics, Kindle formats, and format conversion
 - Public registration and federation between servers
