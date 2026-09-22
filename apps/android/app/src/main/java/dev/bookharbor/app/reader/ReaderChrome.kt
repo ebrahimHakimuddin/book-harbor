@@ -3,8 +3,11 @@ package dev.bookharbor.app.reader
 import android.app.Activity
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -60,8 +63,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import dev.bookharbor.app.ui.BrandIcons
 import dev.bookharbor.app.ui.theme.BookHarborTheme
 import dev.bookharbor.app.ui.theme.LiterataFamily
@@ -98,18 +105,27 @@ fun ReaderScaffold(
     LaunchedEffect(isScrolling, touchExplorationEnabled) {
         if (touchExplorationEnabled) chromeVisible = true else if (isScrolling) chromeVisible = false
     }
+    ReaderFullscreen(chromeVisible)
     BookHarborTheme(readerTheme = state.settings.theme) {
         BrightnessEffect(state.settings.brightness)
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = WindowInsets(0),
             topBar = {
-                AnimatedVisibility(visible = chromeVisible, enter = fadeIn(), exit = fadeOut()) {
+                AnimatedVisibility(
+                    visible = chromeVisible,
+                    enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { -it },
+                    exit = fadeOut(tween(220)) + slideOutVertically(tween(220)) { -it },
+                ) {
                     ReaderTopBar(state.bookTitle, onClose, onContents = { onAction(ReaderAction.OpenContents) }, contentsLabel = contentsLabel, onSettings = { onAction(ReaderAction.OpenSettings) })
                 }
             },
             bottomBar = {
-                AnimatedVisibility(visible = chromeVisible && state.settings.showProgress, enter = fadeIn(), exit = fadeOut()) {
+                AnimatedVisibility(
+                    visible = chromeVisible && state.settings.showProgress,
+                    enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { it },
+                    exit = fadeOut(tween(220)) + slideOutVertically(tween(220)) { it },
+                ) {
                     val unit = if (fixedLayout) "page" else "chapter"
                     ReaderProgressBar(
                         progress = progress, label = progressLabel, percentage = percentage,
@@ -133,6 +149,24 @@ fun ReaderScaffold(
         )
         if (state.settingsOpen) ReaderSettingsSheet(state.settings, fixedLayout, onAction)
         if (state.contentsOpen) ContentsSheet(state, contentsLabel, onAction)
+    }
+}
+
+/** Hides the system status/navigation bars in step with the reader chrome, so hiding chrome
+ * gives a genuinely fullscreen page rather than just a page with no title bar. A swipe from the
+ * screen edge still reveals the system bars transiently, per platform convention. */
+@Composable
+private fun ReaderFullscreen(chromeVisible: Boolean) {
+    val view = LocalView.current
+    if (view.isInEditMode) return
+    DisposableEffect(view) {
+        val controller = WindowCompat.getInsetsController((view.context as Activity).window, view)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+    LaunchedEffect(chromeVisible) {
+        val controller = WindowCompat.getInsetsController((view.context as Activity).window, view)
+        if (chromeVisible) controller.show(WindowInsetsCompat.Type.systemBars()) else controller.hide(WindowInsetsCompat.Type.systemBars())
     }
 }
 
