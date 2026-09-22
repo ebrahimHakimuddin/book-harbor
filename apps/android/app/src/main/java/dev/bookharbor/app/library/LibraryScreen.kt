@@ -10,6 +10,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -239,7 +240,9 @@ private fun LibraryTab(controller: AppController, catalog: LibraryUiState.Catalo
         item(span = fullRow) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.weight(1f)) { SearchRow(query, { query = it }, sort) { sort = it } }
-                IconButton(onClick = { viewMode = if (viewMode == LibraryViewMode.Grid) LibraryViewMode.List else LibraryViewMode.Grid }) {
+                // Matches the search field and sort button's height (56dp); IconButton's 48dp
+                // default made this row visibly uneven.
+                IconButton(onClick = { viewMode = if (viewMode == LibraryViewMode.Grid) LibraryViewMode.List else LibraryViewMode.Grid }, modifier = Modifier.size(56.dp)) {
                     Icon(if (viewMode == LibraryViewMode.Grid) BrandIcons.List else BrandIcons.Grid, if (viewMode == LibraryViewMode.Grid) "Switch to list view" else "Switch to grid view")
                 }
             }
@@ -613,27 +616,34 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
     PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Text("More", style = MaterialTheme.typography.headlineLarge)
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
-                Text(initialsOf(controller.displayName), style = MaterialTheme.typography.titleMedium)
-            }
-            Column(Modifier.padding(start = 14.dp)) {
-                Text(controller.displayName.ifBlank { "Signed in" }, style = MaterialTheme.typography.titleMedium)
-                Text(catalog.instanceName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(BrandIcons.Server, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.secondary)
-            Text(controller.serverUrl, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        ProfileSection(controller)
+
         var confirmSignOut by rememberSaveable { mutableStateOf(false) }
         var confirmSwitchServer by rememberSaveable { mutableStateOf(false) }
-        TextButton(onClick = { confirmSwitchServer = true }, modifier = Modifier.fillMaxWidth()) { Text("Change server") }
-        OutlinedButton(onClick = { confirmSignOut = true }, shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp)) {
-            Icon(BrandIcons.SignOut, null, Modifier.size(18.dp))
-            Text("  Sign out")
+        // Identity and the session actions that act on it (change server, sign out) live in one
+        // card -- previously the sign-out/change-server buttons floated below the Profile card,
+        // disconnected from the account they act on.
+        SettingsCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+                    Text(initialsOf(controller.displayName), style = MaterialTheme.typography.titleMedium)
+                }
+                Column(Modifier.padding(start = 14.dp)) {
+                    Text(controller.displayName.ifBlank { "Signed in" }, style = MaterialTheme.typography.titleMedium)
+                    Text(catalog.instanceName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(BrandIcons.Server, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.secondary)
+                Text(controller.serverUrl, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+            TextButton(onClick = { confirmSwitchServer = true }, modifier = Modifier.fillMaxWidth()) { Text("Change server") }
+            OutlinedButton(onClick = { confirmSignOut = true }, shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                Icon(BrandIcons.SignOut, null, Modifier.size(18.dp))
+                Text("  Sign out")
+            }
         }
+        ProfileSection(controller)
         if (confirmSignOut) {
             AlertDialog(
                 onDismissRequest = { confirmSignOut = false },
@@ -658,6 +668,15 @@ private fun MoreTab(controller: AppController, catalog: LibraryUiState.Catalog) 
 }
 
 @Composable
+private fun SettingsCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content,
+    )
+}
+
+@Composable
 private fun ProfileSection(controller: AppController) {
     val state = controller.profileUi
     var name by rememberSaveable(controller.displayName) { mutableStateOf(controller.displayName) }
@@ -668,10 +687,7 @@ private fun ProfileSection(controller: AppController) {
     // The default unfocused text-field border and divider both use colorScheme.outline, which
     // is too close in luminance to this card's surfaceVariant background to read as a border.
     val fieldColors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-    Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    SettingsCard {
         Text("Profile", style = MaterialTheme.typography.titleMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
@@ -732,7 +748,7 @@ private fun AboutSection() {
     var status by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
     val open = { url: String -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    SettingsCard {
         Text("About", style = MaterialTheme.typography.titleMedium)
         Text("BookHarbor $installed", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick = { open(GITHUB_URL) }, contentPadding = PaddingValues(0.dp)) { Text(GITHUB_URL.removePrefix("https://")) }
