@@ -219,6 +219,56 @@ retry with the same event and payload returns its original revision with
 `superseded`, but cannot move canonical progress behind newer reading activity.
 See [`offline-sync.md`](offline-sync.md) for the client protocol.
 
+## Annotations
+
+```text
+POST   /annotations/sync
+```
+
+Bookmarks, highlights, and notes sync with one request. It pushes the client's
+changed annotations and pulls every annotation changed after the cursor.
+Clients choose the annotation IDs, and IDs are scoped to the reader.
+
+```json
+{
+  "cursor": 12,
+  "changes": [
+    {
+      "id": "ann_4f1c…",
+      "bookId": "book_opaque_id",
+      "kind": "highlight",
+      "locator": { "kind": "epub-cfi", "value": "epubcfi(/6/4!/4/2:15)", "page": 0 },
+      "endOffset": 42,
+      "label": "Chapter 2",
+      "excerpt": "the highlighted words",
+      "note": "",
+      "createdAt": "2026-09-21T12:00:00Z",
+      "updatedAt": "2026-09-21T12:05:00Z",
+      "deleted": false
+    }
+  ]
+}
+```
+
+The response has the shape `{ cursor, hasMore, accepted, rejected,
+annotations }`. `annotations` uses the same shape as `changes`.
+
+- **Last edit wins.** The version with the newest `updatedAt` is kept. A change
+  that loses to a newer copy on the server is still listed in `accepted`, and
+  the winning copy is included in `annotations`.
+- **Deletes are tombstones.** A delete is sent with `"deleted": true`, and the
+  server keeps the tombstone so other devices learn about the delete.
+- **Rejected changes** are invalid or refer to a deleted book. The client stops
+  sending them.
+- **Clock skew.** An `updatedAt` more than five minutes in the future is set to
+  the server's time.
+- **Highlight ranges.** For a highlight, the locator's CFI offset is where the
+  passage starts inside its block, and `endOffset` is where it ends. An
+  `endOffset` of 0 means the whole block.
+- **Limits.** `changes` holds at most 100 annotations per request. A pull
+  returns at most 500 per page; continue with the returned cursor while
+  `hasMore` is true.
+
 ## Contract rules
 
 - Timestamps are UTC RFC 3339 values. Canonical progress uses the latest reading

@@ -153,6 +153,28 @@ var migrations = []string{
 		PRIMARY KEY (list_id, book_id)
 	) STRICT;
 	CREATE INDEX book_list_items_book_idx ON book_list_items(book_id);`,
+	// Bookmarks and highlights, synced last-writer-wins by updated_at. A delete is kept as a
+	// tombstone so other devices learn of it; revision orders every change for pull cursors.
+	`CREATE TABLE annotations (
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		id TEXT NOT NULL,
+		book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+		kind TEXT NOT NULL CHECK (kind IN ('bookmark', 'highlight')),
+		locator_kind TEXT NOT NULL CHECK (locator_kind IN ('epub-cfi', 'pdf-page')),
+		locator_value TEXT NOT NULL,
+		locator_page INTEGER NOT NULL,
+		end_offset INTEGER NOT NULL DEFAULT 0,
+		label TEXT NOT NULL,
+		excerpt TEXT NOT NULL,
+		note TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+		revision INTEGER NOT NULL,
+		PRIMARY KEY (user_id, id)
+	) STRICT;
+	CREATE INDEX annotations_user_revision_idx ON annotations(user_id, revision);
+	CREATE TABLE annotation_revisions (revision INTEGER PRIMARY KEY AUTOINCREMENT) STRICT;`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

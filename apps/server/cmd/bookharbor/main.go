@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bookharbor/bookharbor/apps/server/internal/annotations"
 	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
@@ -19,8 +20,8 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/httpapi"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
 	"github.com/bookharbor/bookharbor/apps/server/internal/library"
-	"github.com/bookharbor/bookharbor/apps/server/internal/mail"
 	"github.com/bookharbor/bookharbor/apps/server/internal/lists"
+	"github.com/bookharbor/bookharbor/apps/server/internal/mail"
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 	"github.com/bookharbor/bookharbor/apps/server/internal/requests"
@@ -65,7 +66,7 @@ func main() {
 	handler := httpapi.New(cfg, httpapi.BuildInfo{
 		Version: version,
 		Commit:  commit,
-	}, identityStore, audit.NewStore(db), libraryStore, reading.NewStore(db), social.NewStore(db), requests.NewStore(db), lists.NewStore(db), metadata.NewHardcover(
+	}, identityStore, audit.NewStore(db), libraryStore, reading.NewStore(db), social.NewStore(db), requests.NewStore(db), lists.NewStore(db), annotations.NewStore(db), metadata.NewHardcover(
 		os.Getenv("BOOKHARBOR_HARDCOVER_TOKEN"),
 		os.Getenv("BOOKHARBOR_HARDCOVER_ENDPOINT"),
 		nil,

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/bookharbor/bookharbor/apps/server/internal/annotations"
 	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/database"
@@ -219,6 +220,7 @@ func testHandlerWithMailer(t *testing.T, metadataProvider metadata.Provider, mai
 		social.NewStore(db),
 		requests.NewStore(db),
 		lists.NewStore(db),
+		annotations.NewStore(db),
 		metadataProvider,
 		mailer,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),

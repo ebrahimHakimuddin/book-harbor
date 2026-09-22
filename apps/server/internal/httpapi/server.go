@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bookharbor/bookharbor/apps/server/internal/annotations"
 	"github.com/bookharbor/bookharbor/apps/server/internal/audit"
 	"github.com/bookharbor/bookharbor/apps/server/internal/config"
 	"github.com/bookharbor/bookharbor/apps/server/internal/identity"
@@ -37,26 +38,27 @@ type Mailer interface {
 }
 
 type server struct {
-	config   config.Config
-	build    BuildInfo
-	users    *identity.Store
-	audit    *audit.Store
-	library  *library.Store
-	metadata metadata.Provider
-	reading  *reading.Store
-	social   *social.Store
-	requests *requests.Store
-	lists    *lists.Store
-	mailer   Mailer
-	logger   *slog.Logger
+	config      config.Config
+	build       BuildInfo
+	users       *identity.Store
+	audit       *audit.Store
+	library     *library.Store
+	metadata    metadata.Provider
+	reading     *reading.Store
+	social      *social.Store
+	requests    *requests.Store
+	lists       *lists.Store
+	annotations *annotations.Store
+	mailer      Mailer
+	logger      *slog.Logger
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, bookRequests *requests.Store, bookLists *lists.Store, metadataProvider metadata.Provider, mailer Mailer, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, bookRequests *requests.Store, bookLists *lists.Store, annotationStore *annotations.Store, metadataProvider metadata.Provider, mailer Mailer, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, requests: bookRequests, lists: bookLists, mailer: mailer, logger: logger}
+	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, requests: bookRequests, lists: bookLists, annotations: annotationStore, mailer: mailer, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", adminUI())
 	mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusPermanentRedirect))
@@ -80,6 +82,7 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/books/", s.requireAuthentication(s.book))
 	mux.Handle("/api/v1/editions/", s.requireAuthentication(s.edition))
 	mux.Handle("/api/v1/progress/sync", requireMethod(http.MethodPost, s.requireAuthentication(s.syncProgress)))
+	mux.Handle("/api/v1/annotations/sync", requireMethod(http.MethodPost, s.requireAuthentication(s.syncAnnotations)))
 	mux.Handle("/api/v1/friends", s.requireAuthentication(s.friends))
 	mux.Handle("/api/v1/friends/requests", s.requireAuthentication(s.friendRequests))
 	mux.Handle("/api/v1/friends/requests/", s.requireAuthentication(s.friendRequestAction))
