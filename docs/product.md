@@ -45,9 +45,7 @@ following:
 
 ## Explicitly deferred
 
-- Friends, feeds, and activity visibility
 - Highlights, annotations, and bookmarks
-- Reading goals and statistics
 - OPDS compatibility
 - Audiobooks, comics, Kindle formats, and format conversion
 - Public registration and federation between servers

@@ -21,3 +21,11 @@ early. It also produces a useful private library even if social work is delayed.
 - Progress remains private by default.
 - The server architecture stays modular enough to add relationships and activity
   without placing those concerns inside the Reader or Library modules.
+
+## Follow-up (2026-09-22)
+
+Friends, activity feeds, and reading goals shipped with full UI ahead of this
+ADR's "no version 0.1 UI" consequence, once the reading-loop foundations above
+proved solid. The sequencing reasoning held -- progress sync landed first -- but
+the scope line drifted from what's written here; see `docs/backlog.md` for the
+audit that flagged the drift.
