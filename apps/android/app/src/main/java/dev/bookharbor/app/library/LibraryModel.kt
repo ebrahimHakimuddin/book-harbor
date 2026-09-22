@@ -64,6 +64,22 @@ fun seriesLabel(book: Book): String = when {
     else -> "${book.series} #${book.seriesIndex}"
 }
 
+/**
+ * Home holds the books the reader is actually using: anything downloaded to this device or
+ * started (on any device). Everything else lives in Browse, the server's whole catalogue.
+ */
+fun isOnShelf(book: Book, progress: Map<String, Double>, downloadedEditions: Set<String>): Boolean =
+    (progress[book.id] ?: 0.0) > 0.0 || book.editions.any { it.id in downloadedEditions }
+
+/** The catalogue's newest books first (the server's order), for Browse's "New arrivals" row. */
+fun newArrivals(books: List<Book>, count: Int = 12): List<Book> = books.take(count)
+
+/** Each series with its books in reading order, series with the most books first. */
+fun seriesGroups(books: List<Book>): List<Pair<String, List<Book>>> =
+    books.filter { it.series.isNotBlank() }.groupBy { it.series }
+        .map { (name, members) -> name to members.sortedWith(compareBy({ it.seriesIndex }, { it.title.lowercase() })) }
+        .sortedWith(compareByDescending<Pair<String, List<Book>>> { it.second.size }.thenBy { it.first.lowercase() })
+
 /** The in-progress book read most recently, for the library's "Continue reading" card. */
 fun continueReading(books: List<Book>, progress: Map<String, Double>, lastReadAt: Map<String, String>): Book? =
     books.filter { isReading(progress[it.id]) }

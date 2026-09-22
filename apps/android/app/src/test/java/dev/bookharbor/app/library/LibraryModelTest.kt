@@ -45,6 +45,16 @@ class LibraryModelTest {
         assertEquals("", seriesLabel(solo))
     }
 
+    @Test fun homeHoldsDownloadedOrStartedBooksAndBrowseGroupsSeries() {
+        assertEquals(true, isOnShelf(dune, mapOf("b1" to 0.2), emptySet()))
+        assertEquals(true, isOnShelf(hail, emptyMap(), setOf("e3")))
+        assertEquals(false, isOnShelf(anon, mapOf("b3" to 0.0), setOf("e1")))
+        val a2 = Book("a2", "Two", emptyList(), series = "A", seriesIndex = 2.0)
+        val a1 = Book("a1", "One", emptyList(), series = "A", seriesIndex = 1.0)
+        val b1 = Book("x1", "Solo", emptyList(), series = "B", seriesIndex = 1.0)
+        assertEquals(listOf("A" to listOf("a1", "a2"), "B" to listOf("x1")), seriesGroups(listOf(a2, b1, a1, anon)).map { (name, books) -> name to books.map { it.id } })
+    }
+
     @Test fun opensADownloadedEditionFirstThenPrefersEpub() {
         assertEquals("e3", preferredEdition(hail) { false }!!.id)
         assertEquals("e2", preferredEdition(hail) { it.id == "e2" }!!.id)

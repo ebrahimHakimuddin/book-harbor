@@ -1,6 +1,7 @@
 package dev.bookharbor.app.library
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.bookharbor.app.AppGraph
@@ -313,10 +314,30 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             val start = if (edition.format == "epub") Locator.epub(EpubPosition.atChapter(0).toCfi()) else Locator.pdf(1)
             val locator = if (read && current != null && current.editionId == edition.id) current.locator else start
             graph.recorder.record(book.id, current?.editionId?.takeIf { read } ?: edition.id, locator, if (read) 1.0 else 0.0)
+            // Unreading a book starts its chapters over too.
+            if (!read) { graph.chapterMarks.clear(book.id); chapterMarksVersion++ }
             updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
             ContinueReadingWidget.refresh(graph.context)
             notice = if (read) "Marked \"${book.title}\" as read" else "Marked \"${book.title}\" as unread"
         }
+    }
+
+    /** Bumped on every chapter mark, so screens showing chapter state recompose. */
+    var chapterMarksVersion by mutableIntStateOf(0)
+        private set
+
+    fun chapterMarks(bookId: String): Map<Int, Boolean> = graph.chapterMarks.get(bookId)
+
+    fun markChapters(book: Book, chapters: Collection<Int>, read: Boolean) {
+        graph.chapterMarks.set(book.id, chapters, read)
+        chapterMarksVersion++
+        notice = "Marked ${chapters.size} ${if (chapters.size == 1) "chapter" else "chapters"} as ${if (read) "read" else "unread"}"
+    }
+
+    fun markChaptersReadUpTo(book: Book, index: Int) {
+        graph.chapterMarks.markReadUpTo(book.id, index)
+        chapterMarksVersion++
+        notice = "Marked chapters 1–${index + 1} as read"
     }
 
     /** Where this device last left [bookId], if it has been opened. */
@@ -637,6 +658,9 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             }
         }
     }
+
+    /** Clears the last save's outcome, so a newly opened profile dialog starts fresh. */
+    fun resetProfileStatus() { profileUi = ProfileUiState() }
 
     fun updateDisplayName(name: String, onSuccess: () -> Unit = {}) {
         profileUi = profileUi.copy(saving = true, error = null)

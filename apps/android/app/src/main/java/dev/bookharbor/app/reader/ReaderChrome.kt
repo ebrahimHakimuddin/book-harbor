@@ -1,6 +1,13 @@
 package dev.bookharbor.app.reader
 
 import android.app.Activity
+import androidx.compose.foundation.border
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.layout.union
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.ui.semantics.heading
+import dev.bookharbor.app.ui.theme.readerColorScheme
 import android.content.pm.ActivityInfo
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.animation.AnimatedVisibility
@@ -344,7 +351,7 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
         IconButton(onClick = onClose) {
             Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close reader")
         }
-        Text(bookTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(bookTitle, Modifier.weight(1f).padding(horizontal = 4.dp), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (onReadAloud != null) IconButton(onClick = onReadAloud) { Icon(BrandIcons.Headphones, "Read aloud from here") }
         // Adding a bookmark pops the icon and ticks; removing it just settles back.
         val haptics = LocalHapticFeedback.current
@@ -358,9 +365,7 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
                 tint = animateColorAsState(if (bookmarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface, tween(200), label = "bookmark").value,
             )
         }
-        TextButton(onClick = onContents, modifier = Modifier.semantics { contentDescription = contentsLabel }) {
-            Text(contentsLabel, style = MaterialTheme.typography.labelLarge)
-        }
+        IconButton(onClick = onContents) { Icon(BrandIcons.List, contentsLabel) }
         TextButton(onClick = onSettings, modifier = Modifier.semantics { contentDescription = "Reading settings" }) {
             Text("Aa", fontFamily = LiterataFamily, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
         }
@@ -588,7 +593,8 @@ private fun ReaderSettingsSheet(
     ModalBottomSheet(
         onDismissRequest = { onAction(ReaderAction.CloseSettings) },
         containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = { WindowInsets.ime },
+        // Keep the expanded sheet (and its drag handle) clear of the status bar.
+        contentWindowInsets = { WindowInsets.statusBars.union(WindowInsets.ime) },
     ) {
         val context = LocalContext.current
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
@@ -599,88 +605,110 @@ private fun ReaderSettingsSheet(
                 "Today: $minutes min" + if (streak > 1) " · $streak-day streak" else "",
                 Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary,
             )
-            Spacer(Modifier.height(24.dp))
 
-            SettingLabel("Theme")
-            ChoiceRow(ReaderTheme.entries, settings.theme, ReaderTheme::label) { onAction(ReaderAction.SelectTheme(it)) }
+            SettingsSection("Theme")
+            ThemeSwatches(settings.theme) { onAction(ReaderAction.SelectTheme(it)) }
 
             if (!fixedLayout) {
-                Spacer(Modifier.height(24.dp))
+                SettingsSection("Text")
                 SettingLabel("Typeface")
                 ChoiceRow(ReaderTypeface.entries, settings.typeface, ReaderTypeface::label) { onAction(ReaderAction.SelectTypeface(it)) }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(20.dp))
                 SettingLabel("Alignment")
                 ChoiceRow(ReaderAlignment.entries, settings.alignment, ReaderAlignment::label) { onAction(ReaderAction.SelectAlignment(it)) }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(20.dp))
                 SettingSlider("Text size", "${(settings.fontScale * 100).roundToInt()}%", settings.fontScale, 0.8f..1.5f) { onAction(ReaderAction.SetFontScale(it)) }
                 SettingSlider("Line height", String.format("%.2f", settings.lineHeight), settings.lineHeight, 1.25f..2f) { onAction(ReaderAction.SetLineHeight(it)) }
                 SettingSlider("Paragraph spacing", String.format("%.1f×", settings.paragraphSpacing), settings.paragraphSpacing, 0.5f..2f) { onAction(ReaderAction.SetParagraphSpacing(it)) }
                 SettingSlider("Margins", "${settings.horizontalMargin} dp", settings.horizontalMargin.toFloat(), 16f..48f) { onAction(ReaderAction.SetMargin(it.roundToInt())) }
-            }
-
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    SettingLabel("Screen brightness")
-                    Text(if (settings.brightness == null) "Following the system" else "${((settings.brightness) * 100).roundToInt()}%", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = settings.brightness != null, onCheckedChange = { onAction(ReaderAction.SetBrightness(if (it) 0.6f else null)) })
-            }
-            settings.brightness?.let { value -> Slider(value = value, onValueChange = { onAction(ReaderAction.SetBrightness(it)) }, valueRange = 0.05f..1f) }
-
-            Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    SettingLabel("Show reading progress")
-                    Text("Chapter or page, and overall position", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = settings.showProgress, onCheckedChange = { onAction(ReaderAction.SetProgressVisible(it)) })
-            }
-
-            Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    SettingLabel("Night schedule")
-                    Text("Dark theme and a dimmer screen at night", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = settings.nightSchedule, onCheckedChange = { onAction(ReaderAction.SetNightSchedule(it)) })
-            }
-            if (settings.nightSchedule) {
-                val hourLabel = { hour: Int -> DateFormat.getTimeFormat(context).format(java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, hour); set(java.util.Calendar.MINUTE, 0) }.time) }
-                SettingSlider("Starts", hourLabel(settings.nightStart), settings.nightStart.toFloat(), 0f..23f, steps = 22) { onAction(ReaderAction.SetNightHours(it.roundToInt(), settings.nightEnd)) }
-                SettingSlider("Ends", hourLabel(settings.nightEnd), settings.nightEnd.toFloat(), 0f..23f, steps = 22) { onAction(ReaderAction.SetNightHours(settings.nightStart, it.roundToInt())) }
-                SettingSlider("Night brightness", "${(settings.nightBrightness * 100).roundToInt()}%", settings.nightBrightness, 0.05f..1f) { onAction(ReaderAction.SetNightBrightness(it)) }
-            }
-
-            if (!fixedLayout) {
                 SettingSwitch("Hyphenation", "Break long words at line ends", settings.hyphenation) { onAction(ReaderAction.SetHyphenation(it)) }
-                SettingSwitch("Word emphasis", "Bold the start of each word to guide your eye", settings.wordEmphasis) { onAction(ReaderAction.SetWordEmphasis(it)) }
+
+                SettingsSection("Reading aids")
+                SettingSwitch("Word emphasis", "Bold the start of each word to guide your eye", settings.wordEmphasis, top = 0.dp) { onAction(ReaderAction.SetWordEmphasis(it)) }
                 Spacer(Modifier.height(16.dp))
                 SettingSlider("Letter spacing", if (settings.letterSpacing == 0f) "Normal" else "+${(settings.letterSpacing * 100).roundToInt()}%", settings.letterSpacing, 0f..0.15f) { onAction(ReaderAction.SetLetterSpacing(it)) }
                 SettingSlider("Word spacing", if (settings.wordSpacing == 0f) "Normal" else "+${(settings.wordSpacing * 100).roundToInt()}%", settings.wordSpacing, 0f..0.6f) { onAction(ReaderAction.SetWordSpacing(it)) }
             }
+
+            SettingsSection("Screen")
+            SettingSwitch("Custom brightness", if (settings.brightness == null) "Following the system" else "${(settings.brightness * 100).roundToInt()}%", settings.brightness != null, top = 0.dp) {
+                onAction(ReaderAction.SetBrightness(if (it) 0.6f else null))
+            }
+            AnimatedVisibility(settings.brightness != null) {
+                Slider(value = settings.brightness ?: 0.6f, onValueChange = { onAction(ReaderAction.SetBrightness(it)) }, valueRange = 0.05f..1f, colors = brandSliderColors())
+            }
+            SettingSwitch("Night schedule", "Dark theme and a dimmer screen at night", settings.nightSchedule) { onAction(ReaderAction.SetNightSchedule(it)) }
+            AnimatedVisibility(settings.nightSchedule) {
+                Column(Modifier.padding(top = 12.dp)) {
+                    val hourLabel = { hour: Int -> DateFormat.getTimeFormat(context).format(java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, hour); set(java.util.Calendar.MINUTE, 0) }.time) }
+                    SettingSlider("Starts", hourLabel(settings.nightStart), settings.nightStart.toFloat(), 0f..23f, steps = 22) { onAction(ReaderAction.SetNightHours(it.roundToInt(), settings.nightEnd)) }
+                    SettingSlider("Ends", hourLabel(settings.nightEnd), settings.nightEnd.toFloat(), 0f..23f, steps = 22) { onAction(ReaderAction.SetNightHours(settings.nightStart, it.roundToInt())) }
+                    SettingSlider("Night brightness", "${(settings.nightBrightness * 100).roundToInt()}%", settings.nightBrightness, 0.05f..1f) { onAction(ReaderAction.SetNightBrightness(it)) }
+                }
+            }
+            SettingSwitch("Show reading progress", "Chapter or page, and overall position", settings.showProgress) { onAction(ReaderAction.SetProgressVisible(it)) }
             SettingSwitch("Volume keys turn pages", "Volume down scrolls forward a screen, up goes back", settings.volumeKeys) { onAction(ReaderAction.SetVolumeKeys(it)) }
-            Spacer(Modifier.height(16.dp))
-            SettingLabel("Screen orientation")
+            Spacer(Modifier.height(20.dp))
+            SettingLabel("Orientation")
             ChoiceRow(ReaderOrientation.entries, settings.orientation, ReaderOrientation::label) { onAction(ReaderAction.SetOrientation(it)) }
 
-            Spacer(Modifier.height(16.dp))
-            SettingLabel("Sleep timer")
+            SettingsSection("Sleep timer")
             ChoiceRow(listOf(0, 15, 30, 60), sleepMinutes, { if (it == 0) "Off" else "$it min" }, onSleep)
             if (sleepAt != null) {
                 val time = remember(sleepAt) { DateFormat.getTimeFormat(context).format(java.util.Date(sleepAt)) }
-                Text("Keeps the screen on, then closes the book at $time", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Keeps the screen on, then closes the book at $time", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            TextButton(onClick = { onAction(ReaderAction.ResetSettings) }, Modifier.padding(top = 12.dp)) { Text("Reset to defaults") }
+            TextButton(onClick = { onAction(ReaderAction.ResetSettings) }, Modifier.padding(top = 20.dp)) { Text("Reset to defaults") }
+        }
+    }
+}
+
+/** A titled group in the settings sheet, set off by a hairline. */
+@Composable
+private fun SettingsSection(title: String) {
+    HorizontalDivider(Modifier.padding(top = 28.dp, bottom = 20.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+    Text(title.uppercase(), Modifier.padding(bottom = 12.dp).semantics { heading() }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, letterSpacing = 1.4.sp)
+}
+
+/** Each theme as a small page in its own colors, so the choice is visible before it is made. */
+@Composable
+private fun ThemeSwatches(selected: ReaderTheme, onSelect: (ReaderTheme) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        ReaderTheme.entries.forEach { theme ->
+            val colors = readerColorScheme(theme)
+            val isSelected = theme == selected
+            val ring by animateColorAsState(if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), tween(200), label = "swatch")
+            Column(
+                Modifier.clip(RoundedCornerShape(12.dp)).selectable(isSelected, role = Role.RadioButton) { onSelect(theme) }.padding(4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    Modifier.size(52.dp).clip(CircleShape).background(colors.background).border(if (isSelected) 2.5.dp else 1.dp, ring, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { Text("Aa", color = colors.onBackground, fontFamily = LiterataFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+                Text(theme.label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, color = if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
 
 @Composable
+private fun brandSliderColors() = SliderDefaults.colors(
+    thumbColor = MaterialTheme.colorScheme.secondary,
+    activeTrackColor = MaterialTheme.colorScheme.secondary,
+    inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f),
+    activeTickColor = MaterialTheme.colorScheme.onSecondary.copy(alpha = 0.5f),
+    inactiveTickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+)
+
+@Composable
 private fun SettingLabel(label: String) = Text(label, style = MaterialTheme.typography.titleMedium)
 
 @Composable
-private fun SettingSwitch(label: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SettingSwitch(label: String, description: String, checked: Boolean, top: androidx.compose.ui.unit.Dp = 16.dp, onChange: (Boolean) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(top = 16.dp).toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        Modifier.fillMaxWidth().padding(top = top).toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -695,17 +723,17 @@ private fun SettingSwitch(label: String, description: String, checked: Boolean, 
 private fun <T> ChoiceRow(choices: List<T>, selected: T, label: (T) -> String, onSelected: (T) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         choices.forEach { choice ->
+            // The selection slides its color across rather than snapping.
+            val container by animateColorAsState(if (choice == selected) MaterialTheme.colorScheme.primary else Color.Transparent, tween(180), label = "choice")
+            val content by animateColorAsState(if (choice == selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, tween(180), label = "choice text")
             TextButton(
                 onClick = { onSelected(choice) },
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                colors = ButtonDefaults.textButtonColors(
-                    containerColor = if (choice == selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    contentColor = if (choice == selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                ),
+                colors = ButtonDefaults.textButtonColors(containerColor = container, contentColor = content),
                 // Pill-shaped, matching the other selector chips in the app (e.g. the library's
                 // shelf filters), rather than a one-off corner radius used nowhere else.
                 shape = CircleShape,
-            ) { Text(label(choice), maxLines = 1, fontSize = 12.sp) }
+            ) { Text(label(choice), maxLines = 1, fontSize = 13.sp) }
         }
     }
 }
@@ -716,5 +744,5 @@ private fun SettingSlider(label: String, valueLabel: String, value: Float, range
         SettingLabel(label)
         Text(valueLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    Slider(value = value, onValueChange = onValueChange, valueRange = range, steps = steps)
+    Slider(value = value, onValueChange = onValueChange, valueRange = range, steps = steps, colors = brandSliderColors())
 }

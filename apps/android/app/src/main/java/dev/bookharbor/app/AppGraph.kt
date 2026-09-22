@@ -41,6 +41,7 @@ class AppGraph private constructor(context: Context) {
     val annotations = AnnotationStore(app) { SyncScheduler.schedule(app) }
     val annotationSync = AnnotationSyncEngine(annotations, api)
     val readingStats = ReadingStats(prefs)
+    val chapterMarks = dev.bookharbor.app.reader.ChapterMarks(prefs)
 
     /** Stable per install; identifies which device wrote a reading event. */
     val deviceId: String = prefs.getString("device_id", null) ?: ("device_" + UUID.randomUUID().toString().replace("-", "")).also {

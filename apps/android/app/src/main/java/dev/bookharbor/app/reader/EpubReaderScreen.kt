@@ -120,6 +120,7 @@ fun EpubReaderScreen(
     annotationStore: AnnotationStore,
     stats: ReadingStats,
     onClose: () -> Unit,
+    chapterMarks: ChapterMarks? = null,
 ) {
     val annotations = remember { BookAnnotations(annotationStore, bookId, bookTitle.ifBlank { book.title }) }
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { annotations.load() } }
@@ -212,7 +213,11 @@ fun EpubReaderScreen(
 
     // Reaching the end of the last chapter records completion at 100% -- not whatever fraction
     // of the final chapter happened to be on screen -- then returns to the library.
+    // Finishing a chapter (its end card's button) marks it read in the chapter list.
+    fun markFinished(index: Int) { chapterMarks?.set(bookId, listOf(index), true) }
+
     fun finishBook() {
+        markFinished(chapterIndex)
         latest?.let { position ->
             currentBlocks.value?.getOrNull(position.first)?.let { block ->
                 val cfi = EpubPosition(chapterIndex, block.path).toCfi()
@@ -317,7 +322,7 @@ fun EpubReaderScreen(
         onPage = ::page,
         readAloud = readAloud,
     ) { padding ->
-        ChapterList(book, state, blocks, listState, padding, annotations, speaking = speech.speaking, onLinkClick = ::openLink, onNextChapter = { dispatch(ReaderAction.NextChapter) }, onFinishBook = ::finishBook)
+        ChapterList(book, state, blocks, listState, padding, annotations, speaking = speech.speaking, onLinkClick = ::openLink, onNextChapter = { markFinished(chapterIndex); dispatch(ReaderAction.NextChapter) }, onFinishBook = ::finishBook)
     }
 }
 
@@ -390,6 +395,9 @@ private fun ChapterList(
         // This chapter's highlights, grouped by the block they sit in.
         val highlights = highlightsByBlock
         itemsIndexed(blocks, key = { index, _ -> index }) { index, block ->
+            // Most books open each chapter with its own title, which the header above already
+            // shows. That block stays in the list (saved positions index into it) but draws nothing.
+            if (index == 0 && block is Block.Heading && sameTitle(block.text, state.chapter.title)) return@itemsIndexed
             val spoken by animateColorAsState(if (index == speaking) MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f) else Color.Transparent, tween(300), label = "spoken")
             Measure(settings, Modifier.background(spoken)) {
                 val text = block.text()
@@ -412,6 +420,11 @@ private fun ChapterList(
         }
     }
     }
+}
+
+private fun sameTitle(a: String, b: String): Boolean {
+    fun norm(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
+    return norm(a).isNotEmpty() && norm(a) == norm(b)
 }
 
 /** Text a reader can highlight or search, or null for images and rules. */

@@ -10,6 +10,13 @@ class ReaderToolsTest {
     private val today = LocalDate.of(2026, 9, 22)
 
     @Test
+    fun chapterStateFollowsPositionUnlessMarked() {
+        // In chapter 3: 0-2 read by position; 1 explicitly unread; 5 explicitly read ahead.
+        assertEquals(listOf(true, false, true, false, false, true), chapterReadStates(6, mapOf(1 to false, 5 to true), 3))
+        assertEquals(listOf(false, false), chapterReadStates(2, emptyMap(), null))
+    }
+
+    @Test
     fun wordEmphasisBoldsTheStartOfEachWordButNotPunctuation() {
         val text = "A lighthouse, far off."
         val bold = emphasisRanges(text).map { text.substring(it.first, it.last + 1) }

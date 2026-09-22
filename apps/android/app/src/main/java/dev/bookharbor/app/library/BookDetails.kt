@@ -1,6 +1,23 @@
 package dev.bookharbor.app.library
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.graphics.graphicsLayer
+import dev.bookharbor.app.reader.chapterReadStates
+import dev.bookharbor.app.ui.AppRow
+import dev.bookharbor.app.ui.AppTextField
+import dev.bookharbor.app.ui.GroupCard
+import dev.bookharbor.app.ui.Motion
+import dev.bookharbor.app.ui.PrimaryButton
+import dev.bookharbor.app.ui.RowAction
+import dev.bookharbor.app.ui.RowDivider
+import dev.bookharbor.app.ui.SecondaryButton
+import dev.bookharbor.app.ui.SectionHeader
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -108,32 +125,36 @@ fun BookDetailsSheet(controller: AppController, catalog: LibraryUiState.Catalog,
                 }
             }
 
-            Button(
+            // Not on the device yet: the main action downloads and the sheet stays open, showing
+            // progress, then turns into Start reading. Nothing opens until the reader asks.
+            val preferred = preferredEdition(book) { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
+            PrimaryButton(
+                when {
+                    downloading -> fraction?.let { "Downloading… ${(it * 100).roundToInt()}%" } ?: "Downloading…"
+                    downloaded.isEmpty() -> "Download"
+                    isReading(progress) -> "Continue reading"
+                    isFinished(progress) -> "Read again"
+                    else -> "Start reading"
+                },
                 onClick = {
+                    if (downloaded.isEmpty()) { preferred?.let { controller.download(it) }; return@PrimaryButton }
                     onDismiss()
                     // Reading a finished book again starts at the beginning, not on its last page.
-                    val again = downloaded.firstOrNull { it.format == "epub" } ?: downloaded.firstOrNull()
-                    if (isFinished(progress) && again != null) controller.open(book, again, if (again.format == "epub") Locator.epub(EpubPosition.atChapter(0).toCfi()) else Locator.pdf(1))
+                    val again = downloaded.firstOrNull { it.format == "epub" } ?: downloaded.first()
+                    if (isFinished(progress)) controller.open(book, again, if (again.format == "epub") Locator.epub(EpubPosition.atChapter(0).toCfi()) else Locator.pdf(1))
                     else controller.open(book)
                 },
+                modifier = Modifier.padding(top = 20.dp),
                 enabled = !downloading,
-                shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(top = 20.dp).height(52.dp),
-            ) {
-                when {
-                    downloading -> { DownloadRing(fraction, Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary); Text(fraction?.let { "  Downloading… ${(it * 100).roundToInt()}%" } ?: "  Downloading…") }
-                    downloaded.isEmpty() -> { Icon(BrandIcons.Download, null, Modifier.size(18.dp)); Text("  Download and read") }
-                    isReading(progress) -> Text("Continue reading")
-                    isFinished(progress) -> Text("Read again")
-                    else -> Text("Start reading")
-                }
-            }
+                icon = if (downloaded.isEmpty() && !downloading) BrandIcons.Download else null,
+            )
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markRead(book, !isFinished(progress)) }, Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
-                    Icon(BrandIcons.Check, null, Modifier.size(16.dp)); Text(if (isFinished(progress)) "  Mark unread" else "  Mark read", maxLines = 1)
-                }
-                OutlinedButton(onClick = { addToList = true }, Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
-                    Icon(BrandIcons.Request, null, Modifier.size(16.dp)); Text("  Add to list", maxLines = 1)
-                }
+                SecondaryButton(
+                    if (isFinished(progress)) "Mark as unread" else "Mark as read",
+                    onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markRead(book, !isFinished(progress)) },
+                    modifier = Modifier.weight(1f), icon = BrandIcons.Check,
+                )
+                SecondaryButton("Add to list", onClick = { addToList = true }, modifier = Modifier.weight(1f), icon = BrandIcons.Bookmark)
             }
 
             if (book.tags.isNotEmpty()) {
@@ -156,7 +177,7 @@ fun BookDetailsSheet(controller: AppController, catalog: LibraryUiState.Catalog,
                 if (book.description.length > 280) TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Show less" else "Show more") }
             }
 
-            JumpToSection(controller, book, downloaded, onOpened = onDismiss)
+            JumpToSection(controller, catalog, book, downloaded, onOpened = onDismiss)
 
             if (downloaded.isNotEmpty()) {
                 var confirm by remember { mutableStateOf<Edition?>(null) }
@@ -181,13 +202,27 @@ fun BookDetailsSheet(controller: AppController, catalog: LibraryUiState.Catalog,
     if (addToList) AddToListDialog(controller, book, onDismiss = { addToList = false })
 }
 
-/** Chapters of a downloaded EPUB, or a page number for a PDF: open the book right there. */
+private enum class ChapterFilter(val label: String) { All("All"), Unread("Unread"), Read("Read") }
+
+/**
+ * Chapters of a downloaded EPUB (or a page number for a PDF), to open the book right there.
+ * Read chapters are dimmed with a check; the current one is highlighted. Press and hold starts
+ * selecting, to mark chapters read or unread, or everything up to one as read.
+ */
 @Composable
-private fun JumpToSection(controller: AppController, book: Book, downloaded: List<Edition>, onOpened: () -> Unit) {
+private fun JumpToSection(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, downloaded: List<Edition>, onOpened: () -> Unit) {
     val edition = downloaded.firstOrNull { it.format == "epub" } ?: downloaded.firstOrNull()
-    Text(if (edition?.format == "pdf") "Go to page" else "Chapters", Modifier.padding(top = 24.dp, bottom = 4.dp).semantics { heading() }, style = MaterialTheme.typography.titleMedium)
     if (edition == null) {
-        Text("Download this book to open it at any chapter.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SectionHeader("Chapters")
+        val preferred = preferredEdition(book) { false }
+        val downloading = book.editions.any { catalog.downloads[it.id] == DownloadStatus.DOWNLOADING }
+        GroupCard {
+            AppRow(
+                "Download to see chapters", "Then open the book at any chapter, and track which you've read.", icon = BrandIcons.Download,
+                trailing = { if (downloading) DownloadRing(book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }, Modifier.size(22.dp)) else RowAction("Download") },
+                onClick = { if (!downloading) preferred?.let { controller.download(it) } },
+            )
+        }
         return
     }
     val entries by produceState<List<String>?>(null, edition.id) { value = controller.tableOfContents(edition) }
@@ -195,34 +230,121 @@ private fun JumpToSection(controller: AppController, book: Book, downloaded: Lis
     val here by produceState<dev.bookharbor.app.sync.LocalPosition?>(null, book.id) { value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { controller.savedPosition(book.id) } }
     val list = entries
     val saved = here
-    when {
-        list == null -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) }
-        edition.format == "pdf" -> PageJump(list.size, current = saved?.locator?.takeIf { it.kind == Locator.PDF }?.page) { page ->
-            onOpened(); controller.open(book, edition, Locator.pdf(page))
+    if (edition.format == "pdf") {
+        SectionHeader("Go to page")
+        if (list == null) Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) }
+        else PageJump(list.size, current = saved?.locator?.takeIf { it.kind == Locator.PDF }?.page) { page -> onOpened(); controller.open(book, edition, Locator.pdf(page)) }
+        return
+    }
+    if (list == null) {
+        SectionHeader("Chapters")
+        Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) }
+        return
+    }
+    val current = saved?.locator?.takeIf { it.kind == Locator.EPUB && saved.editionId == edition.id }?.let { EpubPosition.parse(it.value)?.chapterIndex }
+    val version = controller.chapterMarksVersion
+    val finishedBook = isFinished(catalog.progress[book.id])
+    val states = remember(list.size, current, version, finishedBook) {
+        val explicit = controller.chapterMarks(book.id)
+        chapterReadStates(list.size, explicit, if (finishedBook) list.size else current)
+    }
+    var filter by rememberSaveable { mutableStateOf(ChapterFilter.All) }
+    var descending by rememberSaveable { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<Int>()) }
+    val selecting = selected.isNotEmpty()
+    androidx.activity.compose.BackHandler(enabled = selecting) { selected = emptySet() }
+    val readCount = states.count { it }
+    val visible = remember(states, filter, descending) {
+        list.indices.filter { when (filter) { ChapterFilter.All -> true; ChapterFilter.Unread -> !states[it]; ChapterFilter.Read -> states[it] } }
+            .let { if (descending) it.reversed() else it }
+    }
+
+    // Header: counts and sort, or -- while selecting -- the selection's actions.
+    Row(Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 10.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+        Crossfade(selecting, Modifier.weight(1f), label = "chapter header") { isSelecting ->
+            if (!isSelecting) Column {
+                Text("CHAPTERS", Modifier.semantics { heading() }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, letterSpacing = 1.2.sp)
+                Text("$readCount of ${list.size} read", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else Text("${selected.size} selected", style = MaterialTheme.typography.titleMedium)
         }
-        else -> {
-            val current = saved?.locator?.takeIf { it.kind == Locator.EPUB && saved.editionId == edition.id }?.let { EpubPosition.parse(it.value)?.chapterIndex }
-            val state = rememberLazyListState(initialFirstVisibleItemIndex = ((current ?: 0) - 2).coerceAtLeast(0))
-            AnimatedVisibility(visible = true, enter = fadeIn()) {
-                // Bounded height: the sheet scrolls as a whole, the chapter list scrolls within it.
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), state = state) {
-                    itemsIndexed(list) { index, title ->
-                        val isCurrent = index == current
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                                .background(if (isCurrent) MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f) else androidx.compose.ui.graphics.Color.Transparent)
-                                .clickable(onClickLabel = "Open at $title", role = Role.Button) { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onOpened(); controller.open(book, edition, Locator.epub(EpubPosition.atChapter(index).toCfi())) }
-                                .padding(horizontal = 12.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("${index + 1}", Modifier.width(32.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-                            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            if (isCurrent) Text("You're here", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
-                        }
-                    }
-                }
+        if (!selecting) {
+            IconButton(onClick = { descending = !descending }) {
+                Icon(BrandIcons.Sort, if (descending) "Sorted last to first. Sort first to last" else "Sorted first to last. Sort last to first", Modifier.size(20.dp).graphicsLayer { scaleY = if (descending) -1f else 1f }, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            TextButton(onClick = { selected = emptySet() }) { Text("Cancel") }
+        }
+    }
+    if (!selecting) Row(Modifier.padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChapterFilter.entries.forEach { option ->
+            val count = when (option) { ChapterFilter.All -> list.size; ChapterFilter.Unread -> list.size - readCount; ChapterFilter.Read -> readCount }
+            ShelfChip(option.label, count, filter == option) { filter = option }
+        }
+    } else Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SecondaryButton("Read", onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChapters(book, selected, true); selected = emptySet() }, modifier = Modifier.weight(1f), icon = BrandIcons.Check)
+        SecondaryButton("Unread", onClick = { controller.markChapters(book, selected, false); selected = emptySet() }, modifier = Modifier.weight(1f))
+        if (selected.size == 1) SecondaryButton("All up to here", onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markChaptersReadUpTo(book, selected.first()); selected = emptySet() }, modifier = Modifier.weight(1.4f))
+    }
+
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = ((current ?: 0) - 2).coerceAtLeast(0).coerceAtMost((visible.size - 1).coerceAtLeast(0)))
+    GroupCard {
+        if (visible.isEmpty()) Text(
+            if (filter == ChapterFilter.Unread) "Every chapter is read." else "No chapters marked read yet.",
+            Modifier.padding(20.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Bounded height: the sheet scrolls as a whole, the chapter list scrolls within it.
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), state = state) {
+            itemsIndexed(visible, key = { _, index -> index }) { position, index ->
+                ChapterRow(
+                    number = index + 1, title = list[index], read = states[index], isCurrent = index == current,
+                    selecting = selecting, selected = index in selected,
+                    onTap = {
+                        if (selecting) selected = if (index in selected) selected - index else selected + index
+                        else { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onOpened(); controller.open(book, edition, Locator.epub(EpubPosition.atChapter(index).toCfi())) }
+                    },
+                    onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); selected = selected + index },
+                    modifier = Modifier.animateItem(),
+                )
+                if (position < visible.lastIndex) RowDivider(inset = 60.dp)
             }
         }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChapterRow(number: Int, title: String, read: Boolean, isCurrent: Boolean, selecting: Boolean, selected: Boolean, onTap: () -> Unit, onLongPress: () -> Unit, modifier: Modifier = Modifier) {
+    val fade by animateFloatAsState(if (read && !isCurrent) 0.5f else 1f, Motion.standard(), label = "read")
+    val tint by animateColorAsState(
+        when { selected -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.16f); isCurrent -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.08f); else -> androidx.compose.ui.graphics.Color.Transparent },
+        Motion.standard(), label = "row",
+    )
+    Row(
+        modifier.fillMaxWidth().background(tint)
+            .combinedClickable(onClickLabel = if (selecting) "Select chapter $number" else "Open at chapter $number", onLongClickLabel = "Select chapters", role = Role.Button, onLongClick = onLongPress, onClick = onTap)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Leading: the number, or a selection circle while selecting.
+        Box(Modifier.width(30.dp), contentAlignment = Alignment.CenterStart) {
+            Crossfade(selecting, label = "selection") { isSelecting ->
+                if (isSelecting) Box(
+                    Modifier.size(22.dp).clip(CircleShape).background(if (selected) MaterialTheme.colorScheme.secondary else androidx.compose.ui.graphics.Color.Transparent)
+                        .border(1.5.dp, if (selected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { if (selected) Icon(BrandIcons.Check, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondary) }
+                else Text("$number", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary.copy(alpha = fade))
+            }
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+            Text(
+                title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = fade),
+            )
+            if (isCurrent) Text("You're here", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+        }
+        if (read && !selecting) Icon(BrandIcons.Check, "Read", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.8f))
     }
 }
 
@@ -231,13 +353,12 @@ private fun PageJump(pageCount: Int, current: Int?, onGo: (Int) -> Unit) {
     var value by rememberSaveable { mutableStateOf(current?.toString().orEmpty()) }
     val page = value.toIntOrNull()?.takeIf { it in 1..pageCount }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(
-            value, { value = it.filter(Char::isDigit).take(6) }, Modifier.weight(1f), singleLine = true,
-            label = { Text("Page (1–$pageCount)") }, isError = value.isNotEmpty() && page == null, shape = RoundedCornerShape(12.dp),
+        AppTextField(
+            value, { value = it.filter(Char::isDigit).take(6) }, "Page (1–$pageCount)", Modifier.weight(1f), isError = value.isNotEmpty() && page == null,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
             keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = { page?.let(onGo) }),
         )
-        Button(onClick = { page?.let(onGo) }, enabled = page != null, shape = RoundedCornerShape(12.dp), modifier = Modifier.height(56.dp)) { Text("Open") }
+        SecondaryButton("Open", onClick = { page?.let(onGo) }, enabled = page != null)
     }
 }
 
