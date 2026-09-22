@@ -20,7 +20,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -89,8 +102,12 @@ fun EpubReaderScreen(
     restore: LocalPosition?,
     recorder: ProgressRecorder,
     settingsStore: ReaderSettingsStore,
+    annotationStore: AnnotationStore,
+    stats: ReadingStats,
     onClose: () -> Unit,
 ) {
+    val annotations = remember { BookAnnotations(annotationStore, bookId, bookTitle.ifBlank { book.title }) }
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { annotations.load() } }
     val restored = remember { restore?.locator?.takeIf { it.kind == Locator.EPUB }?.let { EpubPosition.parse(it.value) }?.takeIf { it.chapterIndex in book.chapters.indices } }
     var state by remember {
         mutableStateOf(
@@ -178,6 +195,36 @@ fun EpubReaderScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    /** Jumps to a block anywhere in the book: scrolls within this chapter, or swaps chapters and restores there. */
+    fun goTo(position: EpubPosition) {
+        if (position.chapterIndex !in book.chapters.indices) return
+        if (position.chapterIndex == chapterIndex) {
+            val loaded = currentBlocks.value ?: return
+            scope.launch { listState.scrollToItem(loaded.indexOfPath(position.path) + HEADER_ITEMS) }
+        } else {
+            pendingRestore = position
+            dispatch(ReaderAction.SelectChapter(position.chapterIndex))
+        }
+    }
+
+    suspend fun search(query: String): List<SearchHit> = withContext(Dispatchers.IO) {
+        val hits = ArrayList<SearchHit>()
+        for (index in book.chapters.indices) {
+            val chapterBlocks = runCatching { book.blocks(index) }.getOrNull() ?: continue
+            for (block in chapterBlocks) {
+                val snippet = block.text()?.let { snippetAround(it, query) } ?: continue
+                hits += SearchHit(Locator.epub(EpubPosition(index, block.path).toCfi()), book.chapters[index].title, snippet)
+                if (hits.size >= MAX_SEARCH_HITS) return@withContext hits
+            }
+        }
+        hits
+    }
+
+    val here = latest?.let { position -> currentBlocks.value?.getOrNull(position.first) }?.let { block ->
+        Locator.epub(EpubPosition(chapterIndex, block.path).toCfi()) to state.chapter.title
+    }
+
     fun openLink(href: String) {
         if (href.contains("://")) {
             runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(href))) }
@@ -193,8 +240,8 @@ fun EpubReaderScreen(
             val targetPath = fragment.takeIf { it.isNotEmpty() }
                 ?.let { frag -> runCatching { book.blocks(targetChapterIndex) }.getOrNull()?.firstOrNull { it.id == frag }?.path }
             withContext(Dispatchers.Main) {
-                pendingRestore = targetPath?.let { EpubPosition(targetChapterIndex, it) }
-                dispatch(ReaderAction.SelectChapter(targetChapterIndex))
+                if (targetPath != null) goTo(EpubPosition(targetChapterIndex, targetPath))
+                else if (targetChapterIndex != chapterIndex) dispatch(ReaderAction.SelectChapter(targetChapterIndex))
             }
         }
     }
@@ -207,8 +254,13 @@ fun EpubReaderScreen(
         progress = state.currentChapterProgress,
         percentage = (state.currentChapterProgress * 100).roundToInt(),
         isScrolling = listState.isScrollInProgress,
+        annotations = annotations,
+        here = here,
+        onGoTo = { locator -> EpubPosition.parse(locator.value)?.let(::goTo) },
+        search = ::search,
+        stats = stats,
     ) { padding ->
-        ChapterList(book, state, blocks, listState, padding, onLinkClick = ::openLink, onNextChapter = { dispatch(ReaderAction.NextChapter) }, onFinishBook = ::finishBook)
+        ChapterList(book, state, blocks, listState, padding, annotations, onLinkClick = ::openLink, onNextChapter = { dispatch(ReaderAction.NextChapter) }, onFinishBook = ::finishBook)
     }
 }
 
@@ -229,6 +281,7 @@ private fun ChapterList(
     blocks: List<Block>?,
     listState: LazyListState,
     padding: PaddingValues,
+    annotations: BookAnnotations,
     onLinkClick: (String) -> Unit,
     onNextChapter: () -> Unit,
     onFinishBook: () -> Unit,
@@ -258,8 +311,22 @@ private fun ChapterList(
                 Spacer(Modifier.height(30.dp))
             }
         }
+        // This chapter's highlights, grouped by the block they sit in.
+        val highlights = annotations.items.filter { it.kind == AnnotationKind.Highlight }
+            .mapNotNull { a -> EpubPosition.parse(a.locator.value)?.takeIf { it.chapterIndex == state.chapterIndex }?.let { it.path to a } }
+            .groupBy({ it.first }, { it.second })
         itemsIndexed(blocks, key = { index, _ -> index }) { _, block ->
-            Measure(settings) { BlockView(book, book.chapters[state.chapterIndex].href, block, body, gap, onLinkClick) }
+            Measure(settings) {
+                val text = block.text()
+                val href = book.chapters[state.chapterIndex].href
+                if (text == null) BlockView(book, href, block, body, gap, onLinkClick)
+                else {
+                    val marks = highlights[block.path].orEmpty()
+                    HighlightableBlock(annotations, state.chapterIndex, block.path, state.chapter.title, text, marks) {
+                        BlockView(book, href, block, body, gap, onLinkClick, marks.map { highlightRange(it, text.length) })
+                    }
+                }
+            }
         }
         item(key = "transition") {
             Measure(settings) {
@@ -271,6 +338,101 @@ private fun ChapterList(
     }
 }
 
+/** Text a reader can highlight or search, or null for images and rules. */
+private fun Block.text(): String? = when (this) {
+    is Block.Heading -> text
+    is Block.Paragraph -> text
+    is Block.Quote -> text
+    is Block.Preformatted -> text
+    is Block.Image, is Block.Rule -> null
+}
+
+/**
+ * Press-and-hold (or TalkBack's long-press action) on a paragraph offers highlighting all of it
+ * or a chosen passage, a note, copy, and share.
+ */
+@Composable
+private fun HighlightableBlock(
+    annotations: BookAnnotations,
+    chapterIndex: Int,
+    path: String,
+    chapterTitle: String,
+    text: String,
+    highlights: List<Annotation>,
+    content: @Composable () -> Unit,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var menu by remember { mutableStateOf(false) }
+    var editingNote by remember { mutableStateOf(false) }
+    var choosingPassage by remember { mutableStateOf(false) }
+    fun highlight(range: IntRange): Annotation {
+        val whole = range.first == 0 && range.last == text.lastIndex
+        return annotations.add(
+            AnnotationKind.Highlight, Locator.epub(EpubPosition(chapterIndex, path, if (whole) 0 else range.first).toCfi()), chapterTitle,
+            text.substring(range.first, range.last + 1).take(4000), endOffset = if (whole) 0 else range.last + 1,
+        )
+    }
+    Box(
+        Modifier
+            .semantics { onLongClick(label = "Highlight options") { menu = true; true } }
+            .pointerInput(path) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val press = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                    menu = true
+                    press.consume()
+                    // Swallow the rest of the gesture so lifting the finger doesn't also toggle the chrome.
+                    do { val event = awaitPointerEvent(); event.changes.forEach { it.consume() } } while (event.changes.any { it.pressed })
+                }
+            },
+    ) {
+        content()
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            if (highlights.isEmpty()) {
+                DropdownMenuItem(text = { Text("Highlight paragraph") }, onClick = { menu = false; highlight(text.indices) })
+            } else {
+                DropdownMenuItem(text = { Text(if (highlights.size == 1) "Remove highlight" else "Remove highlights") }, onClick = { menu = false; highlights.forEach(annotations::delete) })
+            }
+            DropdownMenuItem(text = { Text("Highlight a passage…") }, onClick = { menu = false; choosingPassage = true })
+            DropdownMenuItem(text = { Text(if (highlights.firstOrNull()?.note.isNullOrBlank()) "Add note" else "Edit note") }, onClick = { menu = false; editingNote = true })
+            DropdownMenuItem(text = { Text("Copy") }, onClick = { menu = false; clipboard.setText(AnnotatedString(text)) })
+            DropdownMenuItem(text = { Text("Share") }, onClick = { menu = false; shareText(context, quote(text, annotations.bookTitle, chapterTitle)) })
+        }
+    }
+    if (editingNote) {
+        NoteDialog(
+            highlights.firstOrNull()?.note.orEmpty(),
+            onSave = { note ->
+                // A note always hangs off a highlight, so noting a plain paragraph highlights it too.
+                annotations.setNote(highlights.firstOrNull() ?: highlight(text.indices), note)
+                editingNote = false
+            },
+            onDismiss = { editingNote = false },
+        )
+    }
+    if (choosingPassage) PassageDialog(text, onHighlight = { highlight(it); choosingPassage = false }, onDismiss = { choosingPassage = false })
+}
+
+/** The paragraph as selectable text: the reader drags the system selection handles to pick a passage. */
+@Composable
+private fun PassageDialog(text: String, onHighlight: (IntRange) -> Unit, onDismiss: () -> Unit) {
+    var value by remember { mutableStateOf(TextFieldValue(text)) }
+    val selection = value.selection
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Highlight a passage") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Press and hold a word, then drag the handles to cover the passage.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(value, { value = it.copy(text = text) }, readOnly = true, maxLines = 12, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = { TextButton(onClick = { onHighlight(selection.min until selection.max) }, enabled = !selection.collapsed) { Text("Highlight") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 /** The reading column: capped width, centred, with the reader's chosen margin. */
 @Composable
 private fun Measure(settings: ReaderSettings, content: @Composable () -> Unit) {
@@ -280,31 +442,33 @@ private fun Measure(settings: ReaderSettings, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun BlockView(book: EpubBook, chapterHref: String, block: Block, body: TextStyle, gap: androidx.compose.ui.unit.Dp, onLinkClick: (String) -> Unit) {
+private fun BlockView(book: EpubBook, chapterHref: String, block: Block, body: TextStyle, gap: androidx.compose.ui.unit.Dp, onLinkClick: (String) -> Unit, marks: List<IntRange> = emptyList()) {
     when (block) {
         is Block.Heading -> Text(
-            linkedText(block.text, block.links, onLinkClick),
+            linkedText(block.text, block.links, onLinkClick, marks),
             Modifier.padding(top = gap, bottom = gap / 2).semantics { heading() },
             style = when (block.level) { 1 -> MaterialTheme.typography.headlineLarge; 2 -> MaterialTheme.typography.headlineMedium; else -> MaterialTheme.typography.titleLarge },
         )
-        is Block.Paragraph -> Text(linkedText(block.text, block.links, onLinkClick), Modifier.padding(bottom = gap), style = body)
+        is Block.Paragraph -> Text(linkedText(block.text, block.links, onLinkClick, marks), Modifier.padding(bottom = gap), style = body)
         is Block.Quote -> Row(Modifier.padding(bottom = gap)) {
             Box(Modifier.width(3.dp).height(24.dp).background(MaterialTheme.colorScheme.secondary))
-            Text(linkedText(block.text, block.links, onLinkClick), Modifier.padding(start = 14.dp), style = body.copy(fontStyle = FontStyle.Italic))
+            Text(linkedText(block.text, block.links, onLinkClick, marks), Modifier.padding(start = 14.dp), style = body.copy(fontStyle = FontStyle.Italic))
         }
-        is Block.Preformatted -> Text(block.text, Modifier.padding(bottom = gap), style = body.copy(fontFamily = FontFamily.Monospace, fontSize = body.fontSize * 0.85, lineHeight = body.lineHeight * 0.9))
+        is Block.Preformatted -> Text(linkedText(block.text, emptyList(), onLinkClick, marks), Modifier.padding(bottom = gap), style = body.copy(fontFamily = FontFamily.Monospace, fontSize = body.fontSize * 0.85, lineHeight = body.lineHeight * 0.9))
         is Block.Rule -> HorizontalDivider(Modifier.padding(vertical = gap), color = MaterialTheme.colorScheme.outline)
         is Block.Image -> BookImage(book, chapterHref, block, Modifier.padding(bottom = gap))
     }
 }
 
-/** [text] with each of [links] underlined and tappable, without disturbing plain (link-free) text. */
+/** [text] with each of [links] underlined and tappable and each of [marks] highlighted. */
 @Composable
-private fun linkedText(text: String, links: List<LinkSpan>, onLinkClick: (String) -> Unit): AnnotatedString {
-    if (links.isEmpty()) return AnnotatedString(text)
+private fun linkedText(text: String, links: List<LinkSpan>, onLinkClick: (String) -> Unit, marks: List<IntRange> = emptyList()): AnnotatedString {
+    if (links.isEmpty() && marks.isEmpty()) return AnnotatedString(text)
     val color = MaterialTheme.colorScheme.secondary
+    val tint = color.copy(alpha = 0.22f)
     return buildAnnotatedString {
         append(text)
+        marks.forEach { if (!it.isEmpty()) addStyle(SpanStyle(background = tint), it.first, it.last + 1) }
         links.forEach { link ->
             if (link.start !in 0..text.length || link.end !in link.start..text.length) return@forEach
             addStyle(SpanStyle(color = color, textDecoration = TextDecoration.Underline), link.start, link.end)

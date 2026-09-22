@@ -167,9 +167,10 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     fun signOut(force: Boolean = false, target: SignOutTarget = SignOutTarget.SIGN_IN) {
         signOutTarget = target
         scope.launch(Dispatchers.IO) {
-            if (!force && graph.progress.pendingCount() > 0) {
+            if (!force && unsynced() > 0) {
                 runCatching { graph.syncEngine.runOnce() }
-                val left = graph.progress.pendingCount()
+                runCatching { graph.annotationSync.runOnce() }
+                val left = unsynced()
                 if (left > 0) { unsyncedOnSignOut = left; return@launch }
             }
             unsyncedOnSignOut = null
@@ -177,6 +178,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             graph.session.tokens = null
             graph.session.displayName = ""
             graph.progress.clear() // never send this account's unsent events as someone else
+            graph.annotations.clear() // they belong to this account, and are on its server
             cache.clear()
             opened = null
             ui = when (signOutTarget) {
@@ -186,6 +188,8 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             refreshSync()
         }
     }
+
+    private fun unsynced() = graph.progress.pendingCount() + graph.annotations.pendingCount()
 
     /** Signs out and lands on server setup, so the reader can point the app at a different server. */
     fun switchServer(force: Boolean = false) = signOut(force, SignOutTarget.SETUP)
@@ -277,6 +281,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         scope.launch(Dispatchers.IO) {
             try {
                 graph.syncEngine.runOnce()
+                graph.annotationSync.runOnce()
                 sync = sync.copy(lastSyncMillis = System.currentTimeMillis())
             } catch (error: Exception) {
                 sync = sync.copy(error = "Couldn't reach the server. Your progress is saved here and will sync when you're back online.")
@@ -287,7 +292,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     }
 
     private fun refreshSync() {
-        sync = sync.copy(pending = graph.progress.pendingCount(), rejected = graph.progress.rejectedCount(), running = false)
+        sync = sync.copy(pending = unsynced(), rejected = graph.progress.rejectedCount(), running = false)
     }
 
     fun loadFriends() {

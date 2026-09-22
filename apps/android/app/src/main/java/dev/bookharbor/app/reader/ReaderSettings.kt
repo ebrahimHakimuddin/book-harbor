@@ -32,13 +32,36 @@ data class ReaderSettings(
     /** 0.05..1, or null to follow the system brightness. */
     val brightness: Float? = null,
     val showProgress: Boolean = true,
+    /** From [nightStart] to [nightEnd] o'clock, switch to a dark theme and dim to [nightBrightness]. */
+    val nightSchedule: Boolean = false,
+    val nightStart: Int = 21,
+    val nightEnd: Int = 7,
+    val nightBrightness: Float = 0.15f,
 ) {
+    /** True when [hour] (0..23) falls in the night window, which may wrap past midnight. */
+    fun isNight(hour: Int): Boolean = when {
+        !nightSchedule || nightStart == nightEnd -> false
+        nightStart < nightEnd -> hour in nightStart until nightEnd
+        else -> hour >= nightStart || hour < nightEnd
+    }
+
+    /** What actually applies at [hour]: the night schedule overrides theme and brightness. */
+    fun effectiveAt(hour: Int): ReaderSettings {
+        if (!isNight(hour)) return this
+        return copy(
+            theme = if (theme == ReaderTheme.Dark || theme == ReaderTheme.Black) theme else ReaderTheme.Black,
+            brightness = minOf(brightness ?: nightBrightness, nightBrightness),
+        )
+    }
+
     fun toMap(): Map<String, String> = buildMap {
         put("theme", theme.name); put("typeface", typeface.name); put("fontScale", fontScale.toString())
         put("lineHeight", lineHeight.toString()); put("paragraphSpacing", paragraphSpacing.toString())
         put("margin", horizontalMargin.toString()); put("alignment", alignment.name)
         brightness?.let { put("brightness", it.toString()) }
         put("showProgress", showProgress.toString())
+        put("nightSchedule", nightSchedule.toString())
+        put("nightStart", nightStart.toString()); put("nightEnd", nightEnd.toString()); put("nightBrightness", nightBrightness.toString())
     }
 
     companion object {
@@ -55,6 +78,10 @@ data class ReaderSettings(
             alignment = enumOr(map["alignment"], Default.alignment),
             brightness = map["brightness"]?.toFloatOrNull()?.coerceIn(0.05f, 1f),
             showProgress = map["showProgress"]?.toBooleanStrictOrNull() ?: Default.showProgress,
+            nightSchedule = map["nightSchedule"]?.toBooleanStrictOrNull() ?: Default.nightSchedule,
+            nightStart = (map["nightStart"]?.toIntOrNull() ?: Default.nightStart).coerceIn(0, 23),
+            nightEnd = (map["nightEnd"]?.toIntOrNull() ?: Default.nightEnd).coerceIn(0, 23),
+            nightBrightness = (map["nightBrightness"]?.toFloatOrNull() ?: Default.nightBrightness).coerceIn(0.05f, 1f),
         )
 
         private inline fun <reified T : Enum<T>> enumOr(name: String?, fallback: T): T =
@@ -74,6 +101,6 @@ class ReaderSettingsStore(private val preferences: SharedPreferences) {
 
     private companion object {
         const val PREFIX = "reader."
-        val KEYS = listOf("theme", "typeface", "fontScale", "lineHeight", "paragraphSpacing", "margin", "alignment", "brightness", "showProgress")
+        val KEYS = listOf("theme", "typeface", "fontScale", "lineHeight", "paragraphSpacing", "margin", "alignment", "brightness", "showProgress", "nightSchedule", "nightStart", "nightEnd", "nightBrightness")
     }
 }

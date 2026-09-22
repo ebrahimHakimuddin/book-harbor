@@ -28,7 +28,30 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.text.font.FontStyle
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import android.text.format.DateFormat
+import dev.bookharbor.app.sync.Locator
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import java.time.LocalTime
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -94,9 +117,37 @@ fun ReaderScaffold(
     contentsLabel: String = "Contents",
     /** True while the content is actively scrolling, so the chrome can duck out of the way. */
     isScrolling: Boolean = false,
+    annotations: BookAnnotations,
+    /** The bookmarkable current position and its list label, once known. */
+    here: Pair<Locator, String>?,
+    onGoTo: (Locator) -> Unit,
+    /** Full-text search over the book, or null where the format/platform can't extract text. */
+    search: (suspend (String) -> List<SearchHit>)?,
+    stats: ReadingStats,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     var chromeVisible by remember { mutableStateOf(true) }
+    LifecycleResumeEffect(stats) {
+        stats.start()
+        onPauseOrDispose { stats.stop() }
+    }
+    val hour by produceState(LocalTime.now().hour) { while (true) { delay(60_000); value = LocalTime.now().hour } }
+    val effective = state.settings.effectiveAt(hour)
+    // The sleep timer holds the screen awake until it fires, then closes the book (saving the
+    // place) so the device can sleep normally.
+    var sleepMinutes by remember { mutableIntStateOf(0) }
+    var sleepAt by remember { mutableStateOf<Long?>(null) }
+    val view = LocalView.current
+    DisposableEffect(sleepAt) {
+        view.keepScreenOn = sleepAt != null
+        onDispose { view.keepScreenOn = false }
+    }
+    LaunchedEffect(sleepAt) {
+        val at = sleepAt ?: return@LaunchedEffect
+        delay(at - System.currentTimeMillis())
+        onClose()
+    }
+    val bookmark = here?.let { annotations.find(AnnotationKind.Bookmark, it.first) }
     // TalkBack's touch exploration turns single taps into "focus this element" rather than a
     // plain gesture, so the tap-to-show zone below often can't be reached once the chrome is
     // hidden -- a TalkBack user could lose the close/contents/settings buttons with no reliable
@@ -106,8 +157,8 @@ fun ReaderScaffold(
         if (touchExplorationEnabled) chromeVisible = true else if (isScrolling) chromeVisible = false
     }
     ReaderFullscreen(chromeVisible)
-    BookHarborTheme(readerTheme = state.settings.theme) {
-        BrightnessEffect(state.settings.brightness)
+    BookHarborTheme(readerTheme = effective.theme) {
+        BrightnessEffect(effective.brightness)
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = WindowInsets(0),
@@ -117,7 +168,11 @@ fun ReaderScaffold(
                     enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { -it },
                     exit = fadeOut(tween(220)) + slideOutVertically(tween(220)) { -it },
                 ) {
-                    ReaderTopBar(state.bookTitle, onClose, onContents = { onAction(ReaderAction.OpenContents) }, contentsLabel = contentsLabel, onSettings = { onAction(ReaderAction.OpenSettings) })
+                    ReaderTopBar(
+                        state.bookTitle, onClose, onContents = { onAction(ReaderAction.OpenContents) }, contentsLabel = contentsLabel, onSettings = { onAction(ReaderAction.OpenSettings) },
+                        bookmarked = bookmark != null,
+                        onBookmark = here?.let { (locator, label) -> { annotations.toggleBookmark(locator, label) } },
+                    )
                 }
             },
             bottomBar = {
@@ -147,8 +202,16 @@ fun ReaderScaffold(
                 ) { content(padding) }
             },
         )
-        if (state.settingsOpen) ReaderSettingsSheet(state.settings, fixedLayout, onAction)
-        if (state.contentsOpen) ContentsSheet(state, contentsLabel, onAction)
+        if (state.settingsOpen) {
+            ReaderSettingsSheet(
+                state.settings, fixedLayout, onAction, stats,
+                sleepMinutes = sleepMinutes, sleepAt = sleepAt,
+                onSleep = { minutes -> sleepMinutes = minutes; sleepAt = if (minutes == 0) null else System.currentTimeMillis() + minutes * 60_000L },
+            )
+        }
+        if (state.contentsOpen) {
+            ContentsSheet(state, contentsLabel, onAction, annotations, search, onGoTo = { onGoTo(it); onAction(ReaderAction.CloseContents) })
+        }
     }
 }
 
@@ -196,7 +259,7 @@ private fun BrightnessEffect(brightness: Float?) {
 }
 
 @Composable
-private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () -> Unit, contentsLabel: String, onSettings: () -> Unit) {
+private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () -> Unit, contentsLabel: String, onSettings: () -> Unit, bookmarked: Boolean, onBookmark: (() -> Unit)?) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -210,6 +273,13 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
             Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close reader")
         }
         Text(bookTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        IconButton(onClick = { onBookmark?.invoke() }, enabled = onBookmark != null) {
+            Icon(
+                if (bookmarked) BrandIcons.BookmarkAdded else BrandIcons.Bookmark,
+                if (bookmarked) "Remove bookmark" else "Bookmark this place",
+                tint = if (bookmarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
+            )
+        }
         TextButton(onClick = onContents, modifier = Modifier.semantics { contentDescription = contentsLabel }) {
             Text(contentsLabel, style = MaterialTheme.typography.labelLarge)
         }
@@ -279,37 +349,177 @@ fun ChapterTransition(nextChapter: ReaderChapter?, onNextChapter: () -> Unit, on
     }
 }
 
+private enum class SheetTab { Contents, Notes, Search }
+
+/** Contents, the book's bookmarks/highlights, and in-book search, as tabs of one sheet. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ContentsSheet(state: ReaderState, label: String, onAction: (ReaderAction) -> Unit) {
-    ModalBottomSheet(onDismissRequest = { onAction(ReaderAction.CloseContents) }, containerColor = MaterialTheme.colorScheme.surface) {
-        Text(label, Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = MaterialTheme.typography.headlineMedium)
-        LazyColumn(Modifier.heightIn(max = 520.dp).padding(bottom = 24.dp)) {
-            itemsIndexed(state.chapters) { index, chapter ->
-                val current = index == state.chapterIndex
-                Row(
-                    Modifier.fillMaxWidth().clickable { onAction(ReaderAction.SelectChapter(index)) }.padding(horizontal = 24.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("${index + 1}", Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-                    Text(chapter.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = if (current) FontWeight.Bold else FontWeight.Normal)
-                    if (current) Text("Reading", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+private fun ContentsSheet(
+    state: ReaderState,
+    label: String,
+    onAction: (ReaderAction) -> Unit,
+    annotations: BookAnnotations,
+    search: (suspend (String) -> List<SearchHit>)?,
+    onGoTo: (Locator) -> Unit,
+) {
+    var tab by rememberSaveable { mutableStateOf(SheetTab.Contents) }
+    ModalBottomSheet(
+        onDismissRequest = { onAction(ReaderAction.CloseContents) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.ime },
+    ) {
+        Box(Modifier.padding(horizontal = 24.dp)) {
+            ChoiceRow(SheetTab.entries, tab, { if (it == SheetTab.Contents) label else it.name }) { tab = it }
+        }
+        Box(Modifier.heightIn(min = 240.dp, max = 520.dp).padding(bottom = 24.dp)) {
+            when (tab) {
+                SheetTab.Contents -> LazyColumn {
+                    itemsIndexed(state.chapters) { index, chapter ->
+                        val current = index == state.chapterIndex
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onAction(ReaderAction.SelectChapter(index)) }.padding(horizontal = 24.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${index + 1}", Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+                            Text(chapter.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = if (current) FontWeight.Bold else FontWeight.Normal)
+                            if (current) Text("Reading", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                        }
+                    }
+                }
+                SheetTab.Notes -> NotesList(annotations, onGoTo)
+                SheetTab.Search -> SearchPanel(search, onGoTo)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotesList(annotations: BookAnnotations, onGoTo: (Locator) -> Unit) {
+    val context = LocalContext.current
+    val items = remember(annotations.items) { annotations.items.sortedWith(InReadingOrder) }
+    var editing by remember { mutableStateOf<Annotation?>(null) }
+    if (items.isEmpty()) {
+        Text(
+            "No bookmarks or highlights yet. Tap the bookmark icon to mark your place, or press and hold a paragraph to highlight it.",
+            Modifier.padding(24.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    LazyColumn {
+        item {
+            TextButton(onClick = { shareText(context, exportAnnotations(annotations.bookTitle, items)) }, Modifier.padding(horizontal = 12.dp)) {
+                Icon(BrandIcons.Share, null, Modifier.size(18.dp))
+                Text("  Export all")
+            }
+        }
+        items(items, key = { it.id }) { item ->
+            var menu by remember { mutableStateOf(false) }
+            Row(Modifier.fillMaxWidth().clickable { onGoTo(item.locator) }.padding(start = 24.dp, end = 8.dp, top = 12.dp, bottom = 12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        (if (item.kind == AnnotationKind.Bookmark) "Bookmark · " else "Highlight · ") + item.label,
+                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary,
+                    )
+                    if (item.excerpt.isNotBlank()) Text(item.excerpt, style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if (item.note.isNotBlank()) Text(item.note, style = MaterialTheme.typography.bodyMedium)
+                }
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(BrandIcons.MoreVertical, "Options for this ${item.kind.name.lowercase()}") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text(if (item.note.isBlank()) "Add note" else "Edit note") }, onClick = { menu = false; editing = item })
+                        if (item.kind == AnnotationKind.Highlight) {
+                            DropdownMenuItem(text = { Text("Share") }, onClick = { menu = false; shareText(context, quote(item.excerpt, annotations.bookTitle, item.label)) })
+                        }
+                        DropdownMenuItem(text = { Text("Delete", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; annotations.delete(item) })
+                    }
+                }
+            }
+        }
+    }
+    editing?.let { target -> NoteDialog(target.note, onSave = { annotations.setNote(target, it); editing = null }, onDismiss = { editing = null }) }
+}
+
+/** A highlight formatted for sharing outside the app. */
+internal fun quote(excerpt: String, bookTitle: String, label: String) = "“${excerpt.trim()}”\n— $bookTitle, $label"
+
+@Composable
+internal fun NoteDialog(initial: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Note") },
+        text = { OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), minLines = 3, placeholder = { Text("Your thoughts on this passage") }) },
+        confirmButton = { TextButton(onClick = { onSave(text) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@OptIn(FlowPreview::class)
+@Composable
+private fun SearchPanel(search: (suspend (String) -> List<SearchHit>)?, onGoTo: (Locator) -> Unit) {
+    if (search == null) {
+        Text("Search needs Android 15 or later for PDFs.", Modifier.padding(24.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    var query by rememberSaveable { mutableStateOf("") }
+    var hits by remember { mutableStateOf<List<SearchHit>?>(emptyList()) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { query.trim() }.debounce(350).distinctUntilChanged().collectLatest { q ->
+            if (q.length < 2) { hits = emptyList(); return@collectLatest }
+            hits = null
+            hits = runCatching { search(q) }.getOrDefault(emptyList())
+        }
+    }
+    Column {
+        OutlinedTextField(
+            query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp), singleLine = true,
+            placeholder = { Text("Search in this book") }, leadingIcon = { Icon(BrandIcons.Search, null, Modifier.size(20.dp)) },
+            shape = RoundedCornerShape(12.dp),
+        )
+        val found = hits
+        when {
+            found == null -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            found.isEmpty() && query.trim().length >= 2 -> Text("No matches.", Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> LazyColumn {
+                if (found.size >= MAX_SEARCH_HITS) item { Text("Showing the first $MAX_SEARCH_HITS matches.", Modifier.padding(horizontal = 24.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                items(found) { hit ->
+                    Column(Modifier.fillMaxWidth().clickable { onGoTo(hit.locator) }.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                        Text(hit.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+                        Text(hit.snippet, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
     }
 }
 
+const val MAX_SEARCH_HITS = 200
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReaderSettingsSheet(settings: ReaderSettings, fixedLayout: Boolean, onAction: (ReaderAction) -> Unit) {
+private fun ReaderSettingsSheet(
+    settings: ReaderSettings,
+    fixedLayout: Boolean,
+    onAction: (ReaderAction) -> Unit,
+    stats: ReadingStats,
+    sleepMinutes: Int,
+    sleepAt: Long?,
+    onSleep: (Int) -> Unit,
+) {
     ModalBottomSheet(
         onDismissRequest = { onAction(ReaderAction.CloseSettings) },
         containerColor = MaterialTheme.colorScheme.surface,
         contentWindowInsets = { WindowInsets.ime },
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
+        val context = LocalContext.current
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
             Text("Reading settings", style = MaterialTheme.typography.headlineMedium)
+            val minutes = remember { stats.secondsToday() / 60 }
+            val streak = remember { stats.streakDays() }
+            Text(
+                "Today: $minutes min" + if (streak > 1) " · $streak-day streak" else "",
+                Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary,
+            )
             Spacer(Modifier.height(24.dp))
 
             SettingLabel("Theme")
@@ -346,6 +556,28 @@ private fun ReaderSettingsSheet(settings: ReaderSettings, fixedLayout: Boolean, 
                 Switch(checked = settings.showProgress, onCheckedChange = { onAction(ReaderAction.SetProgressVisible(it)) })
             }
 
+            Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    SettingLabel("Night schedule")
+                    Text("Dark theme and a dimmer screen at night", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = settings.nightSchedule, onCheckedChange = { onAction(ReaderAction.SetNightSchedule(it)) })
+            }
+            if (settings.nightSchedule) {
+                val hourLabel = { hour: Int -> DateFormat.getTimeFormat(context).format(java.util.Calendar.getInstance().apply { set(java.util.Calendar.HOUR_OF_DAY, hour); set(java.util.Calendar.MINUTE, 0) }.time) }
+                SettingSlider("Starts", hourLabel(settings.nightStart), settings.nightStart.toFloat(), 0f..23f, steps = 22) { onAction(ReaderAction.SetNightHours(it.roundToInt(), settings.nightEnd)) }
+                SettingSlider("Ends", hourLabel(settings.nightEnd), settings.nightEnd.toFloat(), 0f..23f, steps = 22) { onAction(ReaderAction.SetNightHours(settings.nightStart, it.roundToInt())) }
+                SettingSlider("Night brightness", "${(settings.nightBrightness * 100).roundToInt()}%", settings.nightBrightness, 0.05f..1f) { onAction(ReaderAction.SetNightBrightness(it)) }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            SettingLabel("Sleep timer")
+            ChoiceRow(listOf(0, 15, 30, 60), sleepMinutes, { if (it == 0) "Off" else "$it min" }, onSleep)
+            if (sleepAt != null) {
+                val time = remember(sleepAt) { DateFormat.getTimeFormat(context).format(java.util.Date(sleepAt)) }
+                Text("Keeps the screen on, then closes the book at $time", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
             TextButton(onClick = { onAction(ReaderAction.ResetSettings) }, Modifier.padding(top = 12.dp)) { Text("Reset to defaults") }
         }
     }
@@ -374,10 +606,10 @@ private fun <T> ChoiceRow(choices: List<T>, selected: T, label: (T) -> String, o
 }
 
 @Composable
-private fun SettingSlider(label: String, valueLabel: String, value: Float, range: ClosedFloatingPointRange<Float>, onValueChange: (Float) -> Unit) {
+private fun SettingSlider(label: String, valueLabel: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int = 0, onValueChange: (Float) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         SettingLabel(label)
         Text(valueLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    Slider(value = value, onValueChange = onValueChange, valueRange = range)
+    Slider(value = value, onValueChange = onValueChange, valueRange = range, steps = steps)
 }

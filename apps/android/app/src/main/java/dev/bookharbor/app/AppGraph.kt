@@ -9,6 +9,9 @@ import dev.bookharbor.app.library.FriendsClient
 import dev.bookharbor.app.library.LibraryClient
 import dev.bookharbor.app.library.ListsClient
 import dev.bookharbor.app.library.SessionStore
+import dev.bookharbor.app.reader.AnnotationStore
+import dev.bookharbor.app.reader.ReadingStats
+import dev.bookharbor.app.sync.AnnotationSyncEngine
 import dev.bookharbor.app.sync.HttpSyncApi
 import dev.bookharbor.app.sync.ProgressRecorder
 import dev.bookharbor.app.sync.SqliteProgressStore
@@ -34,6 +37,9 @@ class AppGraph private constructor(context: Context) {
     val downloader = EditionDownloader(api, downloads)
     val progress = SqliteProgressStore(app)
     val syncEngine = SyncEngine(progress, HttpSyncApi(api))
+    val annotations = AnnotationStore(app) { SyncScheduler.schedule(app) }
+    val annotationSync = AnnotationSyncEngine(annotations, api)
+    val readingStats = ReadingStats(prefs)
 
     /** Stable per install; identifies which device wrote a reading event. */
     val deviceId: String = prefs.getString("device_id", null) ?: ("device_" + UUID.randomUUID().toString().replace("-", "")).also {

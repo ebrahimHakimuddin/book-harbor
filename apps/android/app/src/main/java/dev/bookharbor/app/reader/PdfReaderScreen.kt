@@ -3,7 +3,12 @@ package dev.bookharbor.app.reader
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
+import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.ext.SdkExtensions
+import androidx.annotation.RequiresApi
+import androidx.annotation.RequiresExtension
+import androidx.compose.ui.graphics.luminance
 import android.util.LruCache
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -89,6 +94,12 @@ class PdfBook(file: File) : Closeable {
         }
     }
 
+    /** The page's extractable text; the platform only offers this from Android 15 (SDK extension 13). */
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+    @Synchronized
+    fun text(index: Int): String = renderer.openPage(index).use { page -> page.textContents.joinToString("\n") { it.text } }
+
     @Synchronized
     override fun close() {
         cache.evictAll()
@@ -111,6 +122,8 @@ fun PdfReaderScreen(
     restore: LocalPosition?,
     recorder: ProgressRecorder,
     settingsStore: ReaderSettingsStore,
+    annotationStore: AnnotationStore,
+    stats: ReadingStats,
     onClose: () -> Unit,
 ) {
     val opened by produceState<Result<PdfBook>?>(null, file) { value = withContext(Dispatchers.IO) { runCatching { PdfBook(file) } } }
@@ -132,7 +145,7 @@ fun PdfReaderScreen(
         }
         return
     }
-    PdfPages(book, bookId, editionId, bookTitle, restore, recorder, settingsStore, onClose)
+    PdfPages(book, bookId, editionId, bookTitle, restore, recorder, settingsStore, annotationStore, stats, onClose)
 }
 
 @OptIn(FlowPreview::class)
@@ -145,8 +158,12 @@ private fun PdfPages(
     restore: LocalPosition?,
     recorder: ProgressRecorder,
     settingsStore: ReaderSettingsStore,
+    annotationStore: AnnotationStore,
+    stats: ReadingStats,
     onClose: () -> Unit,
 ) {
+    val annotations = remember { BookAnnotations(annotationStore, bookId, bookTitle) }
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { annotations.load() } }
     val count = book.pageCount
     val startPage = remember { restore?.locator?.takeIf { it.kind == Locator.PDF }?.page?.coerceIn(1, count) ?: 1 }
     var state by remember {
@@ -199,21 +216,39 @@ private fun PdfPages(
         jumpTarget?.let { listState.scrollToItem(it); jumpTarget = null }
     }
 
+    fun goToPage(page: Int) {
+        if (page !in 1..count) return
+        latest = page
+        jumpTarget = page - 1
+    }
+    val search: (suspend (String) -> List<SearchHit>)? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 13) {
+            { query ->
+                withContext(Dispatchers.IO) {
+                    (0 until count).asSequence()
+                        .mapNotNull { index -> runCatching { book.text(index) }.getOrNull()?.let { snippetAround(it, query) }?.let { SearchHit(Locator.pdf(index + 1), "Page ${index + 1}", it) } }
+                        .take(MAX_SEARCH_HITS).toList()
+                }
+            }
+        } else null
+
     ReaderScaffold(
         state = state,
         onAction = { action ->
             state = state.reduce(action)
-            if (action is ReaderAction.SelectChapter && action.index in 0 until count) {
-                latest = action.index + 1
-                jumpTarget = action.index
-            }
+            if (action is ReaderAction.SelectChapter) goToPage(action.index + 1)
         },
         onClose = ::closeAndFlush,
         progressLabel = "Page ${state.chapterIndex + 1} of $count",
         fixedLayout = true,
         contentsLabel = "Pages",
         isScrolling = listState.isScrollInProgress,
-    ) { padding -> PageList(book, ratios, listState, padding, state.settings.theme) }
+        annotations = annotations,
+        here = (Locator.pdf(state.chapterIndex + 1) to "Page ${state.chapterIndex + 1}").takeIf { ready },
+        onGoTo = { goToPage(it.page) },
+        search = search,
+        stats = stats,
+    ) { padding -> PageList(book, ratios, listState, padding) }
 }
 
 private fun firstVisiblePage(state: LazyListState): Int {
@@ -222,12 +257,14 @@ private fun firstVisiblePage(state: LazyListState): Int {
 }
 
 @Composable
-private fun PageList(book: PdfBook, ratios: List<Float>?, listState: LazyListState, padding: PaddingValues, theme: ReaderTheme) {
+private fun PageList(book: PdfBook, ratios: List<Float>?, listState: LazyListState, padding: PaddingValues) {
     if (ratios == null) {
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
-    val dark = theme == ReaderTheme.Dark || theme == ReaderTheme.Black
+    // From the applied colors, not the stored theme, so "System" in dark mode and the night
+    // schedule invert pages too.
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
         val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }.coerceIn(200, 1600)
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {

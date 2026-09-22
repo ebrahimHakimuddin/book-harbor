@@ -62,9 +62,9 @@ fun BookHarborApp() {
         // screen owns its own back handling so it can flush pending progress before closing.
         val common = Triple(opened.book.id, opened.edition.id, opened.book.title)
         if (opened.epub != null) {
-            EpubReaderScreen(opened.epub, common.first, common.second, common.third, opened.position, graph.recorder, settings, controller::closeReader)
+            EpubReaderScreen(opened.epub, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader)
         } else {
-            PdfReaderScreen(opened.file, common.first, common.second, common.third, opened.position, graph.recorder, settings, controller::closeReader)
+            PdfReaderScreen(opened.file, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader)
         }
     } else {
         BookHarborTheme(readerTheme = ReaderTheme.System) {

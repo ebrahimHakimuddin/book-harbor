@@ -23,9 +23,10 @@ class ProgressSyncWorker(context: Context, params: WorkerParameters) : Coroutine
         if (graph.session.tokens == null) return@withContext Result.success() // signed out: nothing to send as this user
         try {
             val outcome = graph.syncEngine.runOnce()
+            val annotationsRemain = graph.annotationSync.runOnce()
             // A page can stop early with events still queued (see SyncEngine); that is not
             // success, or WorkManager would drop the job with nothing left to retry it.
-            if (outcome.pendingRemains) Result.retry() else Result.success()
+            if (outcome.pendingRemains || annotationsRemain) Result.retry() else Result.success()
         } catch (error: HttpError) {
             if (error.status == 401) {
                 // The refresh token itself is dead, not just the access token: retrying will

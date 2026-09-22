@@ -201,8 +201,8 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
     controller.unsyncedOnSignOut?.let { count ->
         AlertDialog(
             onDismissRequest = controller::dismissSignOutWarning,
-            title = { Text("Reading progress hasn't synced") },
-            text = { Text("$count reading ${if (count == 1) "update hasn't" else "updates haven't"} reached your server yet. Signing out now discards ${if (count == 1) "it" else "them"}. Connect to the internet and sync first to keep your place.") },
+            title = { Text("Some changes haven't synced") },
+            text = { Text("$count reading ${if (count == 1) "update or note hasn't" else "updates or notes haven't"} reached your server yet. Signing out now discards ${if (count == 1) "it" else "them"}. Connect to the internet and sync first to keep your place and highlights.") },
             confirmButton = { TextButton(onClick = controller::confirmSignOut) { Text("Sign out anyway", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = controller::dismissSignOutWarning) { Text("Keep me signed in") } },
         )

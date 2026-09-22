@@ -65,6 +65,9 @@ sealed interface ReaderAction {
     data class SetMargin(val dp: Int) : ReaderAction
     data class SetBrightness(val brightness: Float?) : ReaderAction
     data class SetProgressVisible(val visible: Boolean) : ReaderAction
+    data class SetNightSchedule(val enabled: Boolean) : ReaderAction
+    data class SetNightHours(val start: Int, val end: Int) : ReaderAction
+    data class SetNightBrightness(val brightness: Float) : ReaderAction
     data object ResetSettings : ReaderAction
 }
 
@@ -89,5 +92,8 @@ fun ReaderState.reduce(action: ReaderAction): ReaderState = when (action) {
     is ReaderAction.SetMargin -> copy(settings = settings.copy(horizontalMargin = action.dp.coerceIn(16, 48)))
     is ReaderAction.SetBrightness -> copy(settings = settings.copy(brightness = action.brightness?.coerceIn(0.05f, 1f)))
     is ReaderAction.SetProgressVisible -> copy(settings = settings.copy(showProgress = action.visible))
+    is ReaderAction.SetNightSchedule -> copy(settings = settings.copy(nightSchedule = action.enabled))
+    is ReaderAction.SetNightHours -> copy(settings = settings.copy(nightStart = action.start.coerceIn(0, 23), nightEnd = action.end.coerceIn(0, 23)))
+    is ReaderAction.SetNightBrightness -> copy(settings = settings.copy(nightBrightness = action.brightness.coerceIn(0.05f, 1f)))
     ReaderAction.ResetSettings -> copy(settings = ReaderSettings.Default)
 }
