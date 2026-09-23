@@ -151,6 +151,8 @@ internal data class BookCardState(
     val error: String?,
     val chaptersLeft: Int?,
     val onShelf: Boolean,
+    /** Web novel chapters added since the reader last opened the book. */
+    val newChapters: Int = 0,
 )
 
 /** [downloaded] is the set of downloaded edition IDs, computed once per screen rather than per card. */
@@ -165,6 +167,7 @@ internal fun LibraryUiState.Catalog.cardState(book: Book, downloaded: Set<String
         error = book.editions.firstNotNullOfOrNull { edition -> errors[edition.id]?.takeIf { downloads[edition.id] == DownloadStatus.FAILED } },
         chaptersLeft = chaptersLeft[book.id],
         onShelf = (progress ?: 0.0) > 0.0 || isDownloaded,
+        newChapters = newChapters[book.id] ?: 0,
     )
 }
 
@@ -174,11 +177,14 @@ internal fun LibraryUiState.Catalog.downloadedEditions(): Set<String> = download
 internal fun cardStatus(state: BookCardState, book: Book): String = when {
     state.downloading -> state.fraction?.let { "Downloading… ${(it * 100).roundToInt()}%" } ?: "Downloading…"
     state.error != null -> "Download failed"
+    state.newChapters > 0 -> newChaptersLabel(state.newChapters)
     isFinished(state.progress) -> "Finished"
     isReading(state.progress) -> state.chaptersLeft?.let { chaptersLeftLabel(it) } ?: "${((state.progress ?: 0.0) * 100).roundToInt()}% read"
     state.downloaded -> state.chaptersLeft?.let { "$it ${if (it == 1) "chapter" else "chapters"}" } ?: "Downloaded"
     else -> book.authors.firstOrNull() ?: "Not downloaded"
 }
+
+internal fun newChaptersLabel(count: Int) = if (count == 1) "1 new chapter" else "$count new chapters"
 
 internal fun chaptersLeftLabel(left: Int) = when (left) { 0 -> "Last pages"; 1 -> "1 chapter left"; else -> "$left chapters left" }
 
@@ -224,6 +230,7 @@ internal fun BookGridCell(controller: AppController, book: Book, state: BookCard
             )
             // Already on the reader's shelf: a small check, so Browse shows what they have at a glance.
             if (showOwned && state.onShelf) OwnedBadge(Modifier.align(Alignment.TopEnd))
+            if (state.newChapters > 0) NewChaptersBadge(state.newChapters, Modifier.align(Alignment.TopStart))
             // Downloading: the cover dims under a progress ring, then clears when it's ready.
             DownloadScrim(state.downloading, state.fraction, Modifier.matchParentSize())
             if (isReading(state.progress)) {
@@ -264,6 +271,16 @@ internal fun ResumeButton(book: Book, reading: Boolean, modifier: Modifier = Mod
             contentAlignment = Alignment.Center,
         ) { Icon(BrandIcons.Play, label, Modifier.size(if (small) 11.dp else 15.dp).offset(x = 1.dp), tint = Color.White) }
     }
+}
+
+/** "+12" on a web novel's cover: chapters added since it was last opened. */
+@Composable
+internal fun NewChaptersBadge(count: Int, modifier: Modifier = Modifier) {
+    Text(
+        "+$count", modifier.padding(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondary).padding(horizontal = 8.dp, vertical = 2.dp)
+            .semantics { contentDescription = newChaptersLabel(count) },
+        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondary, maxLines = 1,
+    )
 }
 
 @Composable

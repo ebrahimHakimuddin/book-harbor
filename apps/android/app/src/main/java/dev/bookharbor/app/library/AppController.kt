@@ -33,6 +33,8 @@ sealed interface LibraryUiState {
         val progress: Map<String, Double> = emptyMap(),
         /** Unread chapters per book, for books whose chapter count is known (EPUBs opened here). */
         val chaptersLeft: Map<String, Int> = emptyMap(),
+        /** Web novel chapters added since the reader last opened each book. */
+        val newChapters: Map<String, Int> = emptyMap(),
         /** RFC 3339 UTC instant of each book's most recent local reading event, for the History tab. */
         val lastReadAt: Map<String, String> = emptyMap(),
         /** True when showing the last saved catalog because the server could not be reached. */
@@ -249,15 +251,25 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     /** [catalog] with reading state (progress, last read, chapters left) re-read from this device. */
     private fun withReading(catalog: LibraryUiState.Catalog): LibraryUiState.Catalog {
         val positions = graph.progress.positions().associateBy { it.bookId }
-        val left = graph.chapterMarks.counts().mapValues { (bookId, count) ->
+        // A web novel's file lists chapters not fetched yet; only the fetched ones count.
+        val fetched = catalog.books.filter { it.webnovelChapters > 0 }.associate { it.id to it.webnovelChapters }
+        val left = graph.chapterMarks.counts().mapValues { (bookId, total) ->
+            val count = fetched[bookId]?.let { minOf(it, total) } ?: total
             val position = positions[bookId]
             val chapter = position?.locator?.takeIf { it.kind == Locator.EPUB }?.let { EpubPosition.parse(it.value)?.chapterIndex }
             chaptersLeft(count, graph.chapterMarks.get(bookId), chapter, isFinished(position?.percentage))
         }
+        // A web novel seen for the first time starts with nothing new.
+        val seen = graph.chapterMarks.seenWebnovelChapters()
+        catalog.books.filter { it.webnovelChapters > 0 && it.id !in seen }.forEach { graph.chapterMarks.setSeenWebnovelChapters(it.id, it.webnovelChapters) }
+        val newChapters = catalog.books.mapNotNull { book ->
+            (book.webnovelChapters - (seen[book.id] ?: book.webnovelChapters)).takeIf { it > 0 }?.let { book.id to it }
+        }.toMap()
         return catalog.copy(
             progress = positions.mapValues { it.value.percentage },
             lastReadAt = positions.mapValues { it.value.occurredAt },
             chaptersLeft = left,
+            newChapters = newChapters,
         )
     }
 
@@ -310,10 +322,38 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 epub?.let { graph.chapterMarks.setCount(book.id, it.chapters.size) }
                 val position = startAt?.let { LocalPosition(book.id, edition.id, it, 0.0, "", "") } ?: graph.progress.position(book.id)
                 opened = OpenedBook(book, edition, file, position, epub)
+                if (book.webnovelChapters > 0) {
+                    graph.chapterMarks.setSeenWebnovelChapters(book.id, book.webnovelChapters)
+                    updateCatalog(::withReading)
+                }
             } catch (error: Exception) {
                 updateCatalog { it.copy(errors = it.errors + (edition.id to (error.message ?: "This file could not be opened"))) }
             }
         }
+    }
+
+    /**
+     * The open web novel is on a chapter still being fetched: if the server has a newer copy,
+     * download it and reopen at the start of [chapterIndex]. The reader calls this on a timer
+     * while it shows a placeholder; nothing happens until the file has actually changed.
+     */
+    suspend fun refreshOpenBook(chapterIndex: Int) = withContext(Dispatchers.IO) {
+        val current = opened ?: return@withContext
+        val fresh = runCatching { graph.library.book(current.book.id) }.getOrNull() ?: return@withContext
+        val edition = fresh.editions.firstOrNull { it.id == current.edition.id } ?: return@withContext
+        if (edition.sha256.isBlank() || edition.sha256.equals(graph.downloads.get(edition.id)?.sha256, ignoreCase = true)) return@withContext
+        updateCatalog { withReading(it.copy(books = it.books.map { book -> if (book.id == fresh.id) fresh else book })) }
+        downloadNow(edition)
+        val local = graph.downloads.get(edition.id)?.takeIf { it.sha256.equals(edition.sha256, ignoreCase = true) } ?: return@withContext
+        if (opened?.book?.id != fresh.id) return@withContext // closed meanwhile
+        val epub = runCatching { EpubBook.open(File(local.path)) }.getOrNull() ?: return@withContext
+        graph.chapterMarks.setCount(fresh.id, epub.chapters.size)
+        graph.chapterMarks.setSeenWebnovelChapters(fresh.id, fresh.webnovelChapters)
+        val previous = opened
+        opened = OpenedBook(fresh, edition, File(local.path), LocalPosition(fresh.id, edition.id, Locator.epub(EpubPosition.atChapter(chapterIndex).toCfi()), 0.0, "", ""), epub)
+        updateCatalog(::withReading)
+        // The old reader lets go of its file once the new one is on screen.
+        scope.launch { kotlinx.coroutines.delay(1000); previous?.epub?.close() }
     }
 
     /**

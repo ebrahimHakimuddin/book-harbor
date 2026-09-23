@@ -121,6 +121,8 @@ fun EpubReaderScreen(
     stats: ReadingStats,
     onClose: () -> Unit,
     chapterMarks: ChapterMarks? = null,
+    /** Called every minute while a web novel chapter still being fetched is on screen. */
+    onPlaceholder: (suspend (chapterIndex: Int) -> Unit)? = null,
 ) {
     val annotations = remember { BookAnnotations(annotationStore, bookId, bookTitle.ifBlank { book.title }) }
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { annotations.load() } }
@@ -142,6 +144,15 @@ fun EpubReaderScreen(
     val blocks by produceState<List<Block>?>(null, chapterIndex) {
         value = null
         value = withContext(Dispatchers.IO) { runCatching { book.blocks(chapterIndex) }.getOrDefault(emptyList()) }
+    }
+    // A web novel chapter the server hasn't fetched yet: keep asking for a newer copy, which
+    // reopens the book here once this chapter has arrived.
+    val placeholder = blocks?.any { it is Block.Paragraph && it.text.startsWith(WEBNOVEL_PLACEHOLDER) } == true
+    if (placeholder && onPlaceholder != null) LaunchedEffect(chapterIndex) {
+        while (true) {
+            onPlaceholder(chapterIndex)
+            delay(60_000)
+        }
     }
     val listState = rememberLazyListState()
     var pendingRestore by remember { mutableStateOf(restored) }
@@ -646,3 +657,6 @@ private fun BookImage(book: EpubBook, chapterHref: String, block: Block.Image, m
         Text("[${block.alt}]", modifier, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
+
+/** How the server's placeholder for an unfetched web novel chapter begins. */
+private const val WEBNOVEL_PLACEHOLDER = "This chapter is still being fetched."

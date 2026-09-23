@@ -23,6 +23,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.key
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -150,7 +151,10 @@ fun BookHarborApp(openRequest: MutableState<String?> = remember { mutableStateOf
             // screen owns its own back handling so it can flush pending progress before closing.
             val common = Triple(opened.book.id, opened.edition.id, opened.book.title)
             if (opened.epub != null) {
-                EpubReaderScreen(opened.epub, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader, graph.chapterMarks)
+                // Keyed on the file: a web novel reloaded with new chapters starts a fresh reader.
+                key(opened.epub) {
+                    EpubReaderScreen(opened.epub, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader, graph.chapterMarks, controller::refreshOpenBook)
+                }
             } else {
                 PdfReaderScreen(opened.file, common.first, common.second, common.third, opened.position, graph.recorder, settings, graph.annotations, graph.readingStats, controller::closeReader)
             }

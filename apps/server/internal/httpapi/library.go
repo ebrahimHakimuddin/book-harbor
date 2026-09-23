@@ -30,6 +30,9 @@ type bookResponse struct {
 	CreatedAt   time.Time           `json:"createdAt"`
 	UpdatedAt   time.Time           `json:"updatedAt"`
 	Editions    []editionResponse   `json:"editions"`
+	// WebnovelChapters is how many chapters of a followed web novel are in the book so far;
+	// absent for other books. Clients compare it to what the reader has seen.
+	WebnovelChapters int `json:"webnovelChapters,omitempty"`
 }
 
 type bookMetadataSource struct {
@@ -100,7 +103,9 @@ func (s *server) book(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to read book")
 		return
 	}
-	writeJSON(w, http.StatusOK, newBookResponse(book))
+	response := newBookResponse(book)
+	response.WebnovelChapters = s.webnovelChapters(r.Context())[book.ID]
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *server) patchBook(w http.ResponseWriter, r *http.Request) {
@@ -224,9 +229,12 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to list books")
 		return
 	}
+	chapters := s.webnovelChapters(r.Context())
 	items := make([]bookResponse, 0, len(books))
 	for _, book := range books {
-		items = append(items, newBookResponse(book))
+		response := newBookResponse(book)
+		response.WebnovelChapters = chapters[book.ID]
+		items = append(items, response)
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Items      []bookResponse `json:"items"`

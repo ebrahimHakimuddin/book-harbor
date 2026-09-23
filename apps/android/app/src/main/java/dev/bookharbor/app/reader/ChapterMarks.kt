@@ -35,9 +35,21 @@ class ChapterMarks(private val preferences: SharedPreferences) {
         preferences.edit().putString(COUNTS, JSONObject(counts() + (bookId to count)).toString()).apply()
     }
 
+    /** A web novel's chapter count when the reader last opened it, to tell how many are new. */
+    fun seenWebnovelChapters(): Map<String, Int> = runCatching {
+        val json = JSONObject(preferences.getString(SEEN, "{}") ?: "{}")
+        json.keys().asSequence().associateWith { json.getInt(it) }
+    }.getOrDefault(emptyMap())
+
+    fun setSeenWebnovelChapters(bookId: String, count: Int) {
+        if (seenWebnovelChapters()[bookId] == count) return
+        preferences.edit().putString(SEEN, JSONObject(seenWebnovelChapters() + (bookId to count)).toString()).apply()
+    }
+
     private companion object {
         const val PREFIX = "chapters.read."
         const val COUNTS = "chapters.count"
+        const val SEEN = "webnovel.seen"
     }
 }
 

@@ -34,6 +34,8 @@ data class Book(
     /** Position within [series]; 0 when unnumbered. */
     val seriesIndex: Double = 0.0,
     val tags: List<String> = emptyList(),
+    /** Chapters in the book so far when it's a followed web novel; 0 for any other book. */
+    val webnovelChapters: Int = 0,
 )
 data class BookPage(val books: List<Book>, val nextCursor: String?)
 
@@ -60,6 +62,7 @@ fun parseBookPage(json: String): BookPage {
             series = book.optString("series"),
             seriesIndex = book.optDouble("seriesIndex", 0.0).takeUnless { it.isNaN() } ?: 0.0,
             tags = (0 until tags.length()).map { tags.getString(it) },
+            webnovelChapters = book.optInt("webnovelChapters", 0),
             editions = (0 until editions.length()).map { editionIndex ->
                 val edition = editions.getJSONObject(editionIndex)
                 Edition(edition.getString("id"), edition.optString("format"), edition.optString("mediaType"), edition.optString("originalFilename"), edition.optString("contentUrl"), edition.optLong("byteLength", 0), edition.optString("sha256"))
@@ -272,6 +275,9 @@ class LibraryClient(private val api: ApiClient) {
         api.request(url.trimEnd('/') + "/api/v1/password-resets/confirm", "POST", JSONObject().put("email", email).put("code", code).put("newPassword", newPassword).toString())
     }
 
+    /** One book as the server has it now. */
+    fun book(id: String): Book = parseBookPage("{\"items\":[" + api.authorized("/api/v1/books/" + java.net.URLEncoder.encode(id, "UTF-8")) + "]}").books.first()
+
     /** Every book, following the server's pagination cursor. */
     fun books(): List<Book> {
         val all = mutableListOf<Book>()
@@ -307,7 +313,7 @@ fun encodeBooks(books: List<Book>): String = JSONObject().put("items", JSONArray
             put("id", book.id); put("title", book.title); put("subtitle", book.subtitle); put("coverUrl", book.coverUrl); put("updatedAt", book.updatedAt)
             put("authors", JSONArray(book.authors))
             put("description", book.description); put("series", book.series); put("seriesIndex", book.seriesIndex)
-            put("tags", JSONArray(book.tags))
+            put("tags", JSONArray(book.tags)); put("webnovelChapters", book.webnovelChapters)
             put("editions", JSONArray().also { editions ->
                 book.editions.forEach { e ->
                     editions.put(JSONObject().put("id", e.id).put("format", e.format).put("mediaType", e.mediaType).put("originalFilename", e.originalFilename).put("contentUrl", e.contentUrl).put("byteLength", e.byteLength).put("sha256", e.sha256))

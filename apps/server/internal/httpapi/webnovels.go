@@ -191,3 +191,22 @@ func (s *server) fulfillWebnovelRequests(ctx context.Context, sourceID, bookID s
 		}
 	}
 }
+
+// webnovelChapters maps each web novel's book to its chapters so far (empty without web novels).
+func (s *server) webnovelChapters(ctx context.Context) map[string]int {
+	chapters := map[string]int{}
+	if s.webnovels == nil {
+		return chapters
+	}
+	followed, err := s.webnovels.Store.List(ctx)
+	if err != nil {
+		s.logger.Error("list web novels", "error", err)
+		return chapters
+	}
+	for _, f := range followed {
+		if f.BookID != "" {
+			chapters[f.BookID] = f.Chapters
+		}
+	}
+	return chapters
+}

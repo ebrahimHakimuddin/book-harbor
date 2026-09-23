@@ -75,7 +75,7 @@ class LibraryModelTest {
     }
 
     @Test fun catalogSurvivesTheOfflineCacheRoundTrip() {
-        val full = Book("b9", "Cached", listOf(edition("e9", "epub").copy(byteLength = 12, sha256 = "ab")), "Sub", listOf("A", "B"), "/api/v1/books/b9/cover", "2026-01-01T00:00:00Z", "About it", "Saga", 2.5, listOf("Sci-fi"))
+        val full = Book("b9", "Cached", listOf(edition("e9", "epub").copy(byteLength = 12, sha256 = "ab")), "Sub", listOf("A", "B"), "/api/v1/books/b9/cover", "2026-01-01T00:00:00Z", "About it", "Saga", 2.5, listOf("Sci-fi"), webnovelChapters = 140)
         val page = parseBookPage(encodeBooks(listOf(full)))
         assertEquals(listOf(full), page.books)
         assertEquals(null, page.nextCursor)

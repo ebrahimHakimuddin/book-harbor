@@ -9,7 +9,7 @@ import (
 )
 
 // pendingText fills a chapter the server hasn't fetched yet.
-const pendingText = "This chapter is still being fetched. Refresh your library in a few minutes to get it."
+const pendingText = "This chapter is still being fetched. It appears here on its own when it arrives."
 
 // BuildEPUB writes novel's chapters, in order, as an EPUB 3 book (with an NCX for older readers).
 // chapters are 1..n as fetched; up to novel.Chapters, the rest are placeholders under their
