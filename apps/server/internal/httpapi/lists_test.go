@@ -37,6 +37,12 @@ func TestListsFlowEndToEnd(t *testing.T) {
 	if list.Name != "Beach reads" || list.BookCount != 0 {
 		t.Fatalf("created list = %#v", list)
 	}
+	if dup := call(t, handler, alice.AccessToken, http.MethodPost, "/api/v1/lists", `{"name":"beach READS"}`); dup.Code != http.StatusConflict {
+		t.Fatalf("duplicate name status = %d, want %d; body = %s", dup.Code, http.StatusConflict, dup.Body.String())
+	}
+	if same := call(t, handler, alice.AccessToken, http.MethodPatch, "/api/v1/lists/"+list.ID, `{"name":"Beach Reads"}`); same.Code != http.StatusNoContent {
+		t.Fatalf("recasing own list status = %d, want %d; body = %s", same.Code, http.StatusNoContent, same.Body.String())
+	}
 
 	// Bob must never see or touch Alice's list.
 	bobsView := call(t, handler, bob.AccessToken, http.MethodGet, "/api/v1/lists", "")

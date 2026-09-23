@@ -152,11 +152,17 @@ internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog,
     var sort by rememberSaveable { mutableStateOf(BookSort.Recent) }
     var viewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Grid) }
     var tag by rememberSaveable { mutableStateOf<String?>(null) }
+    var listId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { controller.loadLists() }
+    val lists = controller.listsUi.lists
+    val selectedList = lists.firstOrNull { it.id == listId }
     val downloaded = remember(catalog.downloads) { catalog.downloadedEditions() }
     val shelf = remember(catalog.books, catalog.progress, downloaded) { catalog.books.filter { isOnShelf(it, catalog.progress, downloaded) } }
-    val tags = remember(shelf) { libraryTags(shelf) }
-    val searching = query.isNotBlank() || tag != null
-    val shown = remember(shelf, query, sort, catalog.progress, downloaded, tag) { visibleBooks(shelf, query, ShelfFilter.All, sort, catalog.progress, downloaded, tag) }
+    // A chosen list replaces the shelf as the source, so it shows every book in it, started or not.
+    val source = remember(shelf, catalog.books, selectedList) { selectedList?.bookIds?.toSet()?.let { ids -> catalog.books.filter { it.id in ids } } ?: shelf }
+    val tags = remember(source) { libraryTags(source) }
+    val searching = query.isNotBlank() || tag != null || selectedList != null
+    val shown = remember(source, query, sort, catalog.progress, downloaded, tag) { visibleBooks(source, query, ShelfFilter.All, sort, catalog.progress, downloaded, tag) }
     val hero = if (searching) null else remember(catalog.books, catalog.progress, catalog.lastReadAt) { continueReading(catalog.books, catalog.progress, catalog.lastReadAt) }
     // Shelves are sections rather than filter chips: in progress, downloaded but not started, and
     // finished. The book in the Continue card isn't repeated under Reading.
@@ -183,6 +189,10 @@ internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog,
                 })
             }
         }
+        // Lists narrow Home to one list's books; tapping the active list clears it.
+        if (lists.isNotEmpty() && catalog.books.isNotEmpty()) item(span = fullRow, contentType = "lists") {
+            Box(Modifier.padding(top = 12.dp)) { ChipRow { lists.forEach { list -> ShelfChip(list.name, list.bookCount, list.id == listId) { listId = if (list.id == listId) null else list.id } } } }
+        }
         // Tags narrow the shelf; tapping the active tag clears it.
         if (tags.isNotEmpty()) item(span = fullRow, contentType = "tags") {
             Box(Modifier.padding(top = 12.dp)) { ChipRow { tags.forEach { option -> TagChip(option, tag == option) { tag = if (tag == option) null else option } } } }
@@ -198,7 +208,7 @@ internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog,
             item(span = fullRow, key = "continue", contentType = "continue") { ContinueReadingCard(controller, book, catalog.progress[book.id] ?: 0.0, catalog.chaptersLeft[book.id]) }
         }
         when {
-            shelf.isEmpty() -> item(span = fullRow) {
+            shelf.isEmpty() && selectedList == null -> item(span = fullRow) {
                 EmptyState(
                     BrandIcons.Library, "Your shelf is empty",
                     if (catalog.books.isEmpty()) "Your server has no books yet. Ask its administrator to import some, then pull to refresh."
@@ -206,7 +216,7 @@ internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog,
                     action = if (catalog.books.isNotEmpty()) { { PrimaryButton("Browse the catalogue", onBrowse, icon = BrandIcons.Search) } } else null,
                 )
             }
-            searching && shown.isEmpty() -> item(span = fullRow) { EmptyState(BrandIcons.Search, "Nothing matches", "Try a different search or tag.") }
+            searching && shown.isEmpty() -> item(span = fullRow) { EmptyState(BrandIcons.Search, "Nothing matches", if (selectedList != null && selectedList.bookIds.isEmpty()) "This list is empty." else "Try a different search, tag, or list.") }
             searching -> {
                 item(span = fullRow, contentType = "header") { SectionHeader("${shown.size} ${if (shown.size == 1) "book" else "books"}") }
                 bookItems(controller, catalog, shown, downloaded, viewMode, fullRow)

@@ -637,7 +637,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 loadLists()
                 onCreated(list)
             } catch (error: Exception) {
-                listsUi = listsUi.copy(error = error.message ?: "Couldn't create that list")
+                (error.message ?: "Couldn't create that list").let { listsUi = listsUi.copy(error = it); notice = it }
             }
         }
     }
@@ -648,7 +648,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 graph.lists.rename(id, name)
                 loadLists()
             } catch (error: Exception) {
-                listsUi = listsUi.copy(error = error.message ?: "Couldn't rename that list")
+                (error.message ?: "Couldn't rename that list").let { listsUi = listsUi.copy(error = it); notice = it }
             }
         }
     }
@@ -660,7 +660,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 if (listsUi.openList?.id == id) listsUi = listsUi.copy(openList = null, booksInOpenList = emptyList())
                 loadLists()
             } catch (error: Exception) {
-                listsUi = listsUi.copy(error = error.message ?: "Couldn't delete that list")
+                (error.message ?: "Couldn't delete that list").let { listsUi = listsUi.copy(error = it); notice = it }
             }
         }
     }
@@ -694,10 +694,10 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         scope.launch(Dispatchers.IO) {
             try {
                 graph.lists.addBook(listId, book.id)
-                if (listsUi.openList?.id == listId) listsUi = listsUi.copy(booksInOpenList = listsUi.booksInOpenList + book)
+                if (listsUi.openList?.id == listId && listsUi.booksInOpenList.none { it.id == book.id }) listsUi = listsUi.copy(booksInOpenList = listsUi.booksInOpenList + book)
                 loadLists()
             } catch (error: Exception) {
-                listsUi = listsUi.copy(error = error.message ?: "Couldn't add that book to the list")
+                (error.message ?: "Couldn't add that book to the list").let { listsUi = listsUi.copy(error = it); notice = it }
             }
         }
     }
@@ -710,7 +710,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 if (listsUi.openList?.id == listId) listsUi = listsUi.copy(booksInOpenList = listsUi.booksInOpenList.filter { it.id != bookId })
                 loadLists()
             } catch (error: Exception) {
-                listsUi = listsUi.copy(error = error.message ?: "Couldn't remove that book from the list")
+                (error.message ?: "Couldn't remove that book from the list").let { listsUi = listsUi.copy(error = it); notice = it }
             }
         }
     }

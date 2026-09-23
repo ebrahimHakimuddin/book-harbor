@@ -16,6 +16,7 @@ import (
 var (
 	ErrNotFound  = errors.New("list not found")
 	ErrNameBlank = errors.New("list name must not be blank")
+	ErrNameTaken = errors.New("you already have a list with that name")
 )
 
 type List struct {
@@ -39,6 +40,9 @@ func NewStore(db *sql.DB) *Store {
 func (s *Store) Create(ctx context.Context, userID, name string) (List, error) {
 	if name == "" {
 		return List{}, ErrNameBlank
+	}
+	if err := s.nameFree(ctx, userID, "", name); err != nil {
+		return List{}, err
 	}
 	id, err := newID()
 	if err != nil {
@@ -89,6 +93,9 @@ func (s *Store) ListAll(ctx context.Context, userID string) ([]List, error) {
 func (s *Store) Rename(ctx context.Context, userID, listID, name string) error {
 	if name == "" {
 		return ErrNameBlank
+	}
+	if err := s.nameFree(ctx, userID, listID, name); err != nil {
+		return err
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE book_lists SET name = ?, updated_at = ? WHERE id = ? AND owner_id = ?
@@ -166,6 +173,22 @@ func (s *Store) BookIDs(ctx context.Context, userID, listID string) ([]string, e
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// nameFree reports ErrNameTaken if userID has another list (not exceptID) with this name,
+// ignoring case. ponytail: check-then-write, so two simultaneous creates can still collide;
+// a unique index on (owner_id, name COLLATE NOCASE) closes that once existing duplicates are merged.
+func (s *Store) nameFree(ctx context.Context, userID, exceptID, name string) error {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM book_lists WHERE owner_id = ? AND id != ? AND name = ? COLLATE NOCASE
+	`, userID, exceptID, name).Scan(&count); err != nil {
+		return fmt.Errorf("check list name: %w", err)
+	}
+	if count > 0 {
+		return ErrNameTaken
+	}
+	return nil
 }
 
 func (s *Store) owns(ctx context.Context, userID, listID string) (bool, error) {

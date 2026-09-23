@@ -72,6 +72,10 @@ func (s *server) userLists(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		list, err := s.lists.Create(r.Context(), principal.User.ID, name)
+		if errors.Is(err, lists.ErrNameTaken) {
+			s.writeListError(w, err)
+			return
+		}
 		if err != nil {
 			s.logger.Error("create list", "error", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "unable to create list")
@@ -204,6 +208,10 @@ func (s *server) listItemsForList(w http.ResponseWriter, r *http.Request, userID
 func (s *server) writeListError(w http.ResponseWriter, err error) {
 	if errors.Is(err, lists.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "list_not_found", "no matching list was found")
+		return
+	}
+	if errors.Is(err, lists.ErrNameTaken) {
+		writeError(w, http.StatusConflict, "list_name_taken", "you already have a list with that name")
 		return
 	}
 	s.logger.Error("resolve list", "error", err)
