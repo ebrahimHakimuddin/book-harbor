@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react"
-import { BellIcon, CloudUploadIcon, HardDriveIcon, Loader2Icon, MailIcon, SendIcon } from "lucide-react"
+import { BellIcon, BookDownIcon, CloudUploadIcon, HardDriveIcon, Loader2Icon, MailIcon, SendIcon } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, type Integration, type Settings } from "@/lib/api"
@@ -43,11 +43,17 @@ const NTFY: Field[] = [
   { key: "ntfy.token", label: "Access token", placeholder: "optional, for protected topics" },
 ]
 
+const SHELFMARK: Field[] = [
+  { key: "shelfmark.url", label: "Shelfmark URL", placeholder: "http://shelfmark:8084", type: "url", hint: "Where this server can reach Shelfmark." },
+  { key: "shelfmark.username", label: "Username", placeholder: "leave empty if Shelfmark has no login" },
+  { key: "shelfmark.password", label: "Password" },
+]
+
 export function SettingsView() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings })
   return (
     <>
-      <PageHeading title="Settings." description="Connect email, storage, and notifications. Saved values here override the server's environment." />
+      <PageHeading title="Settings." description="Connect email, storage, notifications, and Shelfmark. Saved values here override the server's environment." />
       {settings.isPending ? (
         <div className="grid max-w-3xl gap-6">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-72 rounded-xl" />)}</div>
       ) : settings.isError ? (
@@ -59,6 +65,7 @@ export function SettingsView() {
             <StorageMove configured={["s3.endpoint", "s3.bucket", "s3.accessKeyId", "s3.secretKey"].every((key) => settings.data[key]?.set)} />
           </Section>
           <Section icon={<BellIcon />} title="Notifications" description="ntfy pushes admin alerts: new book requests, emailed password resets, and storage moves." integration="ntfy" fields={NTFY} settings={settings.data} />
+          <Section icon={<BookDownIcon />} title="Shelfmark" description="Find and download books for requests from your Shelfmark instance, straight into the library." integration="shelfmark" fields={SHELFMARK} settings={settings.data} />
         </div>
       )}
     </>
@@ -82,7 +89,7 @@ function Section({ icon, title, description, integration, fields, settings, chil
   })
   const test = useMutation({
     mutationFn: () => api.testIntegration(integration),
-    onSuccess: () => toast.success(integration === "email" ? "Test email sent to your address." : integration === "s3" ? "Wrote, read, and deleted a test object." : "Test notification sent."),
+    onSuccess: () => toast.success(integration === "email" ? "Test email sent to your address." : integration === "s3" ? "Wrote, read, and deleted a test object." : integration === "shelfmark" ? "Signed in to Shelfmark." : "Test notification sent."),
     onError: (e) => toast.error(errorMessage(e, "The test failed.")),
   })
   const dirty = Object.keys(draft).length > 0

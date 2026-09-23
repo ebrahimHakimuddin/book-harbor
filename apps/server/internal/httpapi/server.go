@@ -62,6 +62,7 @@ type server struct {
 	notifier    Notifier
 	logger      *slog.Logger
 	storageMove storageMove
+	shelfmark   shelfmarkDownloads
 }
 
 func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, bookRequests *requests.Store, bookLists *lists.Store, annotationStore *annotations.Store, metadataProvider metadata.Provider, mailer Mailer, settingsStore *settings.Store, notifier Notifier, logger *slog.Logger) http.Handler {
@@ -93,6 +94,8 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/admin/settings", s.requireAdmin(s.adminSettings))
 	mux.Handle("/api/v1/admin/settings/test", requireMethod(http.MethodPost, s.requireAdmin(s.testIntegration)))
 	mux.Handle("/api/v1/admin/storage", requireMethod(http.MethodGet, s.requireAdmin(s.storageStatus)))
+	mux.Handle("/api/v1/admin/shelfmark/search", requireMethod(http.MethodGet, s.requireAdmin(s.shelfmarkSearch)))
+	mux.Handle("/api/v1/admin/shelfmark/downloads", s.requireAdmin(s.shelfmarkDownloadsHandler))
 	mux.Handle("/api/v1/admin/storage/move-to-s3", requireMethod(http.MethodPost, s.requireAdmin(s.moveToS3)))
 	mux.Handle("/api/v1/admin/metadata/search", requireMethod(http.MethodGet, s.requireAuthentication(s.searchMetadata)))
 	mux.Handle("/api/v1/books", s.requireAuthentication(s.books))

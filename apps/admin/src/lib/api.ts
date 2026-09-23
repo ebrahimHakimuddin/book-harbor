@@ -123,7 +123,31 @@ export interface StorageStatus {
   error: string
 }
 
-export type Integration = "email" | "s3" | "ntfy"
+export type Integration = "email" | "s3" | "ntfy" | "shelfmark"
+
+/** A downloadable file found by Shelfmark; raw goes back unchanged to queue it. */
+export interface ShelfmarkRelease {
+  source: string
+  sourceId: string
+  title: string
+  format: string
+  language: string
+  size: string
+  indexer: string
+  raw: unknown
+}
+
+export interface ShelfmarkDownload {
+  id: string
+  title: string
+  requestIds?: string[]
+  /** Shelfmark's status (queued, downloading, …), then importing, imported, or failed. */
+  status: string
+  progress: number
+  message?: string
+  bookId?: string
+  startedAt: string
+}
 
 export class APIError extends Error {
   status: number
@@ -312,6 +336,11 @@ export const api = {
   testIntegration: (integration: Integration) => request<void>("/api/v1/admin/settings/test", { method: "POST", body: { integration } }),
   storage: () => request<StorageStatus>("/api/v1/admin/storage"),
   moveToS3: () => request<void>("/api/v1/admin/storage/move-to-s3", { method: "POST" }),
+  shelfmarkSearch: (title: string, author: string) =>
+    request<{ items: ShelfmarkRelease[] }>(`/api/v1/admin/shelfmark/search?${new URLSearchParams({ title, author })}`),
+  shelfmarkDownloads: () => request<{ items: ShelfmarkDownload[] }>("/api/v1/admin/shelfmark/downloads"),
+  shelfmarkDownload: (release: unknown, requestIds: string[]) =>
+    request<ShelfmarkDownload>("/api/v1/admin/shelfmark/downloads", { method: "POST", body: { release, requestIds } }),
 
   audit: (limit = 100) => request<{ items: AuditEntry[] }>(`/api/v1/admin/audit?limit=${limit}`),
 

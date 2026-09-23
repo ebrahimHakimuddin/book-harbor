@@ -1,6 +1,6 @@
-// Package settings holds the integration settings (email, S3, ntfy) an administrator edits
-// in the admin console. A key saved in the database wins; otherwise its environment
-// variable applies, so existing .env deployments keep working unchanged.
+// Package settings holds the integration settings (email, S3, ntfy, Shelfmark) an
+// administrator edits in the admin console. A key saved in the database wins; otherwise its
+// environment variable applies, so existing .env deployments keep working unchanged.
 package settings
 
 import (
@@ -48,10 +48,14 @@ var definitions = map[string]definition{
 	"ntfy.url":   {"BOOKHARBOR_NTFY_URL", httpURL},
 	"ntfy.topic": {"BOOKHARBOR_NTFY_TOPIC", text},
 	"ntfy.token": {"BOOKHARBOR_NTFY_TOKEN", secret},
+
+	"shelfmark.url":      {"BOOKHARBOR_SHELFMARK_URL", httpURL},
+	"shelfmark.username": {"BOOKHARBOR_SHELFMARK_USERNAME", text},
+	"shelfmark.password": {"BOOKHARBOR_SHELFMARK_PASSWORD", secret},
 }
 
 // SecretKeys are never returned by the API and are scrubbed from exports.
-var SecretKeys = []string{"resend.apiKey", "s3.secretKey", "ntfy.token"}
+var SecretKeys = []string{"resend.apiKey", "s3.secretKey", "ntfy.token", "shelfmark.password"}
 
 type InvalidError struct{ Key, Reason string }
 

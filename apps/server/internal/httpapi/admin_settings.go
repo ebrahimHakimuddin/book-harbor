@@ -69,7 +69,8 @@ func (s *server) adminSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // testIntegration exercises one integration with its saved settings: email sends to the
-// signed-in admin, S3 writes, reads back, and deletes a small object, ntfy sends a push.
+// signed-in admin, S3 writes, reads back, and deletes a small object, ntfy sends a push,
+// Shelfmark signs in.
 func (s *server) testIntegration(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Integration string `json:"integration"`
@@ -98,8 +99,10 @@ func (s *server) testIntegration(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		err = s.notifier.Send(ctx, "BookHarbor test", "Notifications from "+s.config.Name+" are working.", "white_check_mark")
+	case "shelfmark":
+		_, err = s.shelfmarkClient(ctx)
 	default:
-		writeError(w, http.StatusUnprocessableEntity, "invalid_integration", "integration must be email, s3, or ntfy")
+		writeError(w, http.StatusUnprocessableEntity, "invalid_integration", "integration must be email, s3, ntfy, or shelfmark")
 		return
 	}
 	if err != nil {

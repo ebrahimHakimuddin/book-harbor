@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from "react"
-import { BookMarkedIcon, CheckCircle2Icon, CopyIcon, HistoryIcon, InboxIcon, Loader2Icon, SearchIcon, UploadIcon, UsersIcon, XIcon } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { BookDownIcon, BookMarkedIcon, CheckCircle2Icon, CopyIcon, DownloadIcon, HistoryIcon, InboxIcon, Loader2Icon, SearchIcon, UploadIcon, UsersIcon, XIcon } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { APIError, type Book, type BookRequest } from "@/lib/api"
-import { useBookRequests, useBooks, useDeclineBookRequest, useFulfillBookRequest, useImportBook, useUpdateBook } from "@/lib/queries"
+import { api, APIError, type Book, type BookRequest } from "@/lib/api"
+import { keys, useBookRequests, useBooks, useDeclineBookRequest, useFulfillBookRequest, useImportBook, useUpdateBook } from "@/lib/queries"
 import { errorMessage, timeAgo } from "@/lib/format"
 import { Cover } from "@/components/cover"
 import { useConfirm } from "@/components/confirm"
@@ -211,6 +212,7 @@ function FulfillBody({ group, onDone }: { group: RequestGroup; onDone: () => voi
         </div>
       </SheetHeader>
       <div className="grid min-h-0 flex-1 content-start gap-8 overflow-y-auto px-6 py-6">
+        <ShelfmarkSection group={group} onDone={onDone} />
         <section className="grid gap-3">
           <div>
             <h3 className="text-base font-bold text-navy">Upload the book</h3>
@@ -261,5 +263,95 @@ function FulfillBody({ group, onDone }: { group: RequestGroup; onDone: () => voi
         </section>
       </div>
     </>
+  )
+}
+
+/**
+ * Finds the book on Shelfmark and downloads it. The server imports the file and fulfills every
+ * grouped request when Shelfmark finishes, so the sheet can be closed while it runs.
+ * Hidden until Shelfmark is set up in Settings.
+ */
+function ShelfmarkSection({ group, onDone }: { group: RequestGroup; onDone: () => void }) {
+  const client = useQueryClient()
+  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings })
+  const [title, setTitle] = useState(group.title)
+  const [queuedId, setQueuedId] = useState<string | null>(null)
+  const search = useMutation({ mutationFn: () => api.shelfmarkSearch(title.trim(), group.author) })
+  const queue = useMutation({
+    mutationFn: (release: unknown) => api.shelfmarkDownload(release, group.requests.map((r) => r.id)),
+    onSuccess: (download) => setQueuedId(download.id),
+    onError: (e) => toast.error(errorMessage(e, "Shelfmark could not start the download.")),
+  })
+  const downloads = useQuery({
+    queryKey: ["shelfmarkDownloads"],
+    queryFn: api.shelfmarkDownloads,
+    enabled: queuedId !== null,
+    refetchInterval: 2000,
+  })
+  const download = downloads.data?.items.find((d) => d.id === queuedId)
+  const imported = download?.status === "imported"
+  // Once only: onDone is a new function on every render of the parent.
+  const announced = useRef(false)
+  useEffect(() => {
+    if (!imported || announced.current) return
+    announced.current = true
+    void client.invalidateQueries({ queryKey: keys.books })
+    void client.invalidateQueries({ queryKey: keys.bookRequests })
+    toast.success(`"${group.title}" was downloaded and added.`)
+    onDone()
+  }, [imported, client, group.title, onDone])
+
+  if (!settings.data?.["shelfmark.url"]?.set) return null
+  const submit = (event: FormEvent) => { event.preventDefault(); if (title.trim()) search.mutate() }
+  return (
+    <section className="grid gap-3">
+      <div>
+        <h3 className="text-base font-bold text-navy">Get it from Shelfmark</h3>
+        <p className="text-sm text-muted-foreground">Download a copy into the library; the request is fulfilled when it arrives.</p>
+      </div>
+      {download ? (
+        <div role="status" className="grid gap-2 rounded-lg bg-mist p-3 text-sm">
+          <p className="flex items-center gap-2 font-medium">
+            {download.status !== "failed" && <Loader2Icon className="size-4 animate-spin" />}
+            {download.status === "failed" ? "The download failed" : download.status === "importing" ? "Adding to the library…" : `Shelfmark: ${download.status}`}
+          </p>
+          {download.status === "downloading" && <Progress value={download.progress} aria-label="Download progress" />}
+          {download.message && <p className={download.status === "failed" ? "text-destructive" : "text-muted-foreground"}>{download.message}</p>}
+          {download.status === "failed"
+            ? <Button size="sm" variant="outline" className="w-fit" onClick={() => setQueuedId(null)}>Pick another file</Button>
+            : <p className="text-xs text-muted-foreground">You can close this; the server finishes it.</p>}
+        </div>
+      ) : (
+        <>
+          <form onSubmit={submit} className="flex gap-2">
+            <label htmlFor="shelfmark-search" className="sr-only">Title to search Shelfmark for</label>
+            <Input id="shelfmark-search" value={title} onChange={(e) => setTitle(e.target.value)} disabled={search.isPending} />
+            <Button type="submit" variant="outline" disabled={search.isPending || !title.trim()}>
+              {search.isPending ? <Loader2Icon className="animate-spin" /> : <BookDownIcon />}Search
+            </Button>
+          </form>
+          {search.isPending && <p role="status" className="text-sm text-muted-foreground">Searching Shelfmark's sources; this can take a minute…</p>}
+          {search.isError && <p role="alert" className="text-sm text-destructive">{errorMessage(search.error, "Shelfmark search failed.")}</p>}
+          {search.data && (
+            <ul className="grid gap-1.5" aria-live="polite">
+              {search.data.items.length === 0 && <li className="px-1 py-2 text-sm text-muted-foreground">Shelfmark found nothing. Try a shorter title.</li>}
+              {search.data.items.map((release) => (
+                <li key={`${release.source}:${release.sourceId}`} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-mist">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-navy">{release.title}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {[release.format?.toUpperCase(), release.size, release.language, release.indexer || release.source].filter(Boolean).join(" · ")}
+                    </span>
+                  </span>
+                  <Button size="sm" variant="outline" disabled={queue.isPending} onClick={() => queue.mutate(release.raw)}>
+                    <DownloadIcon data-icon="inline-start" />Get
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
   )
 }
