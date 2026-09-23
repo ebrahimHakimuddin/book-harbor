@@ -282,8 +282,9 @@ async function toError(response: Response): Promise<APIError> {
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await send(path, options)
   if (!response.ok) throw await toError(response)
-  if (response.status === 204) return undefined as T
-  return response.json()
+  // 204 and bodiless 202s (queued work) carry nothing to parse.
+  const text = await response.text()
+  return (text ? JSON.parse(text) : undefined) as T
 }
 
 // XHR, because fetch cannot report upload progress.
