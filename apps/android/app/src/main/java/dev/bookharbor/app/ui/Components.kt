@@ -252,21 +252,22 @@ fun IconAction(
     }
 }
 
-/** [IconAction] on a tonal square the height of a [PrimaryButton], for action rows beside one. */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+/**
+ * A labelled action on a tonal tile the height of a [PrimaryButton], for action rows below one.
+ * The caller sizes it (usually `Modifier.weight(1f)` so the row is shared equally).
+ */
 @Composable
 fun TonalIconAction(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorScheme.onSurface, active: Boolean = false) {
     val press = remember { MutableInteractionSource() }
-    androidx.compose.material3.TooltipBox(
-        positionProvider = androidx.compose.material3.TooltipDefaults.rememberTooltipPositionProvider(androidx.compose.material3.TooltipAnchorPosition.Above),
-        tooltip = { PlainTooltip { Text(label) } },
-        state = androidx.compose.material3.rememberTooltipState(),
+    val color = if (active) MaterialTheme.colorScheme.secondary else tint
+    Column(
+        modifier.height(ControlHeight).pressScale(press, 0.97f).clip(ControlShape)
+            .background(if (active) MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(press, androidx.compose.material3.ripple(), role = Role.Button, onClick = onClick).padding(horizontal = 6.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            modifier.size(ControlHeight).pressScale(press, 0.94f).clip(ControlShape)
-                .background(if (active) MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant)
-                .clickable(press, androidx.compose.material3.ripple(), role = Role.Button, onClickLabel = label, onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) { Icon(icon, label, Modifier.size(22.dp), tint = if (active) MaterialTheme.colorScheme.secondary else tint) }
+        Icon(icon, null, Modifier.size(20.dp), tint = color)
+        Text(label, Modifier.padding(top = 2.dp), style = MaterialTheme.typography.labelMedium, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

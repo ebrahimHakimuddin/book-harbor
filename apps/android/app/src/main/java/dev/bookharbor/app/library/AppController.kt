@@ -12,6 +12,7 @@ import dev.bookharbor.app.widget.ContinueReadingWidget
 import dev.bookharbor.app.reader.epub.EpubPosition
 import dev.bookharbor.app.sync.LocalPosition
 import dev.bookharbor.app.sync.Locator
+import dev.bookharbor.app.sync.PermanentSyncError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -90,6 +91,8 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         private set
     /** The friend page on screen: null while loading, or after an error ([friendsUi] has it). */
     var friendProfile by mutableStateOf<FriendProfile?>(null)
+    /** Why the friend page couldn't load, shown in place of its spinner. */
+    var friendProfileError by mutableStateOf<String?>(null)
         private set
     var bookRequestsUi by mutableStateOf(BookRequestsUiState())
         private set
@@ -464,17 +467,21 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         if (sync.running) return
         sync = sync.copy(running = true, error = null)
         scope.launch(Dispatchers.IO) {
-            try {
-                graph.syncEngine.runOnce()
-                graph.annotationSync.runOnce()
-                sync = sync.copy(lastSyncMillis = System.currentTimeMillis())
-            } catch (error: Exception) {
-                sync = sync.copy(error = "Couldn't reach the server. Your progress is saved here and will sync when you're back online.")
-            }
+            // Progress and annotations sync independently, so one failing doesn't hold up the other.
+            val failure = listOf(runCatching { graph.syncEngine.runOnce() }, runCatching { graph.annotationSync.runOnce() }).firstNotNullOfOrNull { it.exceptionOrNull() }
+            sync = if (failure == null) sync.copy(lastSyncMillis = System.currentTimeMillis()) else sync.copy(error = syncErrorMessage(failure))
             refreshSync()
             refreshReading()
             ContinueReadingWidget.refresh(graph.context)
         }
+    }
+
+    /** Only a failed connection is "couldn't reach"; a server that answered with an error says so. */
+    private fun syncErrorMessage(error: Throwable): String = when {
+        error is HttpError && error.status == 404 -> "The server doesn't support sync for this app version yet. Update the server; your progress is saved here meanwhile."
+        error is HttpError || error is PermanentSyncError -> "The server couldn't sync (${error.message}). Your progress is saved here and will sync later."
+        error is java.io.IOException -> "Couldn't reach the server. Your progress is saved here and will sync when you're back online."
+        else -> "Sync failed (${error.message ?: error.javaClass.simpleName}). Your progress is saved here and will sync later."
     }
 
     private fun refreshSync() {
@@ -537,10 +544,12 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
 
     fun loadFriendProfile(userId: String) {
         if (friendProfile?.friend?.userId != userId) friendProfile = null
+        friendProfileError = null
         scope.launch(Dispatchers.IO) {
             try {
                 friendProfile = graph.friends.profile(userId)
             } catch (error: Exception) {
+                friendProfileError = if (error is HttpError && error.status == 404) "This profile isn't available. The server may need updating." else error.message ?: "Couldn't load that profile"
                 friendsUi = friendsUi.copy(error = error.message ?: "Couldn't load that profile")
             }
         }

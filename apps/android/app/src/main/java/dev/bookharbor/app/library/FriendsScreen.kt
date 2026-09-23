@@ -231,6 +231,10 @@ private fun FriendProfileScreen(controller: AppController, userId: String, onBac
             }
         }
         if (profile == null) {
+            controller.friendProfileError?.let { error ->
+                item { EmptyState(BrandIcons.CloudOff, "Couldn't load this friend", error, action = { SecondaryButton("Try again", { controller.loadFriendProfile(userId) }) }) }
+                return@LazyColumn
+            }
             item { Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary) } }
             return@LazyColumn
         }

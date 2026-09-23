@@ -137,8 +137,8 @@ fun BookDetailsPage(controller: AppController, catalog: LibraryUiState.Catalog, 
             // Not on the device yet: the main action downloads and the sheet stays open, showing
             // progress, then turns into Start reading. Nothing opens until the reader asks.
             val preferred = preferredEdition(book) { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
-            // The main action full width, then the book's other actions below it as named icons
-            // (press and hold for the name), sharing the row equally.
+            // The main action full width, then the book's other actions below it as labelled tiles
+            // sharing the row equally.
             var confirmRemove by remember { mutableStateOf<Edition?>(null) }
             Column(Modifier.fillMaxWidth().padding(top = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 PrimaryButton(
@@ -163,14 +163,14 @@ fun BookDetailsPage(controller: AppController, catalog: LibraryUiState.Catalog, 
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TonalIconAction(
-                        BrandIcons.Check, if (isFinished(progress)) "Mark as unread" else "Mark as read",
+                        BrandIcons.Check, if (isFinished(progress)) "Mark unread" else "Mark read",
                         onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markRead(book, !isFinished(progress)) },
                         modifier = Modifier.weight(1f),
                         active = isFinished(progress),
                     )
                     TonalIconAction(BrandIcons.Bookmark, "Add to list", onClick = { addToList = true }, modifier = Modifier.weight(1f))
                     downloaded.firstOrNull()?.let { edition ->
-                        TonalIconAction(BrandIcons.Trash, "Remove download", onClick = { confirmRemove = edition }, modifier = Modifier.weight(1f), tint = cautionColor())
+                        TonalIconAction(BrandIcons.Trash, "Remove", onClick = { confirmRemove = edition }, modifier = Modifier.weight(1f), tint = cautionColor())
                     }
                 }
             }

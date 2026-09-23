@@ -161,8 +161,15 @@ internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog,
     // A chosen list replaces the shelf as the source, so it shows every book in it, started or not.
     val source = remember(shelf, catalog.books, selectedList) { selectedList?.bookIds?.toSet()?.let { ids -> catalog.books.filter { it.id in ids } } ?: shelf }
     val tags = remember(source) { libraryTags(source) }
-    val searching = query.isNotBlank() || tag != null || selectedList != null
-    val shown = remember(source, query, sort, catalog.progress, downloaded, tag) { visibleBooks(source, query, ShelfFilter.All, sort, catalog.progress, downloaded, tag) }
+    // A tag chosen before switching lists may not exist in the new source; it would filter
+    // invisibly (its chip is gone), so it only applies while it is one of the shown tags.
+    val activeTag = tag?.takeIf { it in tags }
+    val searching = query.isNotBlank() || activeTag != null || selectedList != null
+    val shown = remember(source, selectedList, query, sort, catalog.progress, downloaded, activeTag) {
+        val books = visibleBooks(source, query, ShelfFilter.All, sort, catalog.progress, downloaded, activeTag)
+        // A list keeps its own order (newest added first) under the default sort.
+        if (selectedList != null && sort == BookSort.Recent) selectedList.bookIds.withIndex().associate { it.value to it.index }.let { order -> books.sortedBy { order[it.id] } } else books
+    }
     val hero = if (searching) null else remember(catalog.books, catalog.progress, catalog.lastReadAt) { continueReading(catalog.books, catalog.progress, catalog.lastReadAt) }
     // Shelves are sections rather than filter chips: in progress, downloaded but not started, and
     // finished. The book in the Continue card isn't repeated under Reading.
@@ -195,7 +202,7 @@ internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog,
         }
         // Tags narrow the shelf; tapping the active tag clears it.
         if (tags.isNotEmpty()) item(span = fullRow, contentType = "tags") {
-            Box(Modifier.padding(top = 12.dp)) { ChipRow { tags.forEach { option -> TagChip(option, tag == option) { tag = if (tag == option) null else option } } } }
+            Box(Modifier.padding(top = 12.dp)) { ChipRow { tags.forEach { option -> TagChip(option, activeTag == option) { tag = if (activeTag == option) null else option } } } }
         }
         if (catalog.offline) item(span = fullRow, contentType = "offline") {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
