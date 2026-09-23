@@ -2,6 +2,8 @@
 
 package dev.bookharbor.app.reader
 
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.CompositionLocalProvider
 import android.app.Activity
 import androidx.compose.foundation.border
 import androidx.compose.foundation.selection.selectable
@@ -200,6 +202,9 @@ fun ReaderScaffold(
         val topInset = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues().calculateTopPadding()
         val bottomInset = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()
         val pagePadding = PaddingValues(top = topInset + TopBarHeight, bottom = bottomInset + (if (state.settings.showProgress) ProgressBarHeight else 0.dp))
+        // Content color follows the reader theme, so untinted text and icons (the book title,
+        // the back arrow) aren't left at Compose's default black on a dark page.
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             // A tap in the middle band shows/hides the chrome; a link or other clickable span
             // inside the content consumes its own tap first, so this never fires for it.
@@ -245,6 +250,7 @@ fun ReaderScaffold(
                     exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { it / 2 },
                 ) { ReadAloudPill(controls) }
             }
+        }
         }
         if (state.settingsOpen) {
             ReaderSettingsSheet(
