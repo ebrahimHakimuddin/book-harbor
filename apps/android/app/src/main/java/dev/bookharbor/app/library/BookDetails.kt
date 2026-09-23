@@ -137,10 +137,10 @@ fun BookDetailsPage(controller: AppController, catalog: LibraryUiState.Catalog, 
             // Not on the device yet: the main action downloads and the sheet stays open, showing
             // progress, then turns into Start reading. Nothing opens until the reader asks.
             val preferred = preferredEdition(book) { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
-            // The main action, then the book's other actions as named icons (press and hold for
-            // the name) on the same row and at the same height.
+            // The main action full width, then the book's other actions below it as named icons
+            // (press and hold for the name), sharing the row equally.
             var confirmRemove by remember { mutableStateOf<Edition?>(null) }
-            Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.fillMaxWidth().padding(top = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 PrimaryButton(
                     when {
                         downloading -> fraction?.let { "Downloading… ${(it * 100).roundToInt()}%" } ?: "Downloading…"
@@ -157,18 +157,21 @@ fun BookDetailsPage(controller: AppController, catalog: LibraryUiState.Catalog, 
                         if (isFinished(progress)) controller.open(book, again, if (again.format == "epub") Locator.epub(EpubPosition.atChapter(0).toCfi()) else Locator.pdf(1))
                         else controller.open(book)
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     enabled = !downloading,
                     icon = if (downloaded.isEmpty() && !downloading) BrandIcons.Download else BrandIcons.Play.takeIf { !downloading },
                 )
-                TonalIconAction(
-                    BrandIcons.Check, if (isFinished(progress)) "Mark as unread" else "Mark as read",
-                    onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markRead(book, !isFinished(progress)) },
-                    active = isFinished(progress),
-                )
-                TonalIconAction(BrandIcons.Bookmark, "Add to list", onClick = { addToList = true })
-                downloaded.firstOrNull()?.let { edition ->
-                    TonalIconAction(BrandIcons.Trash, "Remove download", onClick = { confirmRemove = edition }, tint = cautionColor())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TonalIconAction(
+                        BrandIcons.Check, if (isFinished(progress)) "Mark as unread" else "Mark as read",
+                        onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markRead(book, !isFinished(progress)) },
+                        modifier = Modifier.weight(1f),
+                        active = isFinished(progress),
+                    )
+                    TonalIconAction(BrandIcons.Bookmark, "Add to list", onClick = { addToList = true }, modifier = Modifier.weight(1f))
+                    downloaded.firstOrNull()?.let { edition ->
+                        TonalIconAction(BrandIcons.Trash, "Remove download", onClick = { confirmRemove = edition }, modifier = Modifier.weight(1f), tint = cautionColor())
+                    }
                 }
             }
             confirmRemove?.let { edition ->
