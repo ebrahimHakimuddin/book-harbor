@@ -5,6 +5,9 @@ import { cn } from "@/lib/utils"
  * A file picker that also accepts drops. The native input stays in the tab order
  * (visually hidden), so it is fully keyboard and screen-reader accessible.
  */
+/** Book files the server accepts; MOBI and AZW3 are converted to EPUB on import. */
+export const BOOK_FILES = ".epub,.pdf,.mobi,.azw3,.azw,application/epub+zip,application/pdf,application/x-mobipocket-ebook"
+
 export function Dropzone({ accept, onFile, multiple, disabled, icon, title, hint, compact, className }: {
   accept: string
   /** Called once per accepted file; with [multiple], once for each file chosen or dropped. */

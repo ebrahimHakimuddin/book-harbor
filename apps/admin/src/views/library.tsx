@@ -88,7 +88,7 @@ export function LibraryView() {
         <Grid>{Array.from({ length: 8 }, (_, i) => <div key={i} className="grid gap-2"><Skeleton className="aspect-[2/3] rounded-lg" /><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-1/2" /></div>)}</Grid>
       ) : books.length === 0 ? (
         <EmptyState icon={<BookOpenIcon />} title="No books yet" action={<Button onClick={() => setImporting(true)}><PlusIcon data-icon="inline-start" />Import your first book</Button>}>
-          Import an EPUB or PDF to begin your library.
+          Import an EPUB, PDF, MOBI, or AZW3 to begin your library.
         </EmptyState>
       ) : filtered.length === 0 ? (
         <EmptyState icon={<SearchIcon />} title="No matches" action={<Button variant="outline" onClick={() => { setQuery(""); setFormat("") }}>Clear filters</Button>}>

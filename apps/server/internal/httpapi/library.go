@@ -315,7 +315,9 @@ func (s *server) writeImportError(w http.ResponseWriter, err error) {
 	case errors.Is(err, library.ErrTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "book_too_large", "uploaded book exceeds the configured size limit")
 	case errors.Is(err, library.ErrUnsupportedFormat):
-		writeError(w, http.StatusUnsupportedMediaType, "unsupported_book_format", "only EPUB and PDF books are supported")
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported_book_format", "only EPUB, PDF, MOBI, and AZW3 books are supported")
+	case errors.Is(err, library.ErrConverterMissing):
+		writeError(w, http.StatusUnsupportedMediaType, "converter_missing", err.Error())
 	case errors.Is(err, library.ErrInvalidBook):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_book", "uploaded file is not a valid book")
 	case errors.Is(err, library.ErrInvalidFilename):

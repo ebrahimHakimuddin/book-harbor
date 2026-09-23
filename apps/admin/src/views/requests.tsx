@@ -7,7 +7,7 @@ import { keys, useBookRequests, useBooks, useDeclineBookRequest, useFulfillBookR
 import { errorMessage, timeAgo } from "@/lib/format"
 import { Cover } from "@/components/cover"
 import { useConfirm } from "@/components/confirm"
-import { Dropzone } from "@/components/dropzone"
+import { BOOK_FILES, Dropzone } from "@/components/dropzone"
 import { EmptyState, PageHeading } from "@/components/page-heading"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -218,8 +218,8 @@ function FulfillBody({ group, onDone }: { group: RequestGroup; onDone: () => voi
             <h3 className="text-base font-bold text-navy">Upload the book</h3>
             <p className="text-sm text-muted-foreground">It's added to the library and the request is fulfilled in one step.</p>
           </div>
-          <Dropzone accept=".epub,.pdf,application/epub+zip,application/pdf" icon={importBook.isPending ? <Loader2Icon className="animate-spin" /> : <UploadIcon />}
-            title={importBook.isPending ? "Uploading…" : "Drop the EPUB or PDF here"} hint="or click to browse" disabled={busy} onFile={upload} />
+          <Dropzone accept={BOOK_FILES} icon={importBook.isPending ? <Loader2Icon className="animate-spin" /> : <UploadIcon />}
+            title={importBook.isPending ? "Uploading…" : "Drop the EPUB, PDF, MOBI, or AZW3 here"} hint="or click to browse" disabled={busy} onFile={upload} />
           {importBook.isPending && (
             <Progress value={progress} aria-label="Upload progress">
               <span className="w-full text-xs text-muted-foreground" role="status">{progress < 100 ? `Uploading… ${progress}%` : "Checking the file…"}</span>
@@ -335,19 +335,23 @@ function ShelfmarkSection({ group, onDone }: { group: RequestGroup; onDone: () =
           {search.data && (
             <ul className="grid gap-1.5" aria-live="polite">
               {search.data.items.length === 0 && <li className="px-1 py-2 text-sm text-muted-foreground">Shelfmark found nothing. Try a shorter title.</li>}
-              {search.data.items.map((release) => (
+              {sortReleases(search.data.items).map((release) => {
+                const kind = releaseKind(release.format)
+                return (
                 <li key={`${release.source}:${release.sourceId}`} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-mist">
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-navy">{release.title}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {[release.format?.toUpperCase(), release.size, release.language, release.indexer || release.source].filter(Boolean).join(" · ")}
+                      {[kind === "converted" ? `${release.format.toUpperCase()} → EPUB` : release.format?.toUpperCase(), release.size, release.language, release.indexer || release.source].filter(Boolean).join(" · ")}
                     </span>
                   </span>
-                  <Button size="sm" variant="outline" disabled={queue.isPending} onClick={() => queue.mutate(release.raw)}>
+                  <Button size="sm" variant="outline" disabled={queue.isPending || kind === "unsupported"} onClick={() => queue.mutate(release.raw)}
+                    title={kind === "unsupported" ? `${release.format.toUpperCase()} can't be imported; pick an EPUB, PDF, MOBI, or AZW3.` : undefined}>
                     <DownloadIcon data-icon="inline-start" />Get
                   </Button>
                 </li>
-              ))}
+                )
+              })}
             </ul>
           )}
         </>
@@ -386,4 +390,18 @@ function WebnovelSection({ sourceId, onDone }: { sourceId: string; onDone: () =>
       </Button>
     </section>
   )
+}
+
+/** How a Shelfmark file would arrive: as is, converted to EPUB by the server, or not at all. */
+function releaseKind(format: string | undefined): "native" | "converted" | "unsupported" | "unknown" {
+  const f = (format ?? "").toLowerCase()
+  if (f === "epub" || f === "pdf") return "native"
+  if (f === "mobi" || f === "azw3" || f === "azw") return "converted"
+  return f ? "unsupported" : "unknown"
+}
+
+/** EPUB first, then PDF, then files the server converts, then the rest; stable otherwise. */
+function sortReleases<T extends { format: string }>(releases: T[]): T[] {
+  const rank = (r: T) => (r.format?.toLowerCase() === "epub" ? 0 : { native: 1, converted: 2, unknown: 3, unsupported: 4 }[releaseKind(r.format)])
+  return [...releases].sort((a, b) => rank(a) - rank(b))
 }

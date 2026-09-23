@@ -140,11 +140,13 @@ type stagedUpload struct {
 	metadata  epubMetadata
 	checksum  string
 	size      int64
+	// converted says a MOBI/AZW3 upload was turned into this EPUB.
+	converted bool
 }
 
 // stageUpload copies content to a private temporary file, enforcing the size
-// limit and checking the file really is an EPUB or PDF. The caller owns
-// (and must remove) the returned file.
+// limit and checking the file really is an EPUB or PDF. A MOBI/AZW3 is converted
+// to EPUB first. The caller owns (and must remove) the returned file.
 func (s *Store) stageUpload(content io.Reader) (stagedUpload, error) {
 	temporary, err := os.CreateTemp(filepath.Join(s.dataDir, "tmp"), "import-*")
 	if err != nil {
@@ -175,6 +177,19 @@ func (s *Store) stageUpload(content io.Reader) (stagedUpload, error) {
 	}
 	staged.size = written
 	staged.checksum = hex.EncodeToString(digest.Sum(nil))
+	if isKindleBook(temporary) {
+		temporary.Close()
+		converted, size, checksum, err := convertToEPUB(staged.path)
+		if err != nil {
+			os.Remove(staged.path)
+			return stagedUpload{}, err
+		}
+		staged.path, staged.size, staged.checksum, staged.converted, written = converted, size, checksum, true, size
+		if temporary, err = os.Open(converted); err != nil {
+			os.Remove(converted)
+			return stagedUpload{}, fmt.Errorf("open converted book: %w", err)
+		}
+	}
 	if staged.format, staged.mediaType, staged.metadata, err = inspectBook(temporary, written); err != nil {
 		return fail(err)
 	}
@@ -199,6 +214,7 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	}
 	temporaryPath, format, mediaType, written := staged.path, staged.format, staged.mediaType, staged.size
 	defer os.Remove(temporaryPath)
+	filename = staged.storedFilename(filename)
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
 		title = strings.TrimSpace(staged.metadata.Title)

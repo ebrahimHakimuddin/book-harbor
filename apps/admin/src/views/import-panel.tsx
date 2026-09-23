@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { APIError, type Book } from "@/lib/api"
 import { useImportBook } from "@/lib/queries"
 import { errorMessage, formatBytes } from "@/lib/format"
-import { Dropzone } from "@/components/dropzone"
+import { BOOK_FILES, Dropzone } from "@/components/dropzone"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -50,7 +50,7 @@ export function ImportPanel({ onDone, onCancel }: { onDone: (book: Book | null) 
     <form onSubmit={submit} className="mb-8 grid gap-5 rounded-xl bg-mist p-6 animate-in fade-in slide-in-from-top-2 duration-200">
       <div>
         <h2 className="text-2xl font-bold text-navy">Import books</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Original EPUB and PDF files stay on this server. Title, authors, series, and cover are read from each EPUB.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Files stay on this server; MOBI and AZW3 are converted to EPUB. Title, authors, series, and cover are read from each EPUB.</p>
       </div>
 
       {items.length > 0 && (
@@ -74,8 +74,8 @@ export function ImportPanel({ onDone, onCancel }: { onDone: (book: Book | null) 
         </ul>
       )}
 
-      <Dropzone multiple compact={items.length > 0} disabled={running} accept=".epub,.pdf,application/epub+zip,application/pdf" icon={<UploadIcon />}
-        title={items.length > 0 ? "Add more files" : "Drop EPUB or PDF files here"} hint="or click to browse your files" onFile={add} />
+      <Dropzone multiple compact={items.length > 0} disabled={running} accept={BOOK_FILES} icon={<UploadIcon />}
+        title={items.length > 0 ? "Add more files" : "Drop EPUB, PDF, MOBI, or AZW3 files here"} hint="or click to browse your files" onFile={add} />
 
       {items.length === 1 && (
         <div className="grid gap-2 sm:max-w-md">

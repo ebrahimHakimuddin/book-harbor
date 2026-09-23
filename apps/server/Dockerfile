@@ -20,7 +20,9 @@ COPY --from=admin /server/internal/httpapi/adminui ./internal/httpapi/adminui
 RUN mkdir -p /out/data /out/tmp && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/bookharbor ./cmd/bookharbor
 
-FROM scratch
+# slim: just the binary. Everything works except importing MOBI/AZW3, which needs Calibre.
+# Build it with `docker build --target slim`.
+FROM scratch AS slim
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=65532:65532 /out/bookharbor /bookharbor
 COPY --from=build --chown=65532:65532 /out/data /data
@@ -28,5 +30,21 @@ COPY --from=build --chown=65532:65532 /out/tmp /tmp
 
 USER 65532:65532
 ENV TMPDIR=/tmp
+EXPOSE 8080
+ENTRYPOINT ["/bookharbor"]
+
+# full (the default): adds Calibre's ebook-convert, so MOBI and AZW3 books (common from
+# Shelfmark) are converted to EPUB on import. Several hundred MB larger than slim.
+FROM debian:bookworm-slim AS full
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends calibre ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    install -d -o 65532 -g 65532 /home/bookharbor
+COPY --from=build --chown=65532:65532 /out/bookharbor /bookharbor
+COPY --from=build --chown=65532:65532 /out/data /data
+
+USER 65532:65532
+# Calibre keeps its settings under HOME and needs no display.
+ENV HOME=/home/bookharbor QT_QPA_PLATFORM=offscreen
 EXPOSE 8080
 ENTRYPOINT ["/bookharbor"]

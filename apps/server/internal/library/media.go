@@ -38,6 +38,7 @@ func (s *Store) AddEdition(ctx context.Context, bookID, rawFilename string, cont
 		return Book{}, err
 	}
 	defer os.Remove(staged.path)
+	filename = staged.storedFilename(filename)
 	if err := s.checkDuplicate(ctx, staged.checksum); err != nil {
 		return Book{}, err
 	}
@@ -99,6 +100,7 @@ func (s *Store) ReplaceEditionFile(ctx context.Context, bookID, rawFilename stri
 		return Book{}, err
 	}
 	defer os.Remove(staged.path)
+	filename = staged.storedFilename(filename)
 	var editionID, oldStorage, oldPath string
 	err = s.db.QueryRowContext(ctx, `SELECT id, storage, storage_path FROM editions WHERE book_id = ? AND format = ?`, bookID, staged.format).Scan(&editionID, &oldStorage, &oldPath)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -189,7 +189,7 @@ func (s *server) importShelfmarkFile(ctx context.Context, client *shelfmark.Clie
 	case err != nil:
 		message := "couldn't import the file: " + err.Error()
 		if errors.Is(err, library.ErrUnsupportedFormat) {
-			message = "Shelfmark downloaded \"" + filename + "\"; only EPUB and PDF can be imported"
+			message = "Shelfmark downloaded \"" + filename + "\"; only EPUB, PDF, MOBI, and AZW3 can be imported"
 		}
 		s.shelfmark.update(id, func(d *shelfmarkDownload) { d.Status, d.Message = "failed", message })
 		return

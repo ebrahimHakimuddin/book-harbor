@@ -6,7 +6,7 @@ import { useAddEdition, useCoverMutations, useDeleteBook, useInstance, useMetada
 import { errorMessage, formatBytes } from "@/lib/format"
 import { Cover } from "@/components/cover"
 import { useConfirm } from "@/components/confirm"
-import { Dropzone } from "@/components/dropzone"
+import { BOOK_FILES, Dropzone } from "@/components/dropzone"
 import { EmptyState } from "@/components/page-heading"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -179,7 +179,7 @@ function MediaTab({ book }: { book: Book }) {
             </li>
           ))}
         </ul>
-        <Dropzone compact accept=".epub,.pdf,application/epub+zip,application/pdf" icon={<FileTextIcon />} title="Add another format" hint="A book can have one EPUB and one PDF" disabled={addEdition.isPending}
+        <Dropzone compact accept={BOOK_FILES} icon={<FileTextIcon />} title="Add another format" hint="One EPUB (MOBI and AZW3 become EPUB) and one PDF" disabled={addEdition.isPending}
           onFile={(file) => { setError((e) => ({ ...e, edition: undefined })); setProgress(0)
             addEdition.mutate({ id: book.id, file, onProgress: (f) => setProgress(Math.round(f * 100)) }, { onSuccess: () => toast.success(`${file.name} was added.`), onError: (e) => setError((s) => ({ ...s, edition: errorMessage(e, "The file could not be added.") })) }) }} />
         {addEdition.isPending && <Progress value={progress} className="mt-3" aria-label="Upload progress"><span className="w-full text-xs text-muted-foreground" role="status">Uploading… {progress}%</span></Progress>}
