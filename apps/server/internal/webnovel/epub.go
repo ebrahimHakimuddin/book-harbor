@@ -8,10 +8,21 @@ import (
 	"strings"
 )
 
+// pendingText fills a chapter the server hasn't fetched yet.
+const pendingText = "This chapter is still being fetched. Refresh your library in a few minutes to get it."
+
 // BuildEPUB writes novel's chapters, in order, as an EPUB 3 book (with an NCX for older readers).
-// Chapter files are numbered by position, so a reader's place in chapter N stays valid when
-// later chapters are appended.
+// chapters are 1..n as fetched; up to novel.Chapters, the rest are placeholders under their
+// real names, so the contents are complete from the start. Chapter files are numbered by
+// position, so a reader's place in chapter N stays valid as placeholders are filled in.
 func BuildEPUB(novel Novel, source string, chapters []Chapter) ([]byte, error) {
+	for n := len(chapters) + 1; n <= novel.Chapters; n++ {
+		name := fmt.Sprintf("Chapter %d", n)
+		if n <= len(novel.ChapterNames) && strings.TrimSpace(novel.ChapterNames[n-1]) != "" {
+			name = strings.TrimSpace(novel.ChapterNames[n-1])
+		}
+		chapters = append(chapters[:len(chapters):len(chapters)], Chapter{Number: n, Name: name, Content: pendingText})
+	}
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
 	// The mimetype entry must come first and be stored uncompressed.

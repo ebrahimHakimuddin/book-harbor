@@ -65,7 +65,8 @@ func (s *server) webnovelSearch(w http.ResponseWriter, r *http.Request) {
 
 // adminWebnovels serves GET (followed novels with their sync state) and POST ({"sourceId"})
 // to follow one: it is built into a book in the background and, while ongoing, updated on
-// the interval set in Settings.
+// the interval set in Settings. Following one already followed is fine (200, not 202): its
+// open requests are fulfilled at once if its book exists.
 func (s *server) adminWebnovels(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -107,7 +108,10 @@ func (s *server) adminWebnovels(w http.ResponseWriter, r *http.Request) {
 		}
 		principal, _ := authenticatedPrincipal(r)
 		if err := s.webnovels.Store.Follow(r.Context(), webnovel.SourceNovelArchive, novel, principal.User.ID); errors.Is(err, webnovel.ErrAlreadyFollowed) {
-			writeError(w, http.StatusConflict, "already_followed", err.Error())
+			if bookID := s.webnovelBook(r.Context(), novel.ID); bookID != "" {
+				s.fulfillWebnovelRequests(r.Context(), novel.ID, bookID)
+			}
+			w.WriteHeader(http.StatusOK)
 			return
 		} else if err != nil {
 			s.logger.Error("follow web novel", "error", err)
@@ -153,5 +157,37 @@ func (s *server) adminWebnovel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "unable to update that novel")
 	default:
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// webnovelBook is the book a followed novel is built into, or "" before its first build.
+func (s *server) webnovelBook(ctx context.Context, sourceID string) string {
+	followed, err := s.webnovels.Store.List(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, f := range followed {
+		if f.SourceID == sourceID {
+			return f.BookID
+		}
+	}
+	return ""
+}
+
+// fulfillWebnovelRequests links readers' open requests for a novel to its book. It runs
+// whenever the book is published or updated, so requests made at any point are caught.
+func (s *server) fulfillWebnovelRequests(ctx context.Context, sourceID, bookID string) {
+	open, err := s.requests.ListOpen(ctx)
+	if err != nil {
+		s.logger.Error("list open requests", "error", err)
+		return
+	}
+	for _, request := range open {
+		if request.SourceProvider != webnovel.SourceNovelArchive || request.SourceID != sourceID {
+			continue
+		}
+		if err := s.requests.Fulfill(ctx, request.ID, bookID, s.bookExists); err != nil {
+			s.logger.Error("fulfill web novel request", "error", err, "request", request.ID)
+		}
 	}
 }

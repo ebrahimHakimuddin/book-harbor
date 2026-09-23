@@ -33,6 +33,9 @@ type Syncer struct {
 	Logger   *slog.Logger
 	// Alert tells administrators about a finished build or new chapters.
 	Alert func(title, message, tag string)
+	// OnBook, when set, hears each time a novel's book is published or updated (the server
+	// uses it to fulfill readers' requests for that novel).
+	OnBook func(ctx context.Context, sourceID, bookID string)
 
 	kick     chan struct{}
 	mu       sync.Mutex
@@ -100,6 +103,12 @@ func (s *Syncer) syncDue(ctx context.Context) {
 	}
 }
 
+func (s *Syncer) published(ctx context.Context, sourceID, bookID string) {
+	if s.OnBook != nil && bookID != "" {
+		s.OnBook(ctx, sourceID, bookID)
+	}
+}
+
 // Due decides whether f should be synced now.
 func Due(f Followed, interval time.Duration, now time.Time) bool {
 	since := now.Sub(f.CheckedAt)
@@ -136,6 +145,7 @@ func (s *Syncer) sync(ctx context.Context, f Followed) {
 		s.Logger.Error("record web novel sync", "error", err)
 		return
 	}
+	s.published(ctx, f.SourceID, bookID)
 	switch {
 	case f.BookID == "":
 		s.Alert("Web novel added", fmt.Sprintf("%s: %d chapters", novel.Title, chapters), "books")
@@ -144,11 +154,11 @@ func (s *Syncer) sync(ctx context.Context, f Followed) {
 	}
 }
 
-// A long first fetch publishes the book early and then refreshes it, so it shows up in the
-// library within a minute instead of after every chapter is in.
+// A long first fetch publishes the book early (every chapter listed, unfetched ones as
+// placeholders) and refreshes it as chapters arrive, so readers can start within a minute.
 var (
 	firstPublishAt = 100
-	republishEvery = 500
+	republishEvery = 100
 )
 
 // update fetches chapters not yet cached and, when there are any (or there is no book yet),
@@ -172,12 +182,14 @@ func (s *Syncer) update(ctx context.Context, f Followed) (novel Novel, bookID st
 		if err = s.Store.AttachBook(ctx, f.Source, f.SourceID, bookID, chapters); err != nil {
 			return
 		}
+		s.published(ctx, f.SourceID, bookID)
 	}
 	for n := cached + 1; n <= novel.Chapters; n++ {
 		s.setProgress(f, fmt.Sprintf("Fetching chapter %d of %d…", n, novel.Chapters))
 		chapter, fetchErr := s.Source.Chapter(ctx, f.SourceID, n)
 		if errors.Is(fetchErr, errNotFound) {
-			break // the count ran ahead of the chapters actually posted
+			novel.Chapters = n - 1 // the count ran ahead of the chapters actually posted
+			break
 		}
 		if fetchErr != nil {
 			// Chapters so far are cached; the next attempt carries on from here.
@@ -195,6 +207,7 @@ func (s *Syncer) update(ctx context.Context, f Followed) (novel Novel, bookID st
 			if err = s.Store.AttachBook(ctx, f.Source, f.SourceID, bookID, chapters); err != nil {
 				return
 			}
+			s.published(ctx, f.SourceID, bookID)
 			s.setProgress(f, fmt.Sprintf("Fetching chapter %d of %d…", n+1, novel.Chapters))
 		}
 		select {

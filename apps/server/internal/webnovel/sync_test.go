@@ -1,6 +1,8 @@
 package webnovel
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,7 +39,7 @@ func fakeArchiveFailing(t *testing.T, published *atomic.Int32, blocked *atomic.B
 		n := int(published.Load())
 		switch {
 		case r.URL.Path == "/api/novels/n1":
-			fmt.Fprintf(w, `{"novel":{"id":"n1","title":"Harbor Tales","author":"A. Writer","description":"Sea stories.","cover_url":"","total_chapters":"%d","release_status":"ongoing","genres":"Fantasy, Adventure"}}`, n)
+			fmt.Fprintf(w, `{"novel":{"id":"n1","title":"Harbor Tales","author":"A. Writer","description":"Sea stories.","cover_url":"","total_chapters":"%d","release_status":"ongoing","genres":"Fantasy, Adventure","chapter_names":["One","Two","Three","Four","Five"]}}`, n)
 		case strings.HasPrefix(r.URL.Path, "/api/novels/n1/chapters/"):
 			number, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/api/novels/n1/chapters/"))
 			if f := int(failFrom.Load()); f > 0 && number >= f {
@@ -89,6 +91,8 @@ func TestFirstFetchPublishesEarly(t *testing.T) {
 	fake := fakeArchiveFailing(t, &published, &atomic.Bool{}, &failFrom)
 	defer fake.Close()
 	syncer, books := testSyncer(t, fake)
+	var onBook []string
+	syncer.OnBook = func(_ context.Context, sourceID, bookID string) { onBook = append(onBook, sourceID+"="+bookID) }
 	novel, _ := syncer.Source.Novel(ctx, "n1")
 	if err := syncer.Store.Follow(ctx, SourceNovelArchive, novel, "usr_admin"); err != nil {
 		t.Fatal(err)
@@ -99,8 +103,30 @@ func TestFirstFetchPublishesEarly(t *testing.T) {
 	if followed[0].BookID == "" || followed[0].Chapters != 2 || followed[0].Error == "" {
 		t.Fatalf("after failing at chapter 3: %+v (want the 2-chapter book attached, and the error)", followed[0])
 	}
-	if _, err := books.Get(ctx, followed[0].BookID); err != nil {
+	book, err := books.Get(ctx, followed[0].BookID)
+	if err != nil {
 		t.Fatalf("early book not in library: %v", err)
+	}
+	if len(onBook) != 1 || onBook[0] != "n1="+book.ID {
+		t.Fatalf("OnBook calls = %q, want one for the early book", onBook)
+	}
+	// The early book lists every chapter; the unfetched ones are placeholders under their names.
+	content, err := books.OpenContent(ctx, book.Editions[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(content.Reader)
+	content.Reader.Close()
+	epub, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter4 := readZip(t, epub, "OEBPS/c00004.xhtml")
+	if !strings.Contains(chapter4, "Four") || !strings.Contains(chapter4, "still being fetched") {
+		t.Fatalf("chapter 4 placeholder = %s", chapter4)
+	}
+	if chapter2 := readZip(t, epub, "OEBPS/c00002.xhtml"); strings.Contains(chapter2, "still being fetched") {
+		t.Fatalf("fetched chapter 2 is a placeholder: %s", chapter2)
 	}
 
 	failFrom.Store(0)
@@ -110,6 +136,17 @@ func TestFirstFetchPublishesEarly(t *testing.T) {
 	if followed[0].Chapters != 4 || followed[0].Error != "" {
 		t.Fatalf("after resuming: %+v", followed[0])
 	}
+}
+
+func readZip(t *testing.T, archive *zip.Reader, name string) string {
+	t.Helper()
+	file, err := archive.Open(name)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	defer file.Close()
+	data, _ := io.ReadAll(file)
+	return string(data)
 }
 
 func TestFollowBuildsThenUpdatesInPlace(t *testing.T) {

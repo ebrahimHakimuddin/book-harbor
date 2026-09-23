@@ -99,6 +99,7 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/admin/shelfmark/search", requireMethod(http.MethodGet, s.requireAdmin(s.shelfmarkSearch)))
 	mux.Handle("/api/v1/admin/shelfmark/downloads", s.requireAdmin(s.shelfmarkDownloadsHandler))
 	if webnovels != nil {
+		webnovels.OnBook = s.fulfillWebnovelRequests
 		mux.Handle("/api/v1/admin/webnovels", s.requireAdmin(s.adminWebnovels))
 		mux.Handle("/api/v1/admin/webnovels/search", requireMethod(http.MethodGet, s.requireAdmin(s.webnovelSearch)))
 		mux.Handle("/api/v1/admin/webnovels/", s.requireAdmin(s.adminWebnovel))

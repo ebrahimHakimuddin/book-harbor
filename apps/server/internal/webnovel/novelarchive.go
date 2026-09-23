@@ -34,6 +34,9 @@ type Novel struct {
 	Chapters    int    `json:"chapters"`
 	Ongoing     bool   `json:"ongoing"`
 	Genres      string `json:"genres"`
+	// ChapterNames lists every chapter's name, in order, when the source gives them (details
+	// only, not search), so unfetched chapters can be named in the book.
+	ChapterNames []string `json:"-"`
 }
 
 type Chapter struct {
@@ -62,6 +65,7 @@ type novelJSON struct {
 	TotalChapters json.RawMessage `json:"total_chapters"`
 	ReleaseStatus string          `json:"release_status"`
 	Genres        string          `json:"genres"`
+	ChapterNames  []string        `json:"chapter_names"`
 }
 
 func (n novelJSON) novel(base string) Novel {
@@ -72,6 +76,7 @@ func (n novelJSON) novel(base string) Novel {
 	return Novel{
 		ID: n.ID, Title: strings.TrimSpace(n.Title), Author: strings.TrimSpace(n.Author), Description: strings.TrimSpace(n.Description),
 		CoverURL: cover, Chapters: looseInt(n.TotalChapters), Ongoing: !strings.EqualFold(n.ReleaseStatus, "completed"), Genres: n.Genres,
+		ChapterNames: n.ChapterNames,
 	}
 }
 

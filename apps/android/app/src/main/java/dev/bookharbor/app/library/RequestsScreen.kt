@@ -100,7 +100,9 @@ fun RequestsTab(controller: AppController) {
 private fun CandidateRow(controller: AppController, candidate: MetadataCandidate, onRequest: () -> Unit) {
     var requested by remember(candidate) { mutableStateOf(false) }
     AppRow(
-        candidate.title, candidate.authors.joinToString(", ").ifBlank { null },
+        candidate.title,
+        // Web novels say so (with their chapter count), since they arrive differently: chapter by chapter.
+        listOfNotNull(candidate.authors.joinToString(", ").ifBlank { null }, candidate.subtitle.takeIf { candidate.isWebNovel && it.isNotBlank() }).joinToString(" · ").ifBlank { null },
         leading = { Cover(Book(candidate.provider + candidate.id, candidate.title, emptyList(), coverUrl = candidate.coverUrl), controller.covers, Modifier.width(40.dp)) },
         trailing = {
             TextButton(onClick = { requested = true; onRequest() }, enabled = !requested) { Text(if (requested) "Requested" else "Request") }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
-import { BookDownIcon, BookMarkedIcon, CheckCircle2Icon, CopyIcon, DownloadIcon, HistoryIcon, InboxIcon, Loader2Icon, SearchIcon, UploadIcon, UsersIcon, XIcon } from "lucide-react"
+import { BookDownIcon, BookMarkedIcon, NewspaperIcon, CheckCircle2Icon, CopyIcon, DownloadIcon, HistoryIcon, InboxIcon, Loader2Icon, SearchIcon, UploadIcon, UsersIcon, XIcon } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, APIError, type Book, type BookRequest } from "@/lib/api"
@@ -212,7 +212,7 @@ function FulfillBody({ group, onDone }: { group: RequestGroup; onDone: () => voi
         </div>
       </SheetHeader>
       <div className="grid min-h-0 flex-1 content-start gap-8 overflow-y-auto px-6 py-6">
-        <ShelfmarkSection group={group} onDone={onDone} />
+        {webNovelId(group) ? <WebnovelSection sourceId={webNovelId(group)!} onDone={onDone} /> : <ShelfmarkSection group={group} onDone={onDone} />}
         <section className="grid gap-3">
           <div>
             <h3 className="text-base font-bold text-navy">Upload the book</h3>
@@ -352,6 +352,38 @@ function ShelfmarkSection({ group, onDone }: { group: RequestGroup; onDone: () =
           )}
         </>
       )}
+    </section>
+  )
+}
+
+/** The novelarchive ID when readers asked for a web novel rather than a book. */
+const webNovelId = (group: RequestGroup) => group.requests.find((r) => r.sourceProvider === "novelarchive")?.sourceId
+
+/**
+ * A web novel is followed rather than uploaded: its book is built as chapters arrive, and the
+ * server fulfills these requests as soon as the first chapters are in.
+ */
+function WebnovelSection({ sourceId, onDone }: { sourceId: string; onDone: () => void }) {
+  const client = useQueryClient()
+  const follow = useMutation({
+    mutationFn: () => api.followWebnovel(sourceId),
+    onSuccess: () => {
+      toast.success("Following. The request is fulfilled once the first chapters are in.")
+      void client.invalidateQueries({ queryKey: keys.bookRequests })
+      void client.invalidateQueries({ queryKey: ["webnovels"] })
+      onDone()
+    },
+    onError: (e) => toast.error(errorMessage(e, "Could not follow that novel.")),
+  })
+  return (
+    <section className="grid gap-3">
+      <div>
+        <h3 className="text-base font-bold text-navy">Follow this web novel</h3>
+        <p className="text-sm text-muted-foreground">It's fetched from novelarchive.cc into the library, chapter by chapter, and kept up to date.</p>
+      </div>
+      <Button className="w-fit" disabled={follow.isPending} onClick={() => follow.mutate()}>
+        {follow.isPending ? <Loader2Icon className="animate-spin" /> : <NewspaperIcon />}Follow and fulfil
+      </Button>
     </section>
   )
 }

@@ -3,8 +3,13 @@ package dev.bookharbor.app.library
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** A Hardcover (or whichever provider is configured) search hit, used to file a book request. */
-data class MetadataCandidate(val provider: String, val id: String, val title: String, val authors: List<String>, val coverUrl: String)
+/**
+ * A search hit used to file a book request: a book from Hardcover (or whichever provider is
+ * configured), or a web novel (provider "novelarchive", with [subtitle] saying so).
+ */
+data class MetadataCandidate(val provider: String, val id: String, val title: String, val authors: List<String>, val coverUrl: String, val subtitle: String = "") {
+    val isWebNovel get() = provider == "novelarchive"
+}
 
 data class BookRequest(
     val id: String,
@@ -20,6 +25,7 @@ private fun parseCandidate(json: JSONObject): MetadataCandidate {
     return MetadataCandidate(
         provider = json.optString("provider"), id = json.optString("id"), title = json.optString("title"),
         authors = (0 until authors.length()).map { authors.getString(it) }, coverUrl = json.optString("coverUrl"),
+        subtitle = json.optString("subtitle"),
     )
 }
 
