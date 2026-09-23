@@ -25,10 +25,12 @@ type manifestBook struct {
 	SHA256    string `json:"sha256"`
 }
 
-// Write streams the archive to w. Sessions are removed from the database
-// snapshot so the archive holds no live credentials; password hashes remain,
-// so the archive must be stored as carefully as the server itself.
-func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string) error {
+// Write streams the archive to w. Sessions and secret integration settings are removed
+// from the database snapshot so the archive holds no live credentials; password hashes
+// remain, so the archive must be stored as carefully as the server itself. openObject
+// reads a file stored in S3; the snapshot records every file as on disk, where a restore
+// puts it.
+func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string, openObject func(ctx context.Context, storagePath string) (io.ReadCloser, error)) error {
 	tmp, err := os.MkdirTemp(filepath.Join(dataDir, "tmp"), "export-*")
 	if err != nil {
 		return fmt.Errorf("create export workspace: %w", err)
@@ -42,14 +44,17 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string) error {
 	if err != nil {
 		return fmt.Errorf("open snapshot: %w", err)
 	}
-	_, err = copyDB.ExecContext(ctx, `DELETE FROM sessions`)
+	_, err = copyDB.ExecContext(ctx, `
+		DELETE FROM sessions;
+		DELETE FROM settings WHERE key IN ('resend.apiKey', 's3.secretKey', 'ntfy.token');
+		UPDATE editions SET storage = 'disk';`)
 	copyDB.Close()
 	if err != nil {
 		return fmt.Errorf("scrub snapshot: %w", err)
 	}
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT b.id, b.title, e.id, e.original_filename, e.storage_path, e.sha256
+		SELECT b.id, b.title, e.id, e.original_filename, e.storage_path, e.storage, e.sha256
 		FROM editions e JOIN books b ON b.id = e.book_id ORDER BY b.created_at, e.created_at`)
 	if err != nil {
 		return fmt.Errorf("list editions: %w", err)
@@ -60,8 +65,8 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string) error {
 	var manifest []manifestBook
 	for rows.Next() {
 		var book manifestBook
-		var storagePath, filename string
-		if err := rows.Scan(&book.BookID, &book.Title, &book.EditionID, &filename, &storagePath, &book.SHA256); err != nil {
+		var storagePath, storage, filename string
+		if err := rows.Scan(&book.BookID, &book.Title, &book.EditionID, &filename, &storagePath, &storage, &book.SHA256); err != nil {
 			return fmt.Errorf("scan edition: %w", err)
 		}
 		clean := filepath.Clean(storagePath)
@@ -69,7 +74,11 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string) error {
 			return fmt.Errorf("invalid stored content path for edition %s", book.EditionID)
 		}
 		book.File = "books/" + book.EditionID + "-" + filepath.Base(filename)
-		if err := addFile(archive, book.File, filepath.Join(dataDir, clean), zip.Store); err != nil {
+		if storage == "s3" {
+			if err := addObject(ctx, archive, book.File, clean, openObject); err != nil {
+				return err
+			}
+		} else if err := addFile(archive, book.File, filepath.Join(dataDir, clean), zip.Store); err != nil {
 			return err
 		}
 		manifest = append(manifest, book)
@@ -107,6 +116,22 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string) error {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 	return archive.Close()
+}
+
+func addObject(ctx context.Context, archive *zip.Writer, name, storagePath string, open func(context.Context, string) (io.ReadCloser, error)) error {
+	body, err := open(ctx, filepath.ToSlash(storagePath))
+	if err != nil {
+		return fmt.Errorf("fetch %s from S3: %w", name, err)
+	}
+	defer body.Close()
+	entry, err := archive.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store, Modified: time.Now()})
+	if err != nil {
+		return fmt.Errorf("add %s: %w", name, err)
+	}
+	if _, err := io.Copy(entry, body); err != nil {
+		return fmt.Errorf("copy %s: %w", name, err)
+	}
+	return nil
 }
 
 func addFile(archive *zip.Writer, name, path string, method uint16) error {

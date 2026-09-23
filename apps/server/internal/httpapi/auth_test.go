@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// fakeMailer records sends instead of calling out to ZeptoMail.
+// fakeMailer records sends instead of calling out to Resend.
 type fakeMailer struct {
 	configured bool
 	sentTo     string

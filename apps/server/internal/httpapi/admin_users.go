@@ -31,6 +31,13 @@ func (s *server) record(r *http.Request, action, targetType, targetID, summary s
 	if err != nil {
 		s.logger.Error("record audit entry", "error", err, "action", action)
 	}
+	if alert, ok := adminAlerts[action]; ok {
+		message := summary
+		if principal.User.Email != "" {
+			message = principal.User.DisplayName + " (" + principal.User.Email + "): " + summary
+		}
+		s.alert(alert.title, message, alert.tag)
+	}
 }
 
 // adminUser handles PATCH and DELETE /admin/users/{id}.

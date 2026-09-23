@@ -24,6 +24,11 @@ DELETE /admin/users/{userId}           administrator only
 GET    /admin/audit?limit=             administrator only
 GET    /admin/export                   administrator only
 GET    /admin/metadata/search?q=       administrator only
+GET    /admin/settings                 administrator only
+PATCH  /admin/settings                 administrator only
+POST   /admin/settings/test            administrator only
+GET    /admin/storage                  administrator only
+POST   /admin/storage/move-to-s3       administrator only
 ```
 
 `/bootstrap` is available only while no administrator exists. Session creation
@@ -94,8 +99,54 @@ audit log returned newest first by `GET /admin/audit`. Entries never contain
 passwords.
 
 `GET /admin/export` streams a zip containing every original book file under
-`books/`, `manifest.json`, and `bookharbor.db`, a consistent snapshot of the
-metadata database with sessions removed. Password hashes remain in the snapshot.
+`books/` (fetched from S3 where stored there), `manifest.json`, and
+`bookharbor.db`, a consistent snapshot of the metadata database with sessions and
+secret settings removed and every file marked as on disk, where a restore puts it.
+Password hashes remain in the snapshot.
+
+## Integrations
+
+Email (Resend), book file storage (S3-compatible), and administrator
+notifications (ntfy) are configured from the admin console. `GET /admin/settings`
+returns every key as `{ "value", "set", "secret", "source" }`; a secret's value is
+never returned, only whether it is set. `PATCH /admin/settings` takes a partial
+`{ "key": "value" }` map, validates all of it before saving any, and treats `""` as
+"remove the saved value". A key with no saved value falls back to its environment
+variable (`source: "environment"`):
+
+| Key | Environment variable |
+| --- | --- |
+| `resend.apiKey` (secret) | `BOOKHARBOR_RESEND_API_KEY` |
+| `resend.fromEmail` | `BOOKHARBOR_RESEND_FROM_EMAIL` |
+| `resend.fromName` | `BOOKHARBOR_RESEND_FROM_NAME` |
+| `s3.endpoint` | `BOOKHARBOR_S3_ENDPOINT` |
+| `s3.region` | `BOOKHARBOR_S3_REGION` (default `us-east-1`) |
+| `s3.bucket` | `BOOKHARBOR_S3_BUCKET` |
+| `s3.accessKeyId` | `BOOKHARBOR_S3_ACCESS_KEY_ID` |
+| `s3.secretKey` (secret) | `BOOKHARBOR_S3_SECRET_ACCESS_KEY` |
+| `s3.prefix` | `BOOKHARBOR_S3_PREFIX` |
+| `s3.pathStyle` | `BOOKHARBOR_S3_PATH_STYLE` (`true`/`false`) |
+| `s3.storeUploads` | `BOOKHARBOR_S3_STORE_UPLOADS` (`true`/`false`) |
+| `ntfy.url` | `BOOKHARBOR_NTFY_URL` (default `https://ntfy.sh`) |
+| `ntfy.topic` | `BOOKHARBOR_NTFY_TOPIC` |
+| `ntfy.token` (secret) | `BOOKHARBOR_NTFY_TOKEN` |
+
+`POST /admin/settings/test` with `{ "integration": "email" | "s3" | "ntfy" }`
+exercises the saved settings: a test email to the signed-in administrator, a
+write/read/delete of a small object, or a test push. Failures return `502` with the
+provider's message.
+
+Each edition's file is on local disk or in S3. With `s3.storeUploads` on, new
+uploads go to the bucket; existing files stay where they are until
+`POST /admin/storage/move-to-s3` starts a background move (`202`). Each file is
+uploaded with its signed SHA-256, so the bucket rejects a corrupted copy, and is
+deleted locally only after it is stored. `GET /admin/storage` reports
+`{ "disk", "s3", "moving", "moved", "error" }`; a stopped move resumes where it
+left off when started again. Downloads of S3 files stream through the server with
+range support, so clients are unaffected. Covers always stay on disk.
+
+ntfy receives `book_request.create` and `user.password_reset` events, and the
+outcome of a move to S3.
 
 ## Library
 

@@ -59,23 +59,29 @@ func (s *Store) AddEdition(ctx context.Context, bookID, rawFilename string, cont
 	if existing > 0 {
 		return Book{}, ErrEditionExists
 	}
+	storage, err := s.place(ctx, staged, storagePath)
+	if err != nil {
+		return Book{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			s.unplace(ctx, storage, storagePath)
+		}
+	}()
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO editions (id, book_id, format, media_type, original_filename, byte_length, sha256, storage_path, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		editionID, bookID, staged.format, staged.mediaType, filename, staged.size, staged.checksum, storagePath, now); err != nil {
+		INSERT INTO editions (id, book_id, format, media_type, original_filename, byte_length, sha256, storage_path, storage, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		editionID, bookID, staged.format, staged.mediaType, filename, staged.size, staged.checksum, storagePath, storage, now); err != nil {
 		return Book{}, fmt.Errorf("create edition: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE books SET updated_at = ? WHERE id = ?`, now, bookID); err != nil {
 		return Book{}, fmt.Errorf("touch book: %w", err)
 	}
-	absolute := filepath.Join(s.dataDir, storagePath)
-	if err := os.Rename(staged.path, absolute); err != nil {
-		return Book{}, fmt.Errorf("store edition: %w", err)
-	}
 	if err := tx.Commit(); err != nil {
-		os.Remove(absolute)
 		return Book{}, fmt.Errorf("commit add edition: %w", err)
 	}
+	committed = true
 	return s.Get(ctx, bookID)
 }
 

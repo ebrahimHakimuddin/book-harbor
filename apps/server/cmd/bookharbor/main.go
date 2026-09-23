@@ -23,8 +23,11 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/lists"
 	"github.com/bookharbor/bookharbor/apps/server/internal/mail"
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
+	"github.com/bookharbor/bookharbor/apps/server/internal/notify"
+	"github.com/bookharbor/bookharbor/apps/server/internal/objectstore"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 	"github.com/bookharbor/bookharbor/apps/server/internal/requests"
+	"github.com/bookharbor/bookharbor/apps/server/internal/settings"
 	"github.com/bookharbor/bookharbor/apps/server/internal/social"
 )
 
@@ -62,6 +65,10 @@ func main() {
 		logger.Error("initialize library storage", "error", err)
 		os.Exit(1)
 	}
+	settingsStore := settings.NewStore(db)
+	libraryStore.UseObjectStorage(func() (objectstore.Config, bool) {
+		return settingsStore.S3(), settingsStore.Bool("s3.storeUploads")
+	})
 
 	handler := httpapi.New(cfg, httpapi.BuildInfo{
 		Version: version,
@@ -70,11 +77,7 @@ func main() {
 		os.Getenv("BOOKHARBOR_HARDCOVER_TOKEN"),
 		os.Getenv("BOOKHARBOR_HARDCOVER_ENDPOINT"),
 		nil,
-	), mail.NewZeptoMail(
-		os.Getenv("BOOKHARBOR_ZEPTOMAIL_TOKEN"),
-		os.Getenv("BOOKHARBOR_ZEPTOMAIL_FROM_EMAIL"),
-		os.Getenv("BOOKHARBOR_ZEPTOMAIL_FROM_NAME"),
-	), logger)
+	), mail.NewResend(settingsStore.Get), settingsStore, notify.NewNtfy(settingsStore.Get), logger)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,

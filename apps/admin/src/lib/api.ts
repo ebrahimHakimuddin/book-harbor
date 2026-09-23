@@ -105,6 +105,26 @@ export interface AuditEntry {
   createdAt: string
 }
 
+/** One integration setting; a secret's value is never sent, only whether it's set. */
+export interface SettingField {
+  value: string
+  set: boolean
+  secret?: boolean
+  source?: "database" | "environment"
+}
+
+export type Settings = Record<string, SettingField>
+
+export interface StorageStatus {
+  disk: number
+  s3: number
+  moving: boolean
+  moved: number
+  error: string
+}
+
+export type Integration = "email" | "s3" | "ntfy"
+
 export class APIError extends Error {
   status: number
   code: string | undefined
@@ -286,6 +306,12 @@ export const api = {
   updateReader: (id: string, body: { role?: Role; disabled?: boolean; password?: string }) =>
     request<User>(`/api/v1/admin/users/${enc(id)}`, { method: "PATCH", body }),
   deleteReader: (id: string) => request<void>(`/api/v1/admin/users/${enc(id)}`, { method: "DELETE" }),
+
+  settings: () => request<Settings>("/api/v1/admin/settings"),
+  updateSettings: (body: Record<string, string>) => request<Settings>("/api/v1/admin/settings", { method: "PATCH", body }),
+  testIntegration: (integration: Integration) => request<void>("/api/v1/admin/settings/test", { method: "POST", body: { integration } }),
+  storage: () => request<StorageStatus>("/api/v1/admin/storage"),
+  moveToS3: () => request<void>("/api/v1/admin/storage/move-to-s3", { method: "POST" }),
 
   audit: (limit = 100) => request<{ items: AuditEntry[] }>(`/api/v1/admin/audit?limit=${limit}`),
 

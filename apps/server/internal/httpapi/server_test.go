@@ -21,6 +21,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 	"github.com/bookharbor/bookharbor/apps/server/internal/requests"
+	"github.com/bookharbor/bookharbor/apps/server/internal/settings"
 	"github.com/bookharbor/bookharbor/apps/server/internal/social"
 )
 
@@ -223,6 +224,8 @@ func testHandlerWithMailer(t *testing.T, metadataProvider metadata.Provider, mai
 		annotations.NewStore(db),
 		metadataProvider,
 		mailer,
+		settings.NewStore(db),
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	), db
 }

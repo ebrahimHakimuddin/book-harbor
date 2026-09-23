@@ -19,6 +19,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/reading"
 	"github.com/bookharbor/bookharbor/apps/server/internal/requests"
+	"github.com/bookharbor/bookharbor/apps/server/internal/settings"
 	"github.com/bookharbor/bookharbor/apps/server/internal/social"
 )
 
@@ -37,6 +38,13 @@ type Mailer interface {
 	Send(ctx context.Context, toEmail, toName, subject, html string) error
 }
 
+// Notifier pushes alerts to administrators (ntfy). A nil Notifier, or one that reports
+// Configured() == false, sends nothing.
+type Notifier interface {
+	Configured() bool
+	Send(ctx context.Context, title, message string, tags ...string) error
+}
+
 type server struct {
 	config      config.Config
 	build       BuildInfo
@@ -50,15 +58,18 @@ type server struct {
 	lists       *lists.Store
 	annotations *annotations.Store
 	mailer      Mailer
+	settings    *settings.Store
+	notifier    Notifier
 	logger      *slog.Logger
+	storageMove storageMove
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, bookRequests *requests.Store, bookLists *lists.Store, annotationStore *annotations.Store, metadataProvider metadata.Provider, mailer Mailer, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, bookRequests *requests.Store, bookLists *lists.Store, annotationStore *annotations.Store, metadataProvider metadata.Provider, mailer Mailer, settingsStore *settings.Store, notifier Notifier, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, requests: bookRequests, lists: bookLists, annotations: annotationStore, mailer: mailer, logger: logger}
+	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, requests: bookRequests, lists: bookLists, annotations: annotationStore, mailer: mailer, settings: settingsStore, notifier: notifier, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", adminUI())
 	mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusPermanentRedirect))
@@ -79,6 +90,10 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/admin/users/", s.requireAdmin(s.adminUser))
 	mux.Handle("/api/v1/admin/export", requireMethod(http.MethodGet, s.requireAdmin(s.exportArchive)))
 	mux.Handle("/api/v1/admin/audit", requireMethod(http.MethodGet, s.requireAdmin(s.auditLog)))
+	mux.Handle("/api/v1/admin/settings", s.requireAdmin(s.adminSettings))
+	mux.Handle("/api/v1/admin/settings/test", requireMethod(http.MethodPost, s.requireAdmin(s.testIntegration)))
+	mux.Handle("/api/v1/admin/storage", requireMethod(http.MethodGet, s.requireAdmin(s.storageStatus)))
+	mux.Handle("/api/v1/admin/storage/move-to-s3", requireMethod(http.MethodPost, s.requireAdmin(s.moveToS3)))
 	mux.Handle("/api/v1/admin/metadata/search", requireMethod(http.MethodGet, s.requireAuthentication(s.searchMetadata)))
 	mux.Handle("/api/v1/books", s.requireAuthentication(s.books))
 	mux.Handle("/api/v1/books/", s.requireAuthentication(s.book))

@@ -189,6 +189,13 @@ var migrations = []string{
 		expires_at TEXT NOT NULL,
 		attempts INTEGER NOT NULL DEFAULT 0
 	) STRICT;`,
+	// Integration settings edited in the admin console; a missing key falls back to the
+	// environment. Each edition records whether its file is on local disk or in S3.
+	`CREATE TABLE settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	) STRICT;
+	ALTER TABLE editions ADD COLUMN storage TEXT NOT NULL DEFAULT 'disk' CHECK (storage IN ('disk', 's3'));`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

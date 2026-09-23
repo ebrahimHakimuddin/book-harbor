@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/bookharbor/bookharbor/apps/server/internal/export"
+	"github.com/bookharbor/bookharbor/apps/server/internal/objectstore"
 	"html"
 	"io"
 	"net/url"
@@ -58,6 +59,7 @@ type Store struct {
 	dataDir  string
 	maxBytes int64
 	now      func() time.Time
+	objects  func() (objectstore.Config, bool)
 }
 
 type ImportInput struct {
@@ -237,7 +239,6 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 		}
 	}()
 	storagePath := filepath.Join("books", bookID, editionID+"."+format)
-	absoluteStoragePath := filepath.Join(s.dataDir, storagePath)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -252,24 +253,31 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 		return Book{}, fmt.Errorf("create book: %w", err)
 	}
 	checksum := staged.checksum
+	storage, err := s.place(ctx, staged, storagePath)
+	if err != nil {
+		return Book{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			s.unplace(ctx, storage, storagePath)
+		}
+	}()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO editions (
 			id, book_id, format, media_type, original_filename,
-			byte_length, sha256, storage_path, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			byte_length, sha256, storage_path, storage, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		editionID, bookID, format, mediaType, filename,
-		written, checksum, storagePath, now.Format(time.RFC3339Nano),
+		written, checksum, storagePath, storage, now.Format(time.RFC3339Nano),
 	); err != nil {
 		return Book{}, fmt.Errorf("create edition: %w", err)
-	}
-	if err := os.Rename(temporaryPath, absoluteStoragePath); err != nil {
-		return Book{}, fmt.Errorf("store imported book: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Book{}, fmt.Errorf("commit book import: %w", err)
 	}
-	cleanupBookDirectory = false
+	committed, cleanupBookDirectory = true, false
 	// The embedded cover is a convenience: a bad or unsupported image leaves the book coverless
 	// rather than failing an import that already succeeded.
 	if len(staged.metadata.Cover) > 0 {
@@ -443,13 +451,13 @@ func (s *Store) UpdateMetadata(ctx context.Context, bookID string, update BookUp
 }
 
 func (s *Store) OpenContent(ctx context.Context, editionID string) (Content, error) {
-	var storagePath, filename, mediaType, checksum, createdAt string
+	var storagePath, storage, filename, mediaType, checksum, createdAt string
 	var byteLength int64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT storage_path, original_filename, media_type, byte_length, sha256, created_at
+		SELECT storage_path, storage, original_filename, media_type, byte_length, sha256, created_at
 		FROM editions
 		WHERE id = ?
-	`, editionID).Scan(&storagePath, &filename, &mediaType, &byteLength, &checksum, &createdAt)
+	`, editionID).Scan(&storagePath, &storage, &filename, &mediaType, &byteLength, &checksum, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Content{}, ErrNotFound
 	}
@@ -460,13 +468,9 @@ func (s *Store) OpenContent(ctx context.Context, editionID string) (Content, err
 	if err != nil {
 		return Content{}, fmt.Errorf("parse edition creation time: %w", err)
 	}
-	cleanStoragePath := filepath.Clean(storagePath)
-	if filepath.IsAbs(cleanStoragePath) || !strings.HasPrefix(cleanStoragePath, "books"+string(filepath.Separator)) {
-		return Content{}, fmt.Errorf("invalid stored content path")
-	}
-	file, err := os.Open(filepath.Join(s.dataDir, cleanStoragePath))
+	file, err := s.openStored(ctx, storage, storagePath, byteLength)
 	if err != nil {
-		return Content{}, fmt.Errorf("open edition content: %w", err)
+		return Content{}, err
 	}
 	return Content{
 		Reader:           file,
@@ -876,6 +880,20 @@ func (s *Store) Delete(ctx context.Context, bookID string) (Book, error) {
 	if err != nil {
 		return Book{}, err
 	}
+	var objects []string
+	rows, err := s.db.QueryContext(ctx, `SELECT storage_path FROM editions WHERE book_id = ? AND storage = 's3'`, bookID)
+	if err != nil {
+		return Book{}, fmt.Errorf("list stored objects: %w", err)
+	}
+	for rows.Next() {
+		var storagePath string
+		if err := rows.Scan(&storagePath); err != nil {
+			rows.Close()
+			return Book{}, fmt.Errorf("scan stored object: %w", err)
+		}
+		objects = append(objects, objectKey(storagePath))
+	}
+	rows.Close()
 	result, err := s.db.ExecContext(ctx, `DELETE FROM books WHERE id = ?`, bookID)
 	if err != nil {
 		return Book{}, fmt.Errorf("delete book: %w", err)
@@ -887,10 +905,17 @@ func (s *Store) Delete(ctx context.Context, bookID string) (Book, error) {
 	if err := os.RemoveAll(filepath.Join(s.dataDir, "books", bookID)); err != nil {
 		return book, fmt.Errorf("book deleted but files remain: %w", err)
 	}
+	for _, key := range objects {
+		if err := s.bucket().Delete(ctx, key); err != nil {
+			return book, fmt.Errorf("book deleted but its S3 object remains: %w", err)
+		}
+	}
 	return book, nil
 }
 
 // WriteExport streams every original file and a database snapshot as a zip.
 func (s *Store) WriteExport(ctx context.Context, w io.Writer) error {
-	return export.Write(ctx, w, s.db, s.dataDir)
+	return export.Write(ctx, w, s.db, s.dataDir, func(ctx context.Context, storagePath string) (io.ReadCloser, error) {
+		return s.bucket().Get(ctx, objectKey(storagePath), 0)
+	})
 }
