@@ -15,7 +15,7 @@ android {
         applicationId = "dev.bookharbor.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
+        versionCode = 11
         // The release version lives in /VERSION, shared with the server and admin console.
         versionName = rootProject.file("../../VERSION").readText().trim()
 
