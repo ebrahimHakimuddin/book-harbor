@@ -3,7 +3,12 @@ package dev.bookharbor.app
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
+import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.View
+import android.view.ViewTreeObserver
+import java.util.concurrent.atomic.AtomicBoolean
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -39,15 +44,43 @@ import dev.bookharbor.app.reader.ReaderTheme
 import dev.bookharbor.app.ui.theme.BookHarborTheme
 import dev.bookharbor.app.widget.ContinueReadingWidget
 
+private const val SPLASH_HOLD_MS = 1500L
+
 class MainActivity : ComponentActivity() {
     /** A book the home-screen widget asked to open, until it has been opened. */
     private val openRequest = mutableStateOf<String?>(null)
+
+    /** Set once the app has something real to show (the saved library, sign-in, or setup). */
+    private val contentReady = AtomicBoolean(false)
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         enableEdgeToEdge()
         if (state == null) openRequest.value = intent.getStringExtra(ContinueReadingWidget.EXTRA_BOOK_ID)
-        setContent { BookHarborApp(openRequest) }
+        setContent { BookHarborApp(openRequest, onContentReady = { contentReady.set(true) }) }
+        holdSplashUntilReady()
+    }
+
+    /**
+     * Keeps the splash on screen until the first real screen is ready, instead of flashing an
+     * in-between loading frame. Capped, so a slow start still shows the app's own loading screen.
+     */
+    private fun holdSplashUntilReady() {
+        val started = SystemClock.uptimeMillis()
+        val content = findViewById<View>(android.R.id.content)
+        content.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (!contentReady.get() && SystemClock.uptimeMillis() - started < SPLASH_HOLD_MS) return false
+                content.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
+        // Android 12+: fade the splash away rather than cutting to the app.
+        if (Build.VERSION.SDK_INT >= 31) {
+            splashScreen.setOnExitAnimationListener { splash ->
+                splash.animate().alpha(0f).setDuration(220).withEndAction { splash.remove() }.start()
+            }
+        }
     }
 
     // Volume keys turn pages while a book is open, if the reader turned that on.
@@ -69,7 +102,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun BookHarborApp(openRequest: MutableState<String?> = remember { mutableStateOf(null) }) {
+fun BookHarborApp(openRequest: MutableState<String?> = remember { mutableStateOf(null) }, onContentReady: () -> Unit = {}) {
     val context = LocalContext.current
     val graph = remember { AppGraph.get(context) }
     val scope = rememberCoroutineScope()
@@ -77,6 +110,7 @@ fun BookHarborApp(openRequest: MutableState<String?> = remember { mutableStateOf
     val settings = remember { ReaderSettingsStore(graph.prefs) }
 
     LaunchedEffect(Unit) { if (controller.ui == LibraryUiState.Loading) controller.load() }
+    LaunchedEffect(controller.ui) { if (controller.ui != LibraryUiState.Loading) onContentReady() }
     // The saved library appears almost at once (offline first), so the widget's book opens
     // without waiting for the server.
     LaunchedEffect(openRequest.value, controller.ui) {

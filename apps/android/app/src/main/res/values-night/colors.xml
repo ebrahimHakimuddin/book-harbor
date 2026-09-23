@@ -3,4 +3,6 @@
     <color name="widget_background">#FF0F2D46</color>
     <color name="widget_text">#FFF8F6EF</color>
     <color name="widget_accent">#FF7FB3C3</color>
+    <!-- The app background (BookHarborTheme), so the window, splash, and first frame match. -->
+    <color name="app_background">#FF102735</color>
 </resources>

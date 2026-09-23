@@ -134,8 +134,10 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         scope.launch(Dispatchers.IO) {
             if (ui !is LibraryUiState.Catalog && graph.session.tokens != null) {
                 cache.load()?.let { (name, books) ->
+                    // The saved copy is up; checking it against the server happens quietly. The
+                    // pull-to-refresh spinner is only for refreshes the reader asked for -- as an
+                    // automatic check it flashed for a frame on every launch.
                     ui = catalog(name, books, offline = false)
-                    refreshing = true // the saved copy is up; show that it's being checked
                 }
             }
             try {

@@ -165,13 +165,7 @@ fun LibraryScreen(controller: AppController) {
             if (resetting) PasswordResetDialog(controller, state.email, onDismiss = { resetting = false; controller.dismissPasswordReset() })
             if (changingServer) ChangeServerDialog(state.serverUrl, onConnect = { changingServer = false; controller.connect(it) }, onDismiss = { changingServer = false })
         }
-        LibraryUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Image(painterResource(R.drawable.brand_mark), contentDescription = null, Modifier.height(72.dp))
-                CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
-                Text("Opening your library…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
+        LibraryUiState.Loading -> LoadingScreen()
         is LibraryUiState.Error -> EntryColumn(tagline = null) {
             Text(state.message, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.error)
             PrimaryButton("Try again", onClick = { if (state.retry == LibraryUiState.Loading) controller.load() else controller.dismissError(state.retry) })
@@ -184,6 +178,28 @@ fun LibraryScreen(controller: AppController) {
             }
         }
         is LibraryUiState.Catalog -> CatalogScaffold(controller, state)
+    }
+}
+
+/**
+ * Shown only when starting takes a while (the splash covers the usual quick start). The mark sits
+ * where the splash's did, so the handoff doesn't jump; the spinner and words fade in only if the
+ * wait goes on, so a fast load never flashes them.
+ */
+@Composable
+private fun LoadingScreen() {
+    var slow by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(400); slow = true }
+    val detail by androidx.compose.animation.core.animateFloatAsState(if (slow) 1f else 0f, tween(300), label = "loading")
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Image(painterResource(R.drawable.brand_mark), contentDescription = null, Modifier.size(104.dp))
+        Column(
+            Modifier.align(Alignment.Center).padding(top = 200.dp).graphicsLayer { alpha = detail },
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp, color = MaterialTheme.colorScheme.secondary)
+            Text("Opening your library…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
