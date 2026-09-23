@@ -125,7 +125,7 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/lists/", s.requireAuthentication(s.list))
 	mux.HandleFunc("/", notFound)
 
-	return s.withRequestLogging(s.withSecurityHeaders(mux))
+	return s.withRequestLogging(s.withSecurityHeaders(s.withVersionCheck(mux)))
 }
 
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {

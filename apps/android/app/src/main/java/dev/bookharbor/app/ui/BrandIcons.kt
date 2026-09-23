@@ -58,6 +58,7 @@ object BrandIcons {
     val User = icon("user", "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2", "M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z")
     val Lock = icon("lock", "M5 11h14v10H5z", "M8 11V7a4 4 0 0 1 8 0v4")
     val Info = icon("info", "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z", "M12 16v-4M12 8h.01")
+    val Heart = icon("heart", "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z")
     val External = icon("external", "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6", "M15 3h6v6M10 14L21 3")
     val Sort = icon("sort", "M4 6h11M4 12h8M4 18h5", "M18 5v14m0 0-3-3m3 3 3-3")
     val UserPlus = icon("user-plus", "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M19 8v6M22 11h-6")

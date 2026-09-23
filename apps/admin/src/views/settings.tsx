@@ -1,9 +1,9 @@
 import { useState, type FormEvent, type ReactNode } from "react"
-import { BellIcon, BookDownIcon, CloudUploadIcon, HardDriveIcon, Loader2Icon, MailIcon, SendIcon } from "lucide-react"
+import { BellIcon, BookDownIcon, CodeIcon, InfoIcon, CloudUploadIcon, HardDriveIcon, Loader2Icon, MailIcon, SendIcon } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { api, type Integration, type Settings } from "@/lib/api"
-import { keys } from "@/lib/queries"
+import { api, APP_VERSION, type Integration, type Settings } from "@/lib/api"
+import { keys, useInstance } from "@/lib/queries"
 import { errorMessage } from "@/lib/format"
 import { useConfirm } from "@/components/confirm"
 import { cn } from "@/lib/utils"
@@ -102,6 +102,7 @@ export function SettingsView() {
               {item.integration === "s3" && <StorageMove configured={item.required.every((key) => settings.data[key]?.set)} />}
             </Section>
           ))}
+          <About />
         </div>
       )}
     </>
@@ -257,5 +258,52 @@ function StorageMove({ configured }: { configured: boolean }) {
       {data.error && !data.moving && <p role="alert" className="text-destructive">The last move stopped: {data.error}. Moving again picks up where it left off.</p>}
       <p className="text-xs text-muted-foreground">Files already on disk stay there until you move them. Covers always stay on disk.</p>
     </div>
+  )
+}
+
+const SOURCE_URL = "https://github.com/ebrahimHakimuddin/book-harbor"
+const SUPPORT_URL = "https://www.buymeacoffee.com/kidfury"
+
+function About() {
+  const instance = useInstance()
+  const server = instance.data?.version ?? "…"
+  const commit = instance.data?.commit && instance.data.commit !== "unknown" ? instance.data.commit.slice(0, 7) : null
+  return (
+    <section aria-labelledby="settings-about" className="grid gap-5 py-8 lg:grid-cols-[17rem_minmax(0,1fr)] lg:gap-10">
+      <header className="flex items-start gap-3.5 lg:flex-col lg:gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-mist text-teal-dark [&_svg]:size-5"><InfoIcon /></span>
+        <div className="grid gap-1.5">
+          <h2 id="settings-about" className="text-xl font-bold text-navy">About</h2>
+          <p className="text-sm text-muted-foreground">Versions, source code, and supporting the project.</p>
+        </div>
+      </header>
+      <div className="grid min-w-0 content-start gap-5 rounded-xl border bg-background p-5 sm:p-6">
+        <div className="flex items-center gap-4">
+          <img src="/admin/mark.png" alt="" className="size-14" />
+          <div>
+            <p className="font-heading text-xl font-bold text-navy">BookHarbor</p>
+            <p className="text-sm text-muted-foreground">Your library. Your harbor. Every device.</p>
+          </div>
+        </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
+          <dt className="text-muted-foreground">Server</dt>
+          <dd className="font-medium tabular-nums">{server}{commit && <span className="ml-2 font-normal text-muted-foreground">({commit})</span>}</dd>
+          <dt className="text-muted-foreground">Admin console</dt>
+          <dd className="font-medium tabular-nums">{APP_VERSION}</dd>
+        </dl>
+        <p className="text-xs text-muted-foreground">
+          The Android app must be on the same major and minor version as the server (for example 1.0.x with 1.0.x); the server refuses mismatched apps, and the app says which one to update.
+        </p>
+        <p className="rounded-lg bg-mist p-3 text-xs text-muted-foreground">
+          BookHarbor is self-hosted software. The project does not host, provide, or distribute any books or other content; everything in this library was added by whoever runs this server.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" render={<a href={SOURCE_URL} target="_blank" rel="noreferrer" />}><CodeIcon />Source code</Button>
+          <a href={SUPPORT_URL} target="_blank" rel="noreferrer">
+            <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="40" width="145" className="h-10 w-auto" />
+          </a>
+        </div>
+      </div>
+    </section>
   )
 }

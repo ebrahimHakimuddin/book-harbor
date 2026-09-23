@@ -473,6 +473,20 @@ annotations }`. `annotations` uses the same shape as `changes`.
   returns at most 500 per page; continue with the returned cursor while
   `hasMore` is true.
 
+## Versions
+
+The server, admin console, and Android app share one release version, kept in
+`/VERSION` at the repository root. `GET /instance` reports the server's
+`version` and `commit`.
+
+Clients name themselves on every request with
+`X-BookHarbor-Client: <client>/<version>` (`android/1.0.0`, `admin/1.0.0`). A
+client whose major and minor version differ from the server's is refused with
+`426 version_mismatch`, a message saying which side to update, and
+`details: { "client", "clientVersion", "serverVersion" }`. `GET /instance`
+is never refused, so a client can always learn the server's version. Requests
+without the header, and development builds (version `dev`), are not checked.
+
 ## Contract rules
 
 - Timestamps are UTC RFC 3339 values. Canonical progress uses the latest reading

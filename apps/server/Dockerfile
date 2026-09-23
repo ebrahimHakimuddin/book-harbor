@@ -4,6 +4,8 @@
 # Vite writes it to ../server/internal/httpapi/adminui relative to /admin.
 FROM node:22-alpine AS admin
 WORKDIR /admin
+# The console shows, and sends the server, the release version in /VERSION.
+COPY VERSION /VERSION
 COPY apps/admin/package.json apps/admin/package-lock.json ./
 RUN npm ci
 COPY apps/admin/ ./
@@ -16,9 +18,10 @@ COPY apps/server/go.mod ./
 RUN go mod download
 
 COPY apps/server/ ./
+COPY VERSION ./VERSION
 COPY --from=admin /server/internal/httpapi/adminui ./internal/httpapi/adminui
 RUN mkdir -p /out/data /out/tmp && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/bookharbor ./cmd/bookharbor
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o /out/bookharbor ./cmd/bookharbor
 
 # slim: just the binary. Everything works except importing MOBI/AZW3, which needs Calibre.
 # Build it with `docker build --target slim`.

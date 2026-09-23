@@ -107,8 +107,14 @@ internal fun SettingsTab(controller: AppController, catalog: LibraryUiState.Cata
 
             SettingsGroup("About") {
                 UpdateRow()
+                SettingsRow(BrandIcons.Server, "Server version", controller.lastInstance?.version?.let { "BookHarbor $it on ${controller.serverUrl.removePrefix("https://").removePrefix("http://")}" } ?: "Unknown until the server is reached")
                 SettingsRow(BrandIcons.External, "Source code", GITHUB_URL.removePrefix("https://"), onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_URL))) })
+                SettingsRow(BrandIcons.Heart, "Support BookHarbor", "Buy the developer a coffee", onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SUPPORT_URL))) })
             }
+            Text(
+                "BookHarbor is self-hosted software. It doesn't provide or distribute any books; everything here was added by whoever runs this server.",
+                Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             SettingsGroup(null) {
                 SettingsRow(BrandIcons.SignOut, "Sign out", null, tint = MaterialTheme.colorScheme.error, onClick = { confirmSignOut = true })

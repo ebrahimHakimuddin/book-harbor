@@ -62,6 +62,7 @@ export interface BookUpdate {
 export interface Instance {
   name: string
   version: string
+  commit?: string
   setupRequired: boolean
   formats: string[]
   invitesEnabled: boolean
@@ -256,6 +257,40 @@ interface RequestOptions {
   headers?: Record<string, string>
 }
 
+declare const __APP_VERSION__: string
+
+/** This console's release version, from /VERSION at build time. */
+export const APP_VERSION = __APP_VERSION__
+const CLIENT_HEADER = "X-BookHarbor-Client"
+const CLIENT = `admin/${APP_VERSION}`
+
+/** "1.2.3" as [1, 2]; null for anything else, such as "dev". */
+function majorMinor(version: string): [number, number] | null {
+  const match = /^v?(\d+)\.(\d+)/.exec(version.trim())
+  return match ? [Number(match[1]), Number(match[2])] : null
+}
+
+/** Same rule as the server: the same major and minor version, or a development build. */
+export function compatibleVersions(server: string, client: string): boolean {
+  const a = majorMinor(server)
+  const b = majorMinor(client)
+  return !a || !b || (a[0] === b[0] && a[1] === b[1])
+}
+
+/**
+ * Set once the server refuses this console's version (426), which happens when the server is
+ * upgraded while a tab is open. The app then blocks everything behind a reload.
+ */
+export const versionMismatch = (() => {
+  let reported = false
+  const listeners = new Set<() => void>()
+  return {
+    get: () => reported,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    report: () => { if (!reported) { reported = true; listeners.forEach((l) => l()) } },
+  }
+})()
+
 async function send(path: string, options: RequestOptions): Promise<Response> {
   const build = () => {
     const headers = new Headers(options.headers)
@@ -267,9 +302,11 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
       body = JSON.stringify(options.body)
     }
     if (options.auth !== false && current) headers.set("Authorization", `Bearer ${current.accessToken}`)
+    headers.set(CLIENT_HEADER, CLIENT)
     return fetch(path, { method: options.method ?? "GET", headers, body })
   }
   let response = await build()
+  if (response.status === 426) versionMismatch.report()
   if (response.status === 401 && options.auth !== false && (await refreshSession())) response = await build()
   return response
 }
@@ -294,6 +331,7 @@ function upload<T>(path: string, body: FormData, onProgress?: (fraction: number)
       const xhr = new XMLHttpRequest()
       xhr.open("POST", path)
       if (current) xhr.setRequestHeader("Authorization", `Bearer ${current.accessToken}`)
+      xhr.setRequestHeader(CLIENT_HEADER, CLIENT)
       xhr.upload.onprogress = (event) => event.lengthComputable && onProgress?.(event.loaded / event.total)
       xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText })
       xhr.onerror = () => reject(new APIError(0, "network", "The server could not be reached."))

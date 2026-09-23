@@ -177,6 +177,24 @@ fun LibraryScreen(controller: AppController) {
                 if (changingServer) ChangeServerDialog(controller.serverUrl, onConnect = { changingServer = false; controller.connect(it) }, onDismiss = { changingServer = false })
             }
         }
+        is LibraryUiState.Incompatible -> EntryColumn(title = "Update needed", tagline = null) {
+            // A hard stop: the server refuses a mismatched app, so nothing here would work.
+            val context = androidx.compose.ui.platform.LocalContext.current
+            Text(state.message, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+            Text(
+                "App ${state.appVersion.ifBlank { "unknown" }} · Server ${state.serverVersion.ifBlank { "unknown" }}",
+                style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (isNewer(state.serverVersion, state.appVersion)) {
+                PrimaryButton("Get the latest app", onClick = {
+                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("$GITHUB_URL/releases/latest")))
+                }, icon = BrandIcons.Download)
+            }
+            dev.bookharbor.app.ui.SecondaryButton("Try again", onClick = { controller.load() }, modifier = Modifier.fillMaxWidth())
+            var changingServer by rememberSaveable { mutableStateOf(false) }
+            dev.bookharbor.app.ui.SecondaryButton("Use a different server", onClick = { changingServer = true }, modifier = Modifier.fillMaxWidth(), icon = BrandIcons.Server)
+            if (changingServer) ChangeServerDialog(controller.serverUrl, onConnect = { changingServer = false; controller.connect(it) }, onDismiss = { changingServer = false })
+        }
         is LibraryUiState.Catalog -> CatalogScaffold(controller, state)
     }
 }

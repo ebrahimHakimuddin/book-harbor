@@ -97,6 +97,14 @@ variables listed in [`docs/api.md`](docs/api.md#integrations).
 
 The health check is `GET /healthz`.
 
+### Updating
+
+The server, admin console, and Android app are released together with one
+version number (in [`VERSION`](VERSION)). The app and server must be on the same
+major and minor version, for example 1.0.x with 1.0.x: the server refuses a
+mismatched app, and the app shows which one to update. Update the server first,
+then the app.
+
 ### Backups
 
 **Backup** in the admin console downloads one zip with every book file, the

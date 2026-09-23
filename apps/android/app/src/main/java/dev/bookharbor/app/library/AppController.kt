@@ -23,6 +23,8 @@ sealed interface LibraryUiState {
     data object Setup : LibraryUiState
     data class SignIn(val instance: InstanceInfo? = null, val serverUrl: String = "", val email: String = "") : LibraryUiState
     data object Loading : LibraryUiState
+    /** The app and server are on different versions; nothing works until one is updated. */
+    data class Incompatible(val appVersion: String, val serverVersion: String, val message: String) : LibraryUiState
     data class Catalog(
         val instanceName: String,
         val books: List<Book>,
@@ -118,7 +120,14 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
 
     private val cache = CatalogCache(graph.prefs)
     /** The server's self-description, kept so the sign-in form still knows what it offers after a failed attempt. */
-    private var lastInstance: InstanceInfo? = null
+    /** The server as it last described itself, for its version in Settings. */
+    var lastInstance: InstanceInfo? = null
+        private set
+
+    init {
+        // The server refused this app's version mid-session: block everything, like at start-up.
+        graph.api.onVersionRejected = { message -> ui = LibraryUiState.Incompatible(graph.appVersion, lastInstance?.version.orEmpty(), message) }
+    }
 
     /** True while a pull-to-refresh reload is running; the catalog stays on screen meanwhile. */
     var refreshing by mutableStateOf(false)
@@ -149,6 +158,8 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 val instance = graph.library.instance(graph.session.serverUrl)
                 lastInstance = instance
                 ui = when {
+                    !compatibleVersions(instance.version, graph.appVersion) ->
+                        LibraryUiState.Incompatible(graph.appVersion, instance.version, versionMismatchMessage(instance.version, graph.appVersion))
                     instance.setupRequired -> LibraryUiState.Error("This BookHarbor server still needs to be set up by an administrator.", LibraryUiState.Setup)
                     graph.session.tokens == null -> LibraryUiState.SignIn(instance, graph.session.serverUrl)
                     else -> {
@@ -161,6 +172,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 (ui as? LibraryUiState.Catalog)?.let { refreshChangedDownloads(it.books) }
             } catch (error: Exception) {
                 ui = when {
+                    error is HttpError && error.status == 426 -> LibraryUiState.Incompatible(graph.appVersion, lastInstance?.version.orEmpty(), error.message.orEmpty())
                     error is HttpError && error.status == 401 -> { graph.session.tokens = null; LibraryUiState.SignIn(lastInstance, graph.session.serverUrl) }
                     graph.session.tokens != null && cache.load() != null -> cache.load()!!.let { (name, books) -> catalog(name, books, offline = true) }
                     else -> LibraryUiState.Error(error.message?.takeIf { it.isNotBlank() } ?: "Unable to connect", if (graph.session.serverUrl.isBlank()) LibraryUiState.Setup else LibraryUiState.Loading)

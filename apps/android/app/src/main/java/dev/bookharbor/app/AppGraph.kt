@@ -29,7 +29,9 @@ class AppGraph private constructor(context: Context) {
     val cacheDir: File get() = app.cacheDir
 
     val session = SessionStore(prefs)
-    val api = ApiClient(session)
+    /** This app's release version, from /VERSION at build time. */
+    val appVersion: String = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull().orEmpty()
+    val api = ApiClient(session, clientVersion = appVersion)
     val library = LibraryClient(api)
     val friends = FriendsClient(api)
     val bookRequests = BookRequestsClient(api)

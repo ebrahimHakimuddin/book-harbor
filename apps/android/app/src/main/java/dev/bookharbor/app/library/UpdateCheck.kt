@@ -5,6 +5,25 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 const val GITHUB_URL = "https://github.com/ebrahimHakimuddin/book-harbor"
+const val SUPPORT_URL = "https://www.buymeacoffee.com/kidfury"
+
+/** "1.2.3" as (1, 2); null for anything else, such as "dev". */
+internal fun majorMinor(version: String): Pair<Int, Int>? {
+    val parts = version.trim().removePrefix("v").split('.')
+    return if (parts.size < 2) null else parts[0].toIntOrNull()?.let { major -> parts[1].toIntOrNull()?.let { major to it } }
+}
+
+/** The server's rule: the same major and minor version, or either one a development build. */
+fun compatibleVersions(server: String, app: String): Boolean {
+    val a = majorMinor(server) ?: return true
+    val b = majorMinor(app) ?: return true
+    return a == b
+}
+
+/** Which side the reader (or their server's host) has to update. */
+fun versionMismatchMessage(server: String, app: String): String =
+    if (isNewer(server, app)) "This app is version $app but the server is $server. Update the app to use this server."
+    else "This app is version $app but the server is $server. Ask whoever runs the server to update it, then try again."
 
 /**
  * A newer release than the installed one, or null when up to date. Throws when GitHub can't be

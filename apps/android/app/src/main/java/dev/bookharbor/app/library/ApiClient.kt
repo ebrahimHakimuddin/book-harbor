@@ -17,7 +17,12 @@ private fun errorMessage(body: String): String = runCatching { JSONObject(body).
 class ApiClient(
     val session: SessionStore,
     private val openConnection: (String) -> HttpURLConnection = { URL(it).openConnection() as HttpURLConnection },
+    /** This app's version, sent on every request so the server can refuse a mismatched app. */
+    private val clientVersion: String = "",
 ) {
+    /** Called when the server refuses this app's version (426), with its explanation. */
+    @Volatile var onVersionRejected: ((String) -> Unit)? = null
+
     /** Resolves a server-relative path (or returns an absolute URL unchanged). */
     fun url(path: String): String = URL(URL(session.serverUrl.trimEnd('/') + "/"), path).toString()
 
@@ -34,6 +39,7 @@ class ApiClient(
             connection.connectTimeout = 8_000 // an unreachable home server should fail fast, not hang the UI
             connection.readTimeout = readTimeoutMillis
             connection.setRequestProperty("Accept", "application/json")
+            if (clientVersion.isNotBlank()) connection.setRequestProperty("X-BookHarbor-Client", "android/$clientVersion")
             if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
             if (body != null) {
                 connection.doOutput = true
@@ -47,6 +53,7 @@ class ApiClient(
                 input.copyTo(out)
                 out.toByteArray()
             } ?: ByteArray(0)
+            if (status == 426) onVersionRejected?.invoke(errorMessage(String(bytes)))
             if (status !in 200..299) throw HttpError(status, errorMessage(String(bytes)))
             return bytes
         } finally {

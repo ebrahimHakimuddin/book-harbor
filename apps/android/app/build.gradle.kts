@@ -16,7 +16,8 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 10
-        versionName = "0.9.0"
+        // The release version lives in /VERSION, shared with the server and admin console.
+        versionName = rootProject.file("../../VERSION").readText().trim()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
