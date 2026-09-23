@@ -82,8 +82,8 @@ Initial EPUB controls include:
 Theme, typography, progress visibility, and brightness are stored locally as a
 reader profile and apply to newly opened books. A reader may reset an individual
 setting or the whole profile to defaults. Settings changes must not require a
-server round trip. Cross-device preference sync is outside version 0.1; reading
-progress sync is not.
+server round trip. Reader settings stay on the device; reading progress and
+annotations sync across devices.
 
 The main overlay also provides table of contents, chapter/page navigation,
 progress, settings, and close. Controls meet Android

@@ -1,10 +1,8 @@
-# HTTP interface sketch
+# HTTP API
 
 All routes live below `/api/v1`. JSON error responses contain a stable `code`, a
 human-readable `message`, and an optional `details` object. Identifiers are
-opaque strings.
-
-This is a behavioral sketch, not yet an OpenAPI definition.
+opaque strings. Routes marked "administrator only" return `403` to readers.
 
 ## Instance and sessions
 
@@ -29,6 +27,14 @@ PATCH  /admin/settings                 administrator only
 POST   /admin/settings/test            administrator only
 GET    /admin/storage                  administrator only
 POST   /admin/storage/move-to-s3       administrator only
+GET    /admin/shelfmark/search?title=&author=   administrator only
+GET    /admin/shelfmark/downloads      administrator only
+POST   /admin/shelfmark/downloads      administrator only
+GET    /admin/webnovels                administrator only
+POST   /admin/webnovels                administrator only
+GET    /admin/webnovels/search?q=      administrator only
+POST   /admin/webnovels/{sourceId}/sync   administrator only
+DELETE /admin/webnovels/{sourceId}     administrator only
 ```
 
 `/bootstrap` is available only while no administrator exists. Session creation
@@ -106,8 +112,9 @@ Password hashes remain in the snapshot.
 
 ## Integrations
 
-Email (Resend), book file storage (S3-compatible), and administrator
-notifications (ntfy) are configured from the admin console. `GET /admin/settings`
+Email (Resend), book file storage (S3-compatible), administrator notifications
+(ntfy), Shelfmark, and the web novel update schedule are configured from the
+admin console. `GET /admin/settings`
 returns every key as `{ "value", "set", "secret", "source" }`; a secret's value is
 never returned, only whether it is set. `PATCH /admin/settings` takes a partial
 `{ "key": "value" }` map, validates all of it before saving any, and treats `""` as
@@ -130,10 +137,15 @@ variable (`source: "environment"`):
 | `ntfy.url` | `BOOKHARBOR_NTFY_URL` (default `https://ntfy.sh`) |
 | `ntfy.topic` | `BOOKHARBOR_NTFY_TOPIC` |
 | `ntfy.token` (secret) | `BOOKHARBOR_NTFY_TOKEN` |
+| `shelfmark.url` | `BOOKHARBOR_SHELFMARK_URL` |
+| `shelfmark.username` | `BOOKHARBOR_SHELFMARK_USERNAME` |
+| `shelfmark.password` (secret) | `BOOKHARBOR_SHELFMARK_PASSWORD` |
+| `webnovels.syncHours` | `BOOKHARBOR_WEBNOVELS_SYNC_HOURS` (default `24`; `0` turns updates off) |
 
-`POST /admin/settings/test` with `{ "integration": "email" | "s3" | "ntfy" }`
-exercises the saved settings: a test email to the signed-in administrator, a
-write/read/delete of a small object, or a test push. Failures return `502` with the
+`POST /admin/settings/test` with `{ "integration": "email" | "s3" | "ntfy" |
+"shelfmark" }` exercises the saved settings: a test email to the signed-in
+administrator, a write/read/delete of a small object, a test push, or a
+Shelfmark sign-in. Failures return `502` with the
 provider's message.
 
 Each edition's file is on local disk or in S3. With `s3.storeUploads` on, new
@@ -145,8 +157,9 @@ deleted locally only after it is stored. `GET /admin/storage` reports
 left off when started again. Downloads of S3 files stream through the server with
 range support, so clients are unaffected. Covers always stay on disk.
 
-ntfy receives `book_request.create` and `user.password_reset` events, and the
-outcome of a move to S3.
+ntfy receives `book_request.create` and `user.password_reset` events, the
+outcome of a move to S3, finished or failed Shelfmark downloads, and web novels
+added or gaining chapters.
 
 ## Library
 
@@ -168,7 +181,7 @@ first, plus `nextCursor` when more remain. Pass it back as `cursor` to fetch the
 next page; a malformed cursor returns `400 invalid_cursor`.
 
 `POST /books/{bookId}/editions` takes the same single-`file` multipart body as
-`POST /books` and adds an EPUB or PDF to an existing book. A book holds one
+`POST /books` and adds another format to an existing book. A book holds one
 edition per format; a second edition in the same format returns `409
 edition_exists`.
 
@@ -180,7 +193,10 @@ removes it. Covers from other sites keep their absolute `https` URL.
 
 `POST /books` accepts `multipart/form-data` with exactly one `file` part and an
 optional `title` field. The server validates the file contents rather than its
-extension and preserves the original bytes. From an EPUB it also reads the
+extension and preserves the original bytes. A MOBI, AZW, or AZW3 file is
+converted to EPUB with Calibre's `ebook-convert` and stored as that EPUB; a
+server without Calibre refuses it with `415 converter_missing`. Any other
+format returns `415 unsupported_book_format`. From an EPUB it also reads the
 title, authors, description (as plain text), series (Calibre's
 `calibre:series`/`series_index` or an EPUB 3 `belongs-to-collection`), and
 embedded cover. A file byte-identical to an existing edition, here or through
@@ -189,7 +205,10 @@ it matches. The default upload limit is 512 MiB and can be changed with
 `BOOKHARBOR_MAX_UPLOAD_BYTES`.
 
 An edition response includes format, byte length, media type, SHA-256 checksum,
-and an authenticated content URL. Content supports `GET`, `HEAD`, and standard
+and an authenticated content URL. A book built from a followed web novel also
+has `webnovelChapters`, the chapters in it so far; when its file is replaced
+with more chapters, the edition keeps its ID and gets a new checksum, so
+clients know to download it again. Content supports `GET`, `HEAD`, and standard
 byte ranges so Android can verify and resume a partial download.
 
 `PATCH /books/{bookId}` accepts any non-empty subset of `title`, `subtitle`,
@@ -215,6 +234,120 @@ Metadata search is a suggestion workflow rather than a direct write. When
 Hardcover on the server and returns provider-neutral candidates. The
 administrator reviews a candidate and applies its fields through the ordinary
 book patch route. Provider credentials are never exposed to the browser.
+
+## Book requests
+
+```text
+GET    /metadata/search?q=
+GET    /book-requests
+POST   /book-requests
+DELETE /book-requests/{requestId}
+GET    /admin/book-requests?status=open|resolved   administrator only
+POST   /admin/book-requests/{requestId}/fulfill    administrator only
+POST   /admin/book-requests/{requestId}/decline    administrator only
+```
+
+`GET /metadata/search` is open to every reader for finding a book to request.
+It returns candidates as `{ "provider", "id", "title", "subtitle", "authors",
+"coverUrl", ... }`. With web novels available, novelarchive.cc matches follow
+the books, with provider `novelarchive` and a subtitle such as
+`Web novel · 3188 chapters · ongoing`.
+
+`POST /book-requests` takes `{ "title", "author", "coverUrl", "sourceProvider",
+"sourceId" }`; the source identifies the candidate so requests for the same
+book can be grouped. A reader lists and cancels only their own requests.
+
+Fulfilling a request requires `{ "bookId" }` naming a book already in the
+library, so approval always means the book is there. A request for a web novel
+is fulfilled automatically once the followed novel's book exists.
+
+## Lists
+
+```text
+GET    /lists
+POST   /lists
+PATCH  /lists/{listId}
+DELETE /lists/{listId}
+GET    /lists/{listId}/books
+POST   /lists/{listId}/books
+DELETE /lists/{listId}/books/{bookId}
+```
+
+Lists belong to the reader who made them; every route acts only on the
+caller's own lists. `GET /lists` includes each list's `bookIds`, newest first.
+Creating or renaming takes `{ "name" }` (1 to 200 characters); a name the
+reader already uses, ignoring case, returns `409 list_name_taken`. Adding
+takes `{ "bookId" }`; adding a book already in the list does nothing.
+
+## Friends
+
+```text
+GET    /friends
+GET    /friends/{userId}
+DELETE /friends/{userId}
+GET    /friends/requests
+POST   /friends/requests
+POST   /friends/requests/{userId}/accept
+DELETE /friends/requests/{userId}
+GET    /me/social-settings
+PUT    /me/social-settings
+```
+
+A friend request is sent by email address (`{ "email" }`). `GET
+/friends/requests` returns `{ "incoming", "outgoing" }`; deleting a request
+declines one sent to you or cancels one you sent.
+
+Reading activity is private unless a reader turns it on:
+`PUT /me/social-settings` takes `{ "activityVisible", "goalYear", "goalBooks" }`
+and both routes return those plus `finishedThisYear`. `GET /friends` lists
+accepted friends with what they are currently reading, their books finished
+this year, and their goal, where they share activity. `GET /friends/{userId}`
+is a friend's page: their reading now, books finished, and books in common.
+Anyone who is not an accepted friend gets `404`.
+
+## Shelfmark
+
+A [Shelfmark](https://github.com/calibrain/shelfmark) instance, once set up in
+Settings, is a source for fulfilling requests.
+
+`GET /admin/shelfmark/search?title=&author=` searches every enabled Shelfmark
+source and returns `{ "items": [{ "source", "sourceId", "title", "format",
+"language", "size", "indexer", "raw" }] }`.
+
+`POST /admin/shelfmark/downloads` takes `{ "release": <an item's raw>,
+"requestIds": [...] }` and queues it on Shelfmark (`202`). The server follows
+the download, imports the file when it finishes (converting MOBI/AZW3), and
+fulfills the given requests with the book. `GET /admin/shelfmark/downloads`
+lists the downloads being followed, newest first, each with `status` (Shelfmark's
+own, then `importing`, `imported`, or `failed`), `progress`, `message`, and
+`bookId` once imported. This list is kept in memory and resets when the server
+restarts; the files themselves stay in Shelfmark.
+
+## Web novels
+
+`GET /admin/webnovels/search?q=` searches novelarchive.cc and marks novels
+already followed.
+
+`POST /admin/webnovels` takes `{ "sourceId" }` and follows the novel (`202`;
+`200` if it was already followed, which also fulfills its open requests when
+its book exists). A background worker then fetches its chapters, about two a
+second, and builds them into an EPUB:
+
+- The book is added to the library once the first 100 chapters are in and is
+  rebuilt every 100 chapters after that, then once more at the end.
+- Every chapter is listed from the start. Chapters not fetched yet are short
+  placeholders under their real names, and chapter N always stays at position
+  N, so reading positions hold as placeholders fill in.
+- Ongoing novels are checked again every `webnovels.syncHours`, and only new
+  chapters are fetched. Completed novels are not checked again.
+- If the site stops answering its API, the sync stops with an error and
+  retries an hour later. Chapters already fetched are kept.
+
+`GET /admin/webnovels` returns the followed novels, each with `bookId`,
+`chapters`, `checkedAt`, `error`, and `progress` (what the worker is doing with
+it now), plus `intervalHours`. `POST /admin/webnovels/{sourceId}/sync` checks
+a novel now, whatever its schedule. `DELETE /admin/webnovels/{sourceId}` stops
+following it; its book stays in the library.
 
 ## Reading progress
 
