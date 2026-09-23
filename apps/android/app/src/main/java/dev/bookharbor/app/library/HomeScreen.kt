@@ -130,6 +130,7 @@ import dev.bookharbor.app.R
 import dev.bookharbor.app.ui.BrandIcons
 import dev.bookharbor.app.ui.EmptyState
 import dev.bookharbor.app.ui.PrimaryButton
+import dev.bookharbor.app.ui.SectionHeader
 import dev.bookharbor.app.ui.theme.HarborNavy
 import dev.bookharbor.app.ui.theme.LiterataFamily
 import dev.bookharbor.app.ui.theme.cautionColor
@@ -146,59 +147,58 @@ internal enum class LibraryViewMode { List, Grid }
  * Home: the reader's own shelf -- books downloaded to this device or started anywhere -- with
  * search, sort, shelves, and tags over just those. The whole catalogue lives in Browse.
  */
-internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog, onOpenHistory: () -> Unit, onOpenLists: () -> Unit, onOpenSettings: () -> Unit, onBrowse: () -> Unit) {
+internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog, onOpenHistory: () -> Unit, onOpenLists: () -> Unit, onOpenSettings: () -> Unit, onBrowse: () -> Unit, reselected: Int = 0) {
     var query by rememberSaveable { mutableStateOf("") }
-    var filter by rememberSaveable { mutableStateOf(ShelfFilter.All) }
     var sort by rememberSaveable { mutableStateOf(BookSort.Recent) }
     var viewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Grid) }
     var tag by rememberSaveable { mutableStateOf<String?>(null) }
-    val downloaded = remember(catalog.downloads) { catalog.downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys }
+    val downloaded = remember(catalog.downloads) { catalog.downloadedEditions() }
     val shelf = remember(catalog.books, catalog.progress, downloaded) { catalog.books.filter { isOnShelf(it, catalog.progress, downloaded) } }
     val tags = remember(shelf) { libraryTags(shelf) }
-    val shown = remember(shelf, query, filter, sort, catalog.progress, downloaded, tag) { visibleBooks(shelf, query, filter, sort, catalog.progress, downloaded, tag) }
+    val searching = query.isNotBlank() || tag != null
+    val shown = remember(shelf, query, sort, catalog.progress, downloaded, tag) { visibleBooks(shelf, query, ShelfFilter.All, sort, catalog.progress, downloaded, tag) }
+    val hero = if (searching) null else remember(catalog.books, catalog.progress, catalog.lastReadAt) { continueReading(catalog.books, catalog.progress, catalog.lastReadAt) }
+    // Shelves are sections rather than filter chips: in progress, downloaded but not started, and
+    // finished. The book in the Continue card isn't repeated under Reading.
+    val sections = remember(shown, catalog.progress, downloaded, hero) { homeSections(shown.filter { it.id != hero?.id }, catalog.progress, downloaded) }
     val fullRow: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    // Tapping Home while already on it returns to the top.
+    LaunchedEffect(reselected) { if (reselected > 0) gridState.animateScrollToItem(0) }
 
     PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(if (viewMode == LibraryViewMode.Grid) 3 else 1),
+        state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item(span = fullRow) { LibraryTopBar(controller, catalog, onOpenHistory, onOpenLists, onOpenSettings) }
-        continueReading(catalog.books, catalog.progress, catalog.lastReadAt)?.let { book ->
-            item(span = fullRow, key = "continue") { ContinueReadingCard(controller, book, catalog.progress[book.id] ?: 0.0) }
-        }
-        if (shelf.isNotEmpty()) item(span = fullRow) {
-            Box(Modifier.padding(top = 18.dp)) { LibrarySearchBar(
-                query, { query = it }, sort, { sort = it }, viewMode,
-                onToggleView = { viewMode = if (viewMode == LibraryViewMode.Grid) LibraryViewMode.List else LibraryViewMode.Grid },
-            ) }
-        }
-        if (shelf.isNotEmpty()) item(span = fullRow) {
-            val counts = remember(shelf, catalog.progress, downloaded) { ShelfFilter.entries.associateWith { visibleBooks(shelf, "", it, BookSort.Recent, catalog.progress, downloaded).size } }
-            Column(Modifier.padding(top = 14.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Full-bleed rows: chips scroll out to the screen edge instead of being cut off at the margin.
-                ChipRow {
-                    ShelfFilter.entries.forEach { option ->
-                        ShelfChip(option.label, counts[option] ?: 0, filter == option) { filter = option }
-                    }
-                }
-                // Tags narrow whichever shelf is chosen; tapping the active tag clears it.
-                if (tags.isNotEmpty()) ChipRow {
-                    tags.forEach { option -> TagChip(option, tag == option) { tag = if (tag == option) null else option } }
-                }
+        item(span = fullRow, contentType = "top") { LibraryTopBar(controller, catalog, onOpenHistory, onOpenLists, onOpenSettings) }
+        // Search and filters come first, above everything they act on.
+        if (shelf.isNotEmpty()) item(span = fullRow, contentType = "search") {
+            Box(Modifier.padding(top = 16.dp)) {
+                LibrarySearchBar(query, { query = it }, sort, { sort = it }, viewMode, onToggleView = {
+                    viewMode = if (viewMode == LibraryViewMode.Grid) LibraryViewMode.List else LibraryViewMode.Grid
+                })
             }
         }
-        if (catalog.offline) item(span = fullRow) {
-            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Tags narrow the shelf; tapping the active tag clears it.
+        if (tags.isNotEmpty()) item(span = fullRow, contentType = "tags") {
+            Box(Modifier.padding(top = 12.dp)) { ChipRow { tags.forEach { option -> TagChip(option, tag == option) { tag = if (tag == option) null else option } } } }
+        }
+        if (catalog.offline) item(span = fullRow, contentType = "offline") {
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(BrandIcons.CloudOff, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Offline. Showing your last saved library; downloaded books open normally.", Modifier.padding(start = 10.dp).weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = controller::load) { Text("Retry") }
             }
         }
-        if (shelf.isEmpty()) {
-            item(span = fullRow) {
+        hero?.let { book ->
+            item(span = fullRow, key = "continue", contentType = "continue") { ContinueReadingCard(controller, book, catalog.progress[book.id] ?: 0.0, catalog.chaptersLeft[book.id]) }
+        }
+        when {
+            shelf.isEmpty() -> item(span = fullRow) {
                 EmptyState(
                     BrandIcons.Library, "Your shelf is empty",
                     if (catalog.books.isEmpty()) "Your server has no books yet. Ask its administrator to import some, then pull to refresh."
@@ -206,20 +206,39 @@ internal fun HomeTab(controller: AppController, catalog: LibraryUiState.Catalog,
                     action = if (catalog.books.isNotEmpty()) { { PrimaryButton("Browse the catalogue", onBrowse, icon = BrandIcons.Search) } } else null,
                 )
             }
-        } else if (shown.isEmpty()) {
-            item(span = fullRow) { EmptyState(BrandIcons.Search, "Nothing matches", "Try a different search, or pick another shelf.") }
-        } else if (viewMode == LibraryViewMode.List) {
-            items(shown, key = { it.id }, span = { fullRow() }, contentType = { "row" }) { book -> Box(Modifier.animateItem()) { BookRow(controller, catalog, book) } }
-        } else {
-            items(shown, key = { it.id }, contentType = { "cell" }) { book -> Box(Modifier.animateItem()) { BookGridCell(controller, catalog, book) } }
+            searching && shown.isEmpty() -> item(span = fullRow) { EmptyState(BrandIcons.Search, "Nothing matches", "Try a different search or tag.") }
+            searching -> {
+                item(span = fullRow, contentType = "header") { SectionHeader("${shown.size} ${if (shown.size == 1) "book" else "books"}") }
+                bookItems(controller, catalog, shown, downloaded, viewMode, fullRow)
+            }
+            else -> sections.forEach { (section, books) ->
+                item(span = fullRow, key = "section:${section.name}", contentType = "header") { SectionHeader("${section.title} · ${books.size}") }
+                bookItems(controller, catalog, books, downloaded, viewMode, fullRow)
+            }
         }
     }
     }
 }
 
+/** A run of books as grid cells or list rows, each card given only its own precomputed state. */
+private fun androidx.compose.foundation.lazy.grid.LazyGridScope.bookItems(
+    controller: AppController,
+    catalog: LibraryUiState.Catalog,
+    books: List<Book>,
+    downloaded: Set<String>,
+    viewMode: LibraryViewMode,
+    fullRow: LazyGridItemSpanScope.() -> GridItemSpan,
+) {
+    if (viewMode == LibraryViewMode.List) {
+        items(books, key = { it.id }, span = { fullRow() }, contentType = { "row" }) { book -> Box(Modifier.animateItem()) { BookRow(controller, book, catalog.cardState(book, downloaded)) } }
+    } else {
+        items(books, key = { it.id }, contentType = { "cell" }) { book -> Box(Modifier.animateItem()) { BookGridCell(controller, book, catalog.cardState(book, downloaded)) } }
+    }
+}
+
 /** The book in progress, one tap from the top of the library. */
 @Composable
-internal fun ContinueReadingCard(controller: AppController, book: Book, progress: Double) {
+internal fun ContinueReadingCard(controller: AppController, book: Book, progress: Double, chaptersLeft: Int?) {
     val press = remember { MutableInteractionSource() }
     val shown by animateFloatAsState(progress.toFloat().coerceIn(0f, 1f), tween(600), label = "continue")
     Row(
@@ -228,9 +247,10 @@ internal fun ContinueReadingCard(controller: AppController, book: Book, progress
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Cover(book, controller.covers, Modifier.width(56.dp))
-        Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.weight(1f).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("CONTINUE READING", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, letterSpacing = 1.2.sp)
             Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+            chaptersLeft?.let { Text(chaptersLeftLabel(it), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f).height(4.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background)) {
                     Box(Modifier.fillMaxWidth(shown).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
@@ -259,8 +279,8 @@ private fun LibraryTopBar(controller: AppController, catalog: LibraryUiState.Cat
             sync.pending > 0 -> BrandIcons.Cloud to "${sync.pending} updates waiting to sync. Open reading history."
             else -> BrandIcons.CloudDone to "Everything synced. Open reading history."
         }
-        IconButton(onClick = onOpenHistory) { Icon(icon, description, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
-        IconButton(onClick = onOpenLists) { Icon(BrandIcons.Bookmark, "Your lists", Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        dev.bookharbor.app.ui.IconAction(icon, description, onOpenHistory)
+        dev.bookharbor.app.ui.IconAction(BrandIcons.Bookmark, "Your lists", onOpenLists)
         Box(
             Modifier.padding(start = 4.dp).size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondary)
                 .clickable(onClickLabel = "Open settings", role = Role.Button, onClick = onOpenSettings),
@@ -300,7 +320,7 @@ internal fun LibrarySearchBar(query: String, onQuery: (String) -> Unit, sort: Bo
         }
         Box(Modifier.width(1.dp).height(24.dp).background(muted.copy(alpha = 0.3f)))
         Box {
-            IconButton(onClick = { menu = true }) { Icon(BrandIcons.Filter, "Sort books. Now: ${sort.label}", Modifier.size(20.dp), tint = if (sort != BookSort.Recent) MaterialTheme.colorScheme.secondary else muted) }
+            dev.bookharbor.app.ui.IconAction(BrandIcons.Filter, "Sort: ${sort.label}", { menu = true }, tint = if (sort != BookSort.Recent) MaterialTheme.colorScheme.secondary else muted, iconSize = 20.dp)
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 Text("Sort by", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium, color = muted)
                 BookSort.entries.forEach { option ->
@@ -312,11 +332,10 @@ internal fun LibrarySearchBar(query: String, onQuery: (String) -> Unit, sort: Bo
                 }
             }
         }
-        IconButton(onClick = onToggleView) {
-            Crossfade(viewMode, label = "view mode") { mode ->
-                Icon(if (mode == LibraryViewMode.Grid) BrandIcons.List else BrandIcons.Grid, if (mode == LibraryViewMode.Grid) "Show as a list" else "Show as a grid", Modifier.size(20.dp), tint = muted)
-            }
-        }
+        dev.bookharbor.app.ui.IconAction(
+            if (viewMode == LibraryViewMode.Grid) BrandIcons.List else BrandIcons.Grid,
+            if (viewMode == LibraryViewMode.Grid) "Show as a list" else "Show as a grid", onToggleView, tint = muted, iconSize = 20.dp,
+        )
     }
 }
 

@@ -24,7 +24,21 @@ class ChapterMarks(private val preferences: SharedPreferences) {
 
     fun clear(bookId: String) { preferences.edit().remove(PREFIX + bookId).apply() }
 
-    private companion object { const val PREFIX = "chapters.read." }
+    /** How many chapters each book has, recorded whenever an EPUB is opened or listed. */
+    fun counts(): Map<String, Int> = runCatching {
+        val json = JSONObject(preferences.getString(COUNTS, "{}") ?: "{}")
+        json.keys().asSequence().associateWith { json.getInt(it) }
+    }.getOrDefault(emptyMap())
+
+    fun setCount(bookId: String, count: Int) {
+        if (counts()[bookId] == count) return
+        preferences.edit().putString(COUNTS, JSONObject(counts() + (bookId to count)).toString()).apply()
+    }
+
+    private companion object {
+        const val PREFIX = "chapters.read."
+        const val COUNTS = "chapters.count"
+    }
 }
 
 /**
@@ -33,3 +47,7 @@ class ChapterMarks(private val preferences: SharedPreferences) {
  */
 fun chapterReadStates(count: Int, explicit: Map<Int, Boolean>, currentChapter: Int?): List<Boolean> =
     List(count) { index -> explicit[index] ?: (currentChapter != null && index < currentChapter) }
+
+/** Unread chapters left: every chapter counts as read once the whole book is finished. */
+fun chaptersLeft(count: Int, explicit: Map<Int, Boolean>, currentChapter: Int?, finished: Boolean): Int =
+    if (finished) 0 else chapterReadStates(count, explicit, currentChapter).count { !it }

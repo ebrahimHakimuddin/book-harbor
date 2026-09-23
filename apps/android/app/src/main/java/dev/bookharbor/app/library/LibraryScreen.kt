@@ -175,6 +175,13 @@ fun LibraryScreen(controller: AppController) {
         is LibraryUiState.Error -> EntryColumn(tagline = null) {
             Text(state.message, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.error)
             PrimaryButton("Try again", onClick = { if (state.retry == LibraryUiState.Loading) controller.load() else controller.dismissError(state.retry) })
+            // A server that can't be reached may simply be the wrong one.
+            if (controller.serverUrl.isNotBlank()) {
+                var changingServer by rememberSaveable { mutableStateOf(false) }
+                dev.bookharbor.app.ui.SecondaryButton("Use a different server", onClick = { changingServer = true }, modifier = Modifier.fillMaxWidth(), icon = BrandIcons.Server)
+                Text(controller.serverUrl.removePrefix("https://").removePrefix("http://"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (changingServer) ChangeServerDialog(controller.serverUrl, onConnect = { changingServer = false; controller.connect(it) }, onDismiss = { changingServer = false })
+            }
         }
         is LibraryUiState.Catalog -> CatalogScaffold(controller, state)
     }
@@ -346,6 +353,8 @@ private fun CatalogScaffold(controller: AppController, catalog: LibraryUiState.C
 @Composable
 private fun CatalogContent(controller: AppController, catalog: LibraryUiState.Catalog) {
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
+    val tabs = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    var reselected by remember { mutableStateOf(mapOf<Tab, Int>()) }
     var listsOpen by rememberSaveable { mutableStateOf(false) }
     var historyOpen by rememberSaveable { mutableStateOf(false) }
     if (listsOpen) {
@@ -370,9 +379,12 @@ private fun CatalogContent(controller: AppController, catalog: LibraryUiState.Ca
                 Tab.entries.forEach { item ->
                     NavigationBarItem(
                         selected = tab == item,
-                        onClick = { tab = item },
-                        icon = { Icon(when (item) { Tab.Home -> BrandIcons.Library; Tab.Browse -> BrandIcons.Search; Tab.Friends -> BrandIcons.Friends; Tab.Requests -> BrandIcons.Request; Tab.Settings -> BrandIcons.Settings }, contentDescription = null) },
-                        label = { Text(item.label) },
+                        // Tapping the tab you're on scrolls it back to the top.
+                        onClick = { if (tab == item) reselected = reselected + (item to (reselected[item] ?: 0) + 1) else tab = item },
+                        icon = { Icon(when (item) { Tab.Home -> BrandIcons.Library; Tab.Browse -> BrandIcons.Search; Tab.Friends -> BrandIcons.Friends; Tab.Requests -> BrandIcons.Request; Tab.Settings -> BrandIcons.Settings }, contentDescription = item.label) },
+                        label = { Text(item.label, maxLines = 1) },
+                        // Icons only; the tab you're on also shows its name.
+                        alwaysShowLabel = false,
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.onPrimary, selectedTextColor = MaterialTheme.colorScheme.primary, indicatorColor = MaterialTheme.colorScheme.primary),
                     )
                 }
@@ -380,13 +392,16 @@ private fun CatalogContent(controller: AppController, catalog: LibraryUiState.Ca
         },
     ) { padding ->
         // A quick crossfade between tabs rather than a hard cut.
-        Crossfade(tab, Modifier.padding(padding).fillMaxSize(), animationSpec = tween(180), label = "tab") { shown ->
+        // Each tab keeps its scroll position, search, and filters while you're elsewhere.
+        Crossfade(tab, Modifier.padding(padding).fillMaxSize(), animationSpec = tween(160), label = "tab") { shown ->
+            tabs.SaveableStateProvider(shown.name) {
             when (shown) {
-                Tab.Home -> HomeTab(controller, catalog, onOpenHistory = { historyOpen = true }, onOpenLists = { listsOpen = true }, onOpenSettings = { tab = Tab.Settings }, onBrowse = { tab = Tab.Browse })
-                Tab.Browse -> BrowseTab(controller, catalog)
+                Tab.Home -> HomeTab(controller, catalog, onOpenHistory = { historyOpen = true }, onOpenLists = { listsOpen = true }, onOpenSettings = { tab = Tab.Settings }, onBrowse = { tab = Tab.Browse }, reselected = reselected[Tab.Home] ?: 0)
+                Tab.Browse -> BrowseTab(controller, catalog, reselected = reselected[Tab.Browse] ?: 0)
                 Tab.Friends -> FriendsTab(controller)
                 Tab.Requests -> RequestsTab(controller)
                 Tab.Settings -> SettingsTab(controller, catalog)
+            }
             }
         }
     }

@@ -53,6 +53,14 @@ android {
                 "proguard-rules.pro",
             )
         }
+        // Release-speed build (R8, not debuggable) signed with the debug key, installed beside the
+        // real app: judge performance on this, never on a debug build.
+        create("preview") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".preview"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {

@@ -18,6 +18,7 @@ import dev.bookharbor.app.ui.RowAction
 import dev.bookharbor.app.ui.RowDivider
 import dev.bookharbor.app.ui.SecondaryButton
 import dev.bookharbor.app.ui.SectionHeader
+import dev.bookharbor.app.ui.TonalIconAction
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -136,33 +137,48 @@ fun BookDetailsPage(controller: AppController, catalog: LibraryUiState.Catalog, 
             // Not on the device yet: the main action downloads and the sheet stays open, showing
             // progress, then turns into Start reading. Nothing opens until the reader asks.
             val preferred = preferredEdition(book) { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
-            PrimaryButton(
-                when {
-                    downloading -> fraction?.let { "Downloading… ${(it * 100).roundToInt()}%" } ?: "Downloading…"
-                    downloaded.isEmpty() -> "Download"
-                    isReading(progress) -> "Continue reading"
-                    isFinished(progress) -> "Read again"
-                    else -> "Start reading"
-                },
-                onClick = {
-                    if (downloaded.isEmpty()) { preferred?.let { controller.download(it) }; return@PrimaryButton }
-                    onDismiss()
-                    // Reading a finished book again starts at the beginning, not on its last page.
-                    val again = downloaded.firstOrNull { it.format == "epub" } ?: downloaded.first()
-                    if (isFinished(progress)) controller.open(book, again, if (again.format == "epub") Locator.epub(EpubPosition.atChapter(0).toCfi()) else Locator.pdf(1))
-                    else controller.open(book)
-                },
-                modifier = Modifier.padding(top = 20.dp),
-                enabled = !downloading,
-                icon = if (downloaded.isEmpty() && !downloading) BrandIcons.Download else null,
-            )
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SecondaryButton(
-                    if (isFinished(progress)) "Mark as unread" else "Mark as read",
-                    onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markRead(book, !isFinished(progress)) },
-                    modifier = Modifier.weight(1f), icon = BrandIcons.Check,
+            // The main action, then the book's other actions as named icons (press and hold for
+            // the name) on the same row and at the same height.
+            var confirmRemove by remember { mutableStateOf<Edition?>(null) }
+            Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                PrimaryButton(
+                    when {
+                        downloading -> fraction?.let { "Downloading… ${(it * 100).roundToInt()}%" } ?: "Downloading…"
+                        downloaded.isEmpty() -> "Download"
+                        isReading(progress) -> "Continue"
+                        isFinished(progress) -> "Read again"
+                        else -> "Start reading"
+                    },
+                    onClick = {
+                        if (downloaded.isEmpty()) { preferred?.let { controller.download(it) }; return@PrimaryButton }
+                        onDismiss()
+                        // Reading a finished book again starts at the beginning, not on its last page.
+                        val again = downloaded.firstOrNull { it.format == "epub" } ?: downloaded.first()
+                        if (isFinished(progress)) controller.open(book, again, if (again.format == "epub") Locator.epub(EpubPosition.atChapter(0).toCfi()) else Locator.pdf(1))
+                        else controller.open(book)
+                    },
+                    modifier = Modifier.weight(1f),
+                    enabled = !downloading,
+                    icon = if (downloaded.isEmpty() && !downloading) BrandIcons.Download else BrandIcons.Play.takeIf { !downloading },
                 )
-                SecondaryButton("Add to list", onClick = { addToList = true }, modifier = Modifier.weight(1f), icon = BrandIcons.Bookmark)
+                TonalIconAction(
+                    BrandIcons.Check, if (isFinished(progress)) "Mark as unread" else "Mark as read",
+                    onClick = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); controller.markRead(book, !isFinished(progress)) },
+                    active = isFinished(progress),
+                )
+                TonalIconAction(BrandIcons.Bookmark, "Add to list", onClick = { addToList = true })
+                downloaded.firstOrNull()?.let { edition ->
+                    TonalIconAction(BrandIcons.Trash, "Remove download", onClick = { confirmRemove = edition }, tint = cautionColor())
+                }
+            }
+            confirmRemove?.let { edition ->
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { confirmRemove = null },
+                    title = { Text("Remove download?") },
+                    text = { Text("\"${book.title}\" will be deleted from this device. Your progress stays, and you can download it again any time.") },
+                    confirmButton = { TextButton(onClick = { downloaded.forEach(controller::removeDownload); confirmRemove = null }) { Text("Remove", color = cautionColor()) } },
+                    dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text("Cancel") } },
+                )
             }
 
             if (book.tags.isNotEmpty()) {
@@ -187,24 +203,6 @@ fun BookDetailsPage(controller: AppController, catalog: LibraryUiState.Catalog, 
 
             JumpToSection(controller, catalog, book, downloaded, onOpened = onDismiss)
 
-            if (downloaded.isNotEmpty()) {
-                var confirm by remember { mutableStateOf<Edition?>(null) }
-                downloaded.forEach { edition ->
-                    TextButton(onClick = { confirm = edition }, Modifier.padding(top = 12.dp)) {
-                        Icon(BrandIcons.Trash, null, Modifier.size(16.dp), tint = cautionColor())
-                        Text("  Remove ${edition.format.uppercase()} download", color = cautionColor())
-                    }
-                }
-                confirm?.let { edition ->
-                    androidx.compose.material3.AlertDialog(
-                        onDismissRequest = { confirm = null },
-                        title = { Text("Remove download?") },
-                        text = { Text("\"${book.title}\" (${edition.format.uppercase()}) will be deleted from this device. You can download it again any time.") },
-                        confirmButton = { TextButton(onClick = { controller.removeDownload(edition); confirm = null }) { Text("Remove", color = cautionColor()) } },
-                        dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
-                    )
-                }
-            }
         }
     }
     if (addToList) AddToListDialog(controller, book, onDismiss = { addToList = false })
@@ -230,7 +228,7 @@ private fun JumpToSection(controller: AppController, catalog: LibraryUiState.Cat
         )
         return
     }
-    val entries by produceState<List<String>?>(null, edition.id) { value = controller.tableOfContents(edition) }
+    val entries by produceState<List<String>?>(null, edition.id) { value = controller.tableOfContents(book, edition) }
     val haptics = LocalHapticFeedback.current
     val here by produceState<dev.bookharbor.app.sync.LocalPosition?>(null, book.id) { value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { controller.savedPosition(book.id) } }
     val list = entries

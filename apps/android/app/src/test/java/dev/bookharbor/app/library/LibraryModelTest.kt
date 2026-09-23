@@ -62,6 +62,12 @@ class LibraryModelTest {
         assertEquals(listOf(145, 146, 147, 148, 149), previewWindow(150, 149, 5))
     }
 
+    @Test fun homeSplitsTheShelfIntoReadingUpNextAndFinished() {
+        val sections = homeSections(books, mapOf("b1" to 0.5, "b2" to 1.0), setOf("e4"))
+        assertEquals(listOf(HomeSection.Reading to listOf("b1"), HomeSection.UpNext to listOf("b3"), HomeSection.Finished to listOf("b2")), sections.map { (s, b) -> s to b.map { it.id } })
+        assertEquals(emptyList<Any>(), homeSections(books, emptyMap(), emptySet()))
+    }
+
     @Test fun opensADownloadedEditionFirstThenPrefersEpub() {
         assertEquals("e3", preferredEdition(hail) { false }!!.id)
         assertEquals("e2", preferredEdition(hail) { it.id == "e2" }!!.id)

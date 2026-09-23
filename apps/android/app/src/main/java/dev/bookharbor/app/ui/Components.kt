@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -222,5 +223,50 @@ fun SearchPill(query: String, onQuery: (String) -> Unit, placeholder: String, on
         )
         if (busy) CircularProgressIndicator(Modifier.padding(end = 12.dp).size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
         else if (query.isNotBlank()) androidx.compose.material3.TextButton(onClick = onSearch) { Text("Search") }
+    }
+}
+
+/**
+ * An icon-only action. Press and hold shows its name in a tooltip, and the name is its
+ * accessibility label, so no action is ever unnamed.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun IconAction(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    enabled: Boolean = true,
+    iconSize: androidx.compose.ui.unit.Dp = 22.dp,
+) {
+    androidx.compose.material3.TooltipBox(
+        positionProvider = androidx.compose.material3.TooltipDefaults.rememberTooltipPositionProvider(androidx.compose.material3.TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = androidx.compose.material3.rememberTooltipState(),
+    ) {
+        androidx.compose.material3.IconButton(onClick = onClick, enabled = enabled, modifier = modifier) {
+            Icon(icon, label, Modifier.size(iconSize), tint = if (enabled) tint else tint.copy(alpha = 0.38f))
+        }
+    }
+}
+
+/** [IconAction] on a tonal square the height of a [PrimaryButton], for action rows beside one. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun TonalIconAction(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorScheme.onSurface, active: Boolean = false) {
+    val press = remember { MutableInteractionSource() }
+    androidx.compose.material3.TooltipBox(
+        positionProvider = androidx.compose.material3.TooltipDefaults.rememberTooltipPositionProvider(androidx.compose.material3.TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = androidx.compose.material3.rememberTooltipState(),
+    ) {
+        Box(
+            modifier.size(ControlHeight).pressScale(press, 0.94f).clip(ControlShape)
+                .background(if (active) MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant)
+                .clickable(press, androidx.compose.material3.ripple(), role = Role.Button, onClickLabel = label, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) { Icon(icon, label, Modifier.size(22.dp), tint = if (active) MaterialTheme.colorScheme.secondary else tint) }
     }
 }

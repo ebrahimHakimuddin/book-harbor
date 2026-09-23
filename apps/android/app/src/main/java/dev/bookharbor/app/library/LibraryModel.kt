@@ -71,6 +71,25 @@ fun seriesLabel(book: Book): String = when {
 fun isOnShelf(book: Book, progress: Map<String, Double>, downloadedEditions: Set<String>): Boolean =
     (progress[book.id] ?: 0.0) > 0.0 || book.editions.any { it.id in downloadedEditions }
 
+enum class HomeSection(val title: String) { Reading("Reading"), UpNext("Up next"), Finished("Finished") }
+
+/**
+ * Home's shelf in sections: books in progress, downloaded books not started yet, and finished
+ * ones, keeping [books]' order within each. Empty sections are left out.
+ */
+fun homeSections(books: List<Book>, progress: Map<String, Double>, downloadedEditions: Set<String>): List<Pair<HomeSection, List<Book>>> {
+    val grouped = books.groupBy { book ->
+        val p = progress[book.id]
+        when {
+            isFinished(p) -> HomeSection.Finished
+            isReading(p) -> HomeSection.Reading
+            book.editions.any { it.id in downloadedEditions } -> HomeSection.UpNext
+            else -> null
+        }
+    }
+    return HomeSection.entries.mapNotNull { section -> grouped[section]?.takeIf { it.isNotEmpty() }?.let { section to it } }
+}
+
 /** The catalogue's newest books first (the server's order), for Browse's "New arrivals" row. */
 fun newArrivals(books: List<Book>, count: Int = 12): List<Book> = books.take(count)
 

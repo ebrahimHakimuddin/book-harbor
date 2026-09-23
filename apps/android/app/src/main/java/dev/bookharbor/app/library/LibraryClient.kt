@@ -77,17 +77,31 @@ class SessionStore(private val preferences: SharedPreferences) {
     var tokens: SessionTokens? get() = preferences.getString("access_token", null)?.let { SessionTokens(it, preferences.getString("refresh_token", "") ?: "") }; set(value) { preferences.edit().apply { if (value == null) { remove("access_token"); remove("refresh_token") } else { putString("access_token", value.accessToken); putString("refresh_token", value.refreshToken) } }.apply() }
 }
 
-data class LocalDownload(val editionId: String, val path: String, val sha256: String)
+/**
+ * A file this app downloaded. [verifiedSize]/[verifiedModified] record the file as it was when its
+ * checksum last matched, so opening a book doesn't re-hash the whole file every time.
+ */
+data class LocalDownload(val editionId: String, val path: String, val sha256: String, val verifiedSize: Long = 0, val verifiedModified: Long = 0)
 
 /** Small, durable index of files owned by this app. The files themselves live in filesDir. */
 class DownloadStore(private val preferences: SharedPreferences, private val filesDir: File) {
     internal val directory: File get() = filesDir
+    /**
+     * The download, verified: a full re-hash only when the file's size or modified time differs
+     * from when it last checked out (it was changed or damaged); a mismatch deletes it.
+     */
     @Synchronized fun get(editionId: String): LocalDownload? {
         val item = read().firstOrNull { it.editionId == editionId && ownedFile(it.path)?.isFile == true } ?: return null
         val file = ownedFile(item.path) ?: return null
-        if (item.sha256.isBlank() || sha256(file).equals(item.sha256, ignoreCase = true)) return item
+        if (item.verifiedSize > 0 && item.verifiedSize == file.length() && item.verifiedModified == file.lastModified()) return item
+        if (item.sha256.isBlank() || sha256(file).equals(item.sha256, ignoreCase = true)) {
+            return stamped(item, file).also { save(it) }
+        }
         file.delete(); write(read().filterNot { it.editionId == editionId }); return null
     }
+
+    /** [download] marked as verified against [file] as it is now. */
+    fun stamped(download: LocalDownload, file: File) = download.copy(verifiedSize = file.length(), verifiedModified = file.lastModified())
     @Synchronized fun all(): List<LocalDownload> = read().filter { ownedFile(it.path)?.isFile == true }
     @Synchronized fun save(download: LocalDownload) {
         val next = read().filterNot { it.editionId == download.editionId } + download
@@ -100,10 +114,10 @@ class DownloadStore(private val preferences: SharedPreferences, private val file
     private fun read(): List<LocalDownload> = try {
         val json = preferences.getString(KEY, "[]") ?: "[]"
         val array = JSONArray(json)
-        (0 until array.length()).map { val item = array.getJSONObject(it); LocalDownload(item.getString("editionId"), item.getString("path"), item.getString("sha256")) }
+        (0 until array.length()).map { val item = array.getJSONObject(it); LocalDownload(item.getString("editionId"), item.getString("path"), item.getString("sha256"), item.optLong("verifiedSize"), item.optLong("verifiedModified")) }
     } catch (_: Exception) { emptyList() }
     private fun write(downloads: List<LocalDownload>) {
-        val array = JSONArray(); downloads.forEach { array.put(JSONObject().apply { put("editionId", it.editionId); put("path", it.path); put("sha256", it.sha256) }) }
+        val array = JSONArray(); downloads.forEach { array.put(JSONObject().apply { put("editionId", it.editionId); put("path", it.path); put("sha256", it.sha256); put("verifiedSize", it.verifiedSize); put("verifiedModified", it.verifiedModified) }) }
         preferences.edit().putString(KEY, array.toString()).apply()
     }
     private fun sha256(file: File): String { val digest = MessageDigest.getInstance("SHA-256"); file.inputStream().use { input -> val buffer = ByteArray(64 * 1024); while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) } }; return digest.digest().joinToString("") { "%02x".format(it) } }
@@ -176,7 +190,7 @@ class EditionDownloader(
             if (edition.sha256.isNotBlank() && !actualSha.equals(edition.sha256, ignoreCase = true)) throw DownloadVerificationError("Downloaded file checksum does not match the edition")
             try { Files.move(temporary.toPath(), finalFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING) }
             catch (_: Exception) { Files.move(temporary.toPath(), finalFile.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-            val result = LocalDownload(edition.id, finalFile.absolutePath, edition.sha256.lowercase(Locale.ROOT))
+            val result = downloads.stamped(LocalDownload(edition.id, finalFile.absolutePath, edition.sha256.lowercase(Locale.ROOT)), finalFile)
             downloads.save(result)
             return result
         } catch (error: Exception) {

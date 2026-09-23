@@ -84,7 +84,7 @@ fun FriendsTab(controller: AppController) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp)) {
             item {
                 ScreenTitle("Friends") {
-                    IconButton(onClick = { adding = true }) { Icon(BrandIcons.UserPlus, "Add a friend", tint = MaterialTheme.colorScheme.secondary) }
+                    dev.bookharbor.app.ui.IconAction(BrandIcons.UserPlus, "Add a friend", { adding = true }, tint = MaterialTheme.colorScheme.secondary)
                 }
             }
             item { Box(Modifier.padding(top = 16.dp)) { YourReadingCard(controller, state.settings, onEditGoal = { editingGoal = true }) } }

@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.bookharbor.app.AppGraph
 import dev.bookharbor.app.notify.Notifications
+import dev.bookharbor.app.reader.chaptersLeft
 import dev.bookharbor.app.reader.epub.EpubBook
 import dev.bookharbor.app.widget.ContinueReadingWidget
 import dev.bookharbor.app.reader.epub.EpubPosition
@@ -29,6 +30,8 @@ sealed interface LibraryUiState {
         /** 0..1 for each edition that is downloading and knows its size. */
         val downloadProgress: Map<String, Float> = emptyMap(),
         val progress: Map<String, Double> = emptyMap(),
+        /** Unread chapters per book, for books whose chapter count is known (EPUBs opened here). */
+        val chaptersLeft: Map<String, Int> = emptyMap(),
         /** RFC 3339 UTC instant of each book's most recent local reading event, for the History tab. */
         val lastReadAt: Map<String, String> = emptyMap(),
         /** True when showing the last saved catalog because the server could not be reached. */
@@ -229,22 +232,31 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
 
     private fun catalog(name: String, books: List<Book>, offline: Boolean): LibraryUiState.Catalog {
         val available = graph.downloads.all().map { it.editionId }.toSet()
-        val (progress, lastReadAt) = readingProgress()
-        return LibraryUiState.Catalog(
+        return withReading(LibraryUiState.Catalog(
             instanceName = name,
             books = books,
             downloads = books.flatMap { it.editions }.associate { it.id to if (it.id in available) DownloadStatus.AVAILABLE else DownloadStatus.NOT_DOWNLOADED },
-            progress = progress,
-            lastReadAt = lastReadAt,
             offline = offline,
+        ))
+    }
+
+    /** [catalog] with reading state (progress, last read, chapters left) re-read from this device. */
+    private fun withReading(catalog: LibraryUiState.Catalog): LibraryUiState.Catalog {
+        val positions = graph.progress.positions().associateBy { it.bookId }
+        val left = graph.chapterMarks.counts().mapValues { (bookId, count) ->
+            val position = positions[bookId]
+            val chapter = position?.locator?.takeIf { it.kind == Locator.EPUB }?.let { EpubPosition.parse(it.value)?.chapterIndex }
+            chaptersLeft(count, graph.chapterMarks.get(bookId), chapter, isFinished(position?.percentage))
+        }
+        return catalog.copy(
+            progress = positions.mapValues { it.value.percentage },
+            lastReadAt = positions.mapValues { it.value.occurredAt },
+            chaptersLeft = left,
         )
     }
 
-    /** Percentage and last-activity time per book, from this device's local reading positions. */
-    private fun readingProgress(): Pair<Map<String, Double>, Map<String, String>> {
-        val positions = graph.progress.positions()
-        return positions.associate { it.bookId to it.percentage } to positions.associate { it.bookId to it.occurredAt }
-    }
+    private fun refreshReading() = updateCatalog(::withReading)
+
 
     /** Serialized: downloads report progress from several IO threads at once, and none may lose another's change. */
     private val catalogLock = Any()
@@ -289,6 +301,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             val file = File(local.path)
             try {
                 val epub = if (edition.format == "epub") EpubBook.open(file) else null
+                epub?.let { graph.chapterMarks.setCount(book.id, it.chapters.size) }
                 val position = startAt?.let { LocalPosition(book.id, edition.id, it, 0.0, "", "") } ?: graph.progress.position(book.id)
                 opened = OpenedBook(book, edition, file, position, epub)
             } catch (error: Exception) {
@@ -301,10 +314,13 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
      * Chapter titles of a downloaded EPUB, or "Page n" for each page of a PDF, for opening at a
      * chosen place. Null when the edition isn't on the device or can't be read.
      */
-    suspend fun tableOfContents(edition: Edition): List<String>? = withContext(Dispatchers.IO) {
+    suspend fun tableOfContents(book: Book, edition: Edition): List<String>? = withContext(Dispatchers.IO) {
         val local = graph.downloads.get(edition.id) ?: return@withContext null
         runCatching {
-            if (edition.format == "epub") EpubBook.open(File(local.path)).use { epub -> epub.chapters.mapIndexed { i, c -> c.title.ifBlank { "Chapter ${i + 1}" } } }
+            if (edition.format == "epub") EpubBook.open(File(local.path)).use { epub ->
+                graph.chapterMarks.setCount(book.id, epub.chapters.size)
+                epub.chapters.mapIndexed { i, c -> c.title.ifBlank { "Chapter ${i + 1}" } }
+            }
             else android.os.ParcelFileDescriptor.open(File(local.path), android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
                 android.graphics.pdf.PdfRenderer(fd).use { pdf -> List(pdf.pageCount) { "Page ${it + 1}" } }
             }
@@ -325,7 +341,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             graph.recorder.record(book.id, current?.editionId?.takeIf { read } ?: edition.id, locator, if (read) 1.0 else 0.0)
             // Unreading a book starts its chapters over too.
             if (!read) { graph.chapterMarks.clear(book.id); chapterMarksVersion++ }
-            updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
+            refreshReading()
             ContinueReadingWidget.refresh(graph.context)
             notice = if (read) "Marked \"${book.title}\" as read" else "Marked \"${book.title}\" as unread"
         }
@@ -340,12 +356,14 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     fun markChapters(book: Book, chapters: Collection<Int>, read: Boolean) {
         graph.chapterMarks.set(book.id, chapters, read)
         chapterMarksVersion++
+        refreshReading()
         notice = "Marked ${chapters.size} ${if (chapters.size == 1) "chapter" else "chapters"} as ${if (read) "read" else "unread"}"
     }
 
     fun markChaptersReadUpTo(book: Book, index: Int) {
         graph.chapterMarks.markReadUpTo(book.id, index)
         chapterMarksVersion++
+        refreshReading()
         notice = "Marked chapters 1–${index + 1} as read"
     }
 
@@ -392,8 +410,13 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     private suspend fun downloadNow(edition: Edition) = withContext(Dispatchers.IO) {
         updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.DOWNLOADING), errors = it.errors - edition.id) }
         try {
-            graph.downloader.download(edition) { fraction -> updateCatalog { it.copy(downloadProgress = it.downloadProgress + (edition.id to fraction)) } }
-            updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.AVAILABLE), downloadProgress = it.downloadProgress - edition.id) }
+            val local = graph.downloader.download(edition) { fraction -> updateCatalog { it.copy(downloadProgress = it.downloadProgress + (edition.id to fraction)) } }
+            // Count chapters now, so the book's card can show how many are left before it's opened.
+            if (edition.format == "epub") {
+                val owner = (ui as? LibraryUiState.Catalog)?.books?.firstOrNull { book -> book.editions.any { it.id == edition.id } }
+                owner?.let { book -> runCatching { EpubBook.open(File(local.path)).use { graph.chapterMarks.setCount(book.id, it.chapters.size) } } }
+            }
+            updateCatalog { withReading(it.copy(downloads = it.downloads + (edition.id to DownloadStatus.AVAILABLE), downloadProgress = it.downloadProgress - edition.id)) }
         } catch (error: Exception) {
             updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.FAILED), downloadProgress = it.downloadProgress - edition.id, errors = it.errors + (edition.id to (error.message ?: "Download failed"))) }
         }
@@ -430,7 +453,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
         opened = null
         // The reader stays on screen while it fades out, so release the file after that.
         scope.launch { kotlinx.coroutines.delay(600); closing?.epub?.close() }
-        updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
+        refreshReading()
         scope.launch(Dispatchers.IO) { refreshSync() }
         ContinueReadingWidget.refresh(graph.context)
     }
@@ -447,7 +470,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                 sync = sync.copy(error = "Couldn't reach the server. Your progress is saved here and will sync when you're back online.")
             }
             refreshSync()
-            updateCatalog { val (progress, lastReadAt) = readingProgress(); it.copy(progress = progress, lastReadAt = lastReadAt) }
+            refreshReading()
             ContinueReadingWidget.refresh(graph.context)
         }
     }

@@ -32,6 +32,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import dev.bookharbor.app.ui.pressScale
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
@@ -137,46 +138,83 @@ import java.text.DateFormat
 import java.util.Date
 import kotlin.math.roundToInt
 
+/**
+ * What a book's card shows, derived once per book from the catalog. Cards take this instead of the
+ * whole catalog, so a download ticking along redraws only its own card, not every one on screen.
+ */
+@androidx.compose.runtime.Immutable
+internal data class BookCardState(
+    val progress: Double?,
+    val downloaded: Boolean,
+    val downloading: Boolean,
+    val fraction: Float?,
+    val error: String?,
+    val chaptersLeft: Int?,
+    val onShelf: Boolean,
+)
+
+/** [downloaded] is the set of downloaded edition IDs, computed once per screen rather than per card. */
+internal fun LibraryUiState.Catalog.cardState(book: Book, downloaded: Set<String>): BookCardState {
+    val progress = progress[book.id]
+    val isDownloaded = book.editions.any { it.id in downloaded }
+    return BookCardState(
+        progress = progress,
+        downloaded = isDownloaded,
+        downloading = book.editions.any { downloads[it.id] == DownloadStatus.DOWNLOADING },
+        fraction = book.editions.firstNotNullOfOrNull { downloadProgress[it.id] },
+        error = book.editions.firstNotNullOfOrNull { edition -> errors[edition.id]?.takeIf { downloads[edition.id] == DownloadStatus.FAILED } },
+        chaptersLeft = chaptersLeft[book.id],
+        onShelf = (progress ?: 0.0) > 0.0 || isDownloaded,
+    )
+}
+
+internal fun LibraryUiState.Catalog.downloadedEditions(): Set<String> = downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys
+
+/** One short line of where the reader is: chapters left when known, else percent or download state. */
+internal fun cardStatus(state: BookCardState, book: Book): String = when {
+    state.downloading -> state.fraction?.let { "Downloading… ${(it * 100).roundToInt()}%" } ?: "Downloading…"
+    state.error != null -> "Download failed"
+    isFinished(state.progress) -> "Finished"
+    isReading(state.progress) -> state.chaptersLeft?.let { chaptersLeftLabel(it) } ?: "${((state.progress ?: 0.0) * 100).roundToInt()}% read"
+    state.downloaded -> state.chaptersLeft?.let { "$it ${if (it == 1) "chapter" else "chapters"}" } ?: "Downloaded"
+    else -> book.authors.firstOrNull() ?: "Not downloaded"
+}
+
+internal fun chaptersLeftLabel(left: Int) = when (left) { 0 -> "Last pages"; 1 -> "1 chapter left"; else -> "$left chapters left" }
+
 @Composable
-internal fun BookRow(controller: AppController, catalog: LibraryUiState.Catalog, book: Book) {
-    val progress = catalog.progress[book.id]
-    val statuses = book.editions.map { catalog.downloads[it.id] ?: DownloadStatus.NOT_DOWNLOADED }
-    val downloading = statuses.any { it == DownloadStatus.DOWNLOADING }
-    val fraction = book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }
-    val error = book.editions.firstNotNullOfOrNull { edition -> catalog.errors[edition.id]?.takeIf { catalog.downloads[edition.id] == DownloadStatus.FAILED || it.isNotBlank() } }
+internal fun BookRow(controller: AppController, book: Book, state: BookCardState) {
     var menu by remember { mutableStateOf(false) }
     Column {
         Row(
             Modifier.fillMaxWidth().bookClicks(book, scale = false, onTap = { controller.showDetails(book) }, onLongPress = { menu = true }).padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Cover(book, controller.covers, Modifier.width(52.dp))
+            Box(Modifier.width(52.dp)) {
+                Cover(book, controller.covers, Modifier.fillMaxWidth())
+                if (state.downloaded && !state.downloading) ResumeButton(book, isReading(state.progress), Modifier.align(Alignment.BottomEnd).padding(3.dp), small = true) { controller.open(book) }
+            }
             Column(Modifier.weight(1f).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(book.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
                 val by = book.authors.joinToString(", ").ifBlank { book.subtitle }
                 if (by.isNotBlank()) Text(by, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 seriesLabel(book).takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                when {
-                    downloading -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        DownloadRing(fraction, Modifier.size(12.dp))
-                        Text(if (fraction != null) "  Downloading… ${(fraction * 100).roundToInt()}%" else "  Downloading…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
-                    }
-                    error != null -> Text(error, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, maxLines = 2)
-                    else -> StatusLine(progress, statuses.any { it == DownloadStatus.AVAILABLE })
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (state.downloading) DownloadRing(state.fraction, Modifier.padding(end = 6.dp).size(12.dp))
+                    Text(
+                        cardStatus(state, book), style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                        color = when { state.error != null -> MaterialTheme.colorScheme.error; isReading(state.progress) || state.downloading -> MaterialTheme.colorScheme.secondary; else -> MaterialTheme.colorScheme.onSurfaceVariant },
+                    )
                 }
             }
-            BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { controller.showDetails(book) })
+            BookMenu(controller, book, menu, { menu = it }, onDetails = { controller.showDetails(book) })
         }
         HorizontalDivider(Modifier.padding(start = 66.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
     }
 }
 
 @Composable
-internal fun BookGridCell(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, showOwned: Boolean = false) {
-    val progress = catalog.progress[book.id]
-    val downloaded = book.editions.any { catalog.downloads[it.id] == DownloadStatus.AVAILABLE }
-    val downloading = book.editions.any { catalog.downloads[it.id] == DownloadStatus.DOWNLOADING }
-    val fraction = book.editions.firstNotNullOfOrNull { catalog.downloadProgress[it.id] }
+internal fun BookGridCell(controller: AppController, book: Book, state: BookCardState, showOwned: Boolean = false) {
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(bottom = 18.dp)) {
         Box {
@@ -185,62 +223,59 @@ internal fun BookGridCell(controller: AppController, catalog: LibraryUiState.Cat
                 Modifier.fillMaxWidth().bookClicks(book, onTap = { controller.showDetails(book) }, onLongPress = { menu = true }),
             )
             // Already on the reader's shelf: a small check, so Browse shows what they have at a glance.
-            if (showOwned && isOnShelf(book, catalog.progress, catalog.downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys)) {
-                Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondary), contentAlignment = Alignment.Center) {
-                    Icon(BrandIcons.Check, "On your shelf", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondary)
-                }
-            }
+            if (showOwned && state.onShelf) OwnedBadge(Modifier.align(Alignment.TopEnd))
             // Downloading: the cover dims under a progress ring, then clears when it's ready.
-            DownloadScrim(downloading, fraction, Modifier.matchParentSize())
-            if (isReading(progress)) {
+            DownloadScrim(state.downloading, state.fraction, Modifier.matchParentSize())
+            if (isReading(state.progress)) {
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.Black.copy(alpha = 0.25f))) {
-                    Box(Modifier.fillMaxWidth((progress ?: 0.0).toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
+                    Box(Modifier.fillMaxWidth((state.progress ?: 0.0).toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.secondary))
                 }
             }
-        }
-        // The menu sits beside the title, never on the cover art, where no single color reads on every cover.
-        Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
-            Column(Modifier.weight(1f)) {
-                Text(book.title, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
-                Text(
-                    when {
-                        downloading -> fraction?.let { "Downloading… ${(it * 100).roundToInt()}%" } ?: "Downloading…"
-                        isFinished(progress) -> "Finished"
-                        isReading(progress) -> "${((progress ?: 0.0) * 100).roundToInt()}% read"
-                        downloaded -> "Downloaded"
-                        else -> book.authors.firstOrNull() ?: "Not downloaded"
-                    },
-                    style = MaterialTheme.typography.labelMedium, color = if (isReading(progress)) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
-                )
-            }
+            if (state.downloaded && !state.downloading) ResumeButton(book, isReading(state.progress), Modifier.align(Alignment.BottomEnd).padding(6.dp)) { controller.open(book) }
             // No "⋮" in the narrow grid: press and hold opens the same menu, anchored here.
-            BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { controller.showDetails(book) }, showButton = false)
+            BookMenu(controller, book, menu, { menu = it }, onDetails = { controller.showDetails(book) }, showButton = false)
         }
+        Text(book.title, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onBackground)
+        Text(
+            cardStatus(state, book), style = MaterialTheme.typography.labelMedium, maxLines = 1,
+            color = when { state.error != null -> MaterialTheme.colorScheme.error; isReading(state.progress) -> MaterialTheme.colorScheme.secondary; else -> MaterialTheme.colorScheme.onSurfaceVariant },
+        )
     }
 }
 
-/** Where the reader is with a book, and whether it's on this device -- as words plus a small icon. */
+/**
+ * The play button on a downloaded book's cover: opens the book at the reader's place in one tap.
+ * On a dark disc so it reads on any cover art; press and hold names it.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-internal fun StatusLine(progress: Double?, offline: Boolean) {
-    val place = when {
-        isFinished(progress) -> "Finished"
-        isReading(progress) -> "${((progress ?: 0.0) * 100).roundToInt()}% read"
-        else -> null
+internal fun ResumeButton(book: Book, reading: Boolean, modifier: Modifier = Modifier, small: Boolean = false, onClick: () -> Unit) {
+    val label = if (reading) "Resume ${book.title}" else "Start ${book.title}"
+    val press = remember { MutableInteractionSource() }
+    androidx.compose.material3.TooltipBox(
+        positionProvider = androidx.compose.material3.TooltipDefaults.rememberTooltipPositionProvider(androidx.compose.material3.TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(if (reading) "Resume" else "Start reading") } },
+        state = androidx.compose.material3.rememberTooltipState(),
+        modifier = modifier,
+    ) {
+        Box(
+            Modifier.size(if (small) 22.dp else 32.dp).pressScale(press, 0.88f).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f))
+                .clickable(press, ripple(), role = Role.Button, onClickLabel = label, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) { Icon(BrandIcons.Play, label, Modifier.size(if (small) 11.dp else 15.dp).offset(x = 1.dp), tint = Color.White) }
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(if (offline) BrandIcons.CloudDone else BrandIcons.Cloud, if (offline) "Downloaded" else "Not downloaded", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            "  " + (place ?: if (offline) "Downloaded" else "Not downloaded"),
-            style = MaterialTheme.typography.labelMedium,
-            color = if (place != null) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+}
+
+@Composable
+internal fun OwnedBadge(modifier: Modifier = Modifier) {
+    Box(modifier.padding(6.dp).size(22.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondary), contentAlignment = Alignment.Center) {
+        Icon(BrandIcons.Check, "On your shelf", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondary)
     }
 }
 
 @Composable
 internal fun BookMenu(
     controller: AppController,
-    catalog: LibraryUiState.Catalog,
     book: Book,
     open: Boolean,
     onOpenChange: (Boolean) -> Unit,
@@ -255,6 +290,8 @@ internal fun BookMenu(
     Box {
         if (showButton) IconButton(onClick = { onOpenChange(true) }, modifier = if (compact) Modifier.size(36.dp) else Modifier) { Icon(BrandIcons.MoreVertical, "More options for ${book.title}", Modifier.size(if (compact) 18.dp else 24.dp), tint = tint) }
         DropdownMenu(expanded = open, onDismissRequest = { onOpenChange(false) }) {
+            // Read here, not in the card, so the catalog is only consulted while the menu is open.
+            val catalog = controller.ui as? LibraryUiState.Catalog ?: return@DropdownMenu
             DropdownMenuItem(
                 text = { Text("Details") },
                 leadingIcon = { Icon(BrandIcons.Library, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -352,16 +389,14 @@ internal val CoverGradient = Brush.linearGradient(listOf(HarborNavy, Color(0xFF3
 
 /** A cover with its title and author, for Browse's horizontal rows. */
 @Composable
-internal fun BookShelfCard(controller: AppController, catalog: LibraryUiState.Catalog, book: Book, modifier: Modifier = Modifier) {
+internal fun BookShelfCard(controller: AppController, book: Book, state: BookCardState, modifier: Modifier = Modifier) {
     var menu by remember { mutableStateOf(false) }
-    val onShelf = isOnShelf(book, catalog.progress, catalog.downloads.filterValues { it == DownloadStatus.AVAILABLE }.keys)
     Column(modifier.width(112.dp)) {
         Box {
             Cover(book, controller.covers, Modifier.fillMaxWidth().bookClicks(book, onTap = { controller.showDetails(book) }, onLongPress = { menu = true }))
-            if (onShelf) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondary), contentAlignment = Alignment.Center) {
-                Icon(BrandIcons.Check, "On your shelf", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSecondary)
-            }
-            BookMenu(controller, catalog, book, menu, { menu = it }, onDetails = { controller.showDetails(book) }, showButton = false)
+            if (state.onShelf) OwnedBadge(Modifier.align(Alignment.TopEnd))
+            if (state.downloaded) ResumeButton(book, isReading(state.progress), Modifier.align(Alignment.BottomEnd).padding(6.dp)) { controller.open(book) }
+            BookMenu(controller, book, menu, { menu = it }, onDetails = { controller.showDetails(book) }, showButton = false)
         }
         Text(book.title, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(

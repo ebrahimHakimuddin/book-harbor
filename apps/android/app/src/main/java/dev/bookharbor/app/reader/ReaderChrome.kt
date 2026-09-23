@@ -117,6 +117,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import dev.bookharbor.app.ui.BrandIcons
+import dev.bookharbor.app.ui.IconAction
 import dev.bookharbor.app.ui.theme.BookHarborTheme
 import dev.bookharbor.app.ui.theme.LiterataFamily
 import kotlin.math.roundToInt
@@ -358,7 +359,7 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
             Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close reader")
         }
         Text(bookTitle, Modifier.weight(1f).padding(horizontal = 4.dp), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (onReadAloud != null) IconButton(onClick = onReadAloud) { Icon(BrandIcons.Headphones, "Read aloud from here") }
+        if (onReadAloud != null) IconAction(BrandIcons.Headphones, "Read aloud", onReadAloud, tint = MaterialTheme.colorScheme.onSurface)
         // Adding a bookmark pops the icon and ticks; removing it just settles back.
         val haptics = LocalHapticFeedback.current
         val pop = remember { Animatable(1f) }
@@ -371,7 +372,7 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
                 tint = animateColorAsState(if (bookmarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface, tween(200), label = "bookmark").value,
             )
         }
-        IconButton(onClick = onContents) { Icon(BrandIcons.List, contentsLabel) }
+        IconAction(BrandIcons.List, contentsLabel, onContents, tint = MaterialTheme.colorScheme.onSurface)
         TextButton(onClick = onSettings, modifier = Modifier.semantics { contentDescription = "Reading settings" }) {
             Text("Aa", fontFamily = LiterataFamily, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
         }

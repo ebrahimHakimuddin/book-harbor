@@ -32,7 +32,9 @@ import dev.bookharbor.app.ui.SectionHeader
  * arrivals, each series in order, tags -- then every book; a search or tag turns it into results.
  */
 @Composable
-internal fun BrowseTab(controller: AppController, catalog: LibraryUiState.Catalog) {
+internal fun BrowseTab(controller: AppController, catalog: LibraryUiState.Catalog, reselected: Int = 0) {
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    androidx.compose.runtime.LaunchedEffect(reselected) { if (reselected > 0) gridState.animateScrollToItem(0) }
     var query by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(BookSort.Recent) }
     var viewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Grid) }
@@ -43,11 +45,13 @@ internal fun BrowseTab(controller: AppController, catalog: LibraryUiState.Catalo
     val series = remember(books) { seriesGroups(books) }
     val searching = query.isNotBlank() || tag != null
     val shown = remember(books, query, sort, tag) { visibleBooks(books, query, ShelfFilter.All, sort, emptyMap(), emptySet(), tag) }
+    val downloaded = remember(catalog.downloads) { catalog.downloadedEditions() }
     val fullRow: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
 
     PullToRefreshBox(isRefreshing = controller.refreshing, onRefresh = controller::refresh, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(if (viewMode == LibraryViewMode.Grid) 3 else 1),
+            state = gridState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -76,8 +80,8 @@ internal fun BrowseTab(controller: AppController, catalog: LibraryUiState.Catalo
             when {
                 books.isEmpty() -> item(span = fullRow) { EmptyState(BrandIcons.Library, "No books yet", "Ask your server's administrator to import a book, then pull to refresh.") }
                 shown.isEmpty() -> item(span = fullRow) { EmptyState(BrandIcons.Search, "Nothing matches", "Try a shorter search, or request the book from the Requests tab.") }
-                viewMode == LibraryViewMode.List -> items(shown, key = { it.id }, span = { fullRow() }, contentType = { "row" }) { book -> Box(Modifier.animateItem()) { BookRow(controller, catalog, book) } }
-                else -> items(shown, key = { it.id }, contentType = { "cell" }) { book -> Box(Modifier.animateItem()) { BookGridCell(controller, catalog, book, showOwned = true) } }
+                viewMode == LibraryViewMode.List -> items(shown, key = { it.id }, span = { fullRow() }, contentType = { "row" }) { book -> Box(Modifier.animateItem()) { BookRow(controller, book, catalog.cardState(book, downloaded)) } }
+                else -> items(shown, key = { it.id }, contentType = { "cell" }) { book -> Box(Modifier.animateItem()) { BookGridCell(controller, book, catalog.cardState(book, downloaded), showOwned = true) } }
             }
         }
     }
@@ -86,6 +90,7 @@ internal fun BrowseTab(controller: AppController, catalog: LibraryUiState.Catalo
 /** A titled row of covers that scrolls sideways, bleeding to the screen edges. */
 @Composable
 private fun CoverRow(title: String, books: List<Book>, controller: AppController, catalog: LibraryUiState.Catalog, subtitle: String? = null) {
+    val downloaded = remember(catalog.downloads) { catalog.downloadedEditions() }
     androidx.compose.foundation.layout.Column {
         SectionHeader(if (subtitle != null) "$title · $subtitle" else title)
         LazyRow(
@@ -93,7 +98,7 @@ private fun CoverRow(title: String, books: List<Book>, controller: AppController
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            items(books, key = { it.id }) { book -> BookShelfCard(controller, catalog, book) }
+            items(books, key = { it.id }) { book -> BookShelfCard(controller, book, catalog.cardState(book, downloaded)) }
         }
     }
 }
