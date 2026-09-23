@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { CheckIcon, Loader2Icon, NewspaperIcon, PlusIcon, RefreshCwIcon, SearchIcon, TriangleAlertIcon, XIcon } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -26,6 +26,10 @@ export function WebnovelsView() {
     // Poll while the worker is busy, so progress moves on screen.
     refetchInterval: (query) => (query.state.data?.items.some((n) => n.progress || (!n.bookId && !n.error)) ? 2000 : false),
   })
+  // A novel's book appearing or growing changes the library's list too.
+  const client = useQueryClient()
+  const books = followed.data?.items.map((n) => `${n.bookId}:${n.chapters}`).join(",")
+  useEffect(() => { if (books) void client.invalidateQueries({ queryKey: keys.books }) }, [books, client])
   return (
     <>
       <PageHeading title="Web novels." description="Follow a novel from novelarchive.cc to add it to the library as a book. Ongoing ones get new chapters automatically." />

@@ -144,6 +144,13 @@ func (s *Syncer) sync(ctx context.Context, f Followed) {
 	}
 }
 
+// A long first fetch publishes the book early and then refreshes it, so it shows up in the
+// library within a minute instead of after every chapter is in.
+var (
+	firstPublishAt = 100
+	republishEvery = 500
+)
+
 // update fetches chapters not yet cached and, when there are any (or there is no book yet),
 // rebuilds the EPUB into the library. It reports the book and how many chapters are new.
 func (s *Syncer) update(ctx context.Context, f Followed) (novel Novel, bookID string, chapters, fresh int, err error) {
@@ -156,6 +163,16 @@ func (s *Syncer) update(ctx context.Context, f Followed) (novel Novel, bookID st
 	if err != nil {
 		return
 	}
+	bookID, chapters = f.BookID, f.Chapters
+	// A first build resuming past the early-publish point publishes what it has right away.
+	if bookID == "" && cached >= firstPublishAt && cached < novel.Chapters {
+		if bookID, chapters, err = s.publish(ctx, f, novel, bookID); err != nil {
+			return
+		}
+		if err = s.Store.AttachBook(ctx, f.Source, f.SourceID, bookID, chapters); err != nil {
+			return
+		}
+	}
 	for n := cached + 1; n <= novel.Chapters; n++ {
 		s.setProgress(f, fmt.Sprintf("Fetching chapter %d of %d…", n, novel.Chapters))
 		chapter, fetchErr := s.Source.Chapter(ctx, f.SourceID, n)
@@ -164,49 +181,69 @@ func (s *Syncer) update(ctx context.Context, f Followed) (novel Novel, bookID st
 		}
 		if fetchErr != nil {
 			// Chapters so far are cached; the next attempt carries on from here.
-			return novel, "", 0, 0, fmt.Errorf("chapter %d: %w", n, fetchErr)
+			return novel, bookID, chapters, fresh, fmt.Errorf("chapter %d: %w", n, fetchErr)
 		}
 		if err = s.Store.SaveChapter(ctx, f.Source, f.SourceID, chapter); err != nil {
 			return
 		}
 		fresh++
+		if n == firstPublishAt || (n > firstPublishAt && n%republishEvery == 0) {
+			if bookID, chapters, err = s.publish(ctx, f, novel, bookID); err != nil {
+				return
+			}
+			// Record the book now, so an interrupted fetch still leaves it attached.
+			if err = s.Store.AttachBook(ctx, f.Source, f.SourceID, bookID, chapters); err != nil {
+				return
+			}
+			s.setProgress(f, fmt.Sprintf("Fetching chapter %d of %d…", n+1, novel.Chapters))
+		}
 		select {
 		case <-ctx.Done():
-			return novel, "", 0, 0, ctx.Err()
+			return novel, bookID, chapters, fresh, ctx.Err()
 		case <-time.After(chapterDelay):
 		}
 	}
-	all, err := s.Store.Chapters(ctx, f.Source, f.SourceID)
+	all, err := s.Store.CachedChapters(ctx, f.Source, f.SourceID)
 	if err != nil {
 		return
 	}
-	chapters = len(all)
-	if chapters == 0 {
+	if all == 0 {
 		return novel, "", 0, 0, errors.New("the source has no chapters for this novel yet")
 	}
-	if f.BookID != "" && chapters == f.Chapters {
-		return novel, f.BookID, chapters, 0, nil
+	if bookID != "" && all == chapters {
+		return novel, bookID, chapters, fresh, nil
 	}
-	s.setProgress(f, fmt.Sprintf("Building the book (%d chapters)…", chapters))
+	bookID, chapters, err = s.publish(ctx, f, novel, bookID)
+	return novel, bookID, chapters, fresh, err
+}
+
+// publish builds every cached chapter into the book: a new one when bookID is empty,
+// otherwise replacing its file in place.
+func (s *Syncer) publish(ctx context.Context, f Followed, novel Novel, bookID string) (string, int, error) {
+	all, err := s.Store.Chapters(ctx, f.Source, f.SourceID)
+	if err != nil {
+		return bookID, 0, err
+	}
+	s.setProgress(f, fmt.Sprintf("Building the book (%d chapters)…", len(all)))
 	epub, err := BuildEPUB(novel, f.Source, all)
 	if err != nil {
-		return
+		return bookID, 0, err
 	}
 	filename := filenameFor(novel.Title)
-	if f.BookID != "" {
-		_, err = s.Library.ReplaceEditionFile(ctx, f.BookID, filename, bytes.NewReader(epub))
-		return novel, f.BookID, chapters, fresh, err
+	if bookID != "" {
+		_, err = s.Library.ReplaceEditionFile(ctx, bookID, filename, bytes.NewReader(epub))
+		return bookID, len(all), err
 	}
 	book, err := s.Library.Import(ctx, library.ImportInput{Title: novel.Title, Filename: filename, Content: bytes.NewReader(epub), CreatedBy: f.CreatedBy})
 	var duplicate *library.DuplicateError
 	if errors.As(err, &duplicate) {
-		return novel, duplicate.BookID, chapters, fresh, nil
+		return duplicate.BookID, len(all), nil
 	}
 	if err != nil {
-		return
+		return "", 0, err
 	}
 	s.setCover(ctx, book.ID, novel.CoverURL)
-	return novel, book.ID, chapters, fresh, nil
+	return book.ID, len(all), nil
 }
 
 // setCover is best effort: a book without its cover is still a book.

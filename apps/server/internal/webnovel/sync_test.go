@@ -20,6 +20,11 @@ import (
 
 // fakeArchive serves the novelarchive API shapes; published is how many chapters exist.
 func fakeArchive(t *testing.T, published *atomic.Int32, blocked *atomic.Bool) *httptest.Server {
+	return fakeArchiveFailing(t, published, blocked, &atomic.Int32{})
+}
+
+// fakeArchiveFailing also answers 500 for chapters from failFrom on, when it is set.
+func fakeArchiveFailing(t *testing.T, published *atomic.Int32, blocked *atomic.Bool, failFrom *atomic.Int32) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if blocked.Load() {
@@ -35,6 +40,11 @@ func fakeArchive(t *testing.T, published *atomic.Int32, blocked *atomic.Bool) *h
 			fmt.Fprintf(w, `{"novel":{"id":"n1","title":"Harbor Tales","author":"A. Writer","description":"Sea stories.","cover_url":"","total_chapters":"%d","release_status":"ongoing","genres":"Fantasy, Adventure"}}`, n)
 		case strings.HasPrefix(r.URL.Path, "/api/novels/n1/chapters/"):
 			number, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/api/novels/n1/chapters/"))
+			if f := int(failFrom.Load()); f > 0 && number >= f {
+				w.WriteHeader(http.StatusInternalServerError)
+				io.WriteString(w, `{"error":"boom"}`)
+				return
+			}
 			if number < 1 || number > n {
 				w.WriteHeader(http.StatusNotFound)
 				io.WriteString(w, `{"error":"Chapter does not exist"}`)
@@ -46,6 +56,60 @@ func fakeArchive(t *testing.T, published *atomic.Int32, blocked *atomic.Bool) *h
 			io.WriteString(w, `{"error":"Not found"}`)
 		}
 	}))
+}
+
+func testSyncer(t *testing.T, source *httptest.Server) (*Syncer, *library.Store) {
+	t.Helper()
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := database.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`INSERT INTO users (id, email, display_name, password_hash, role, created_at) VALUES ('usr_admin', 'a@example.com', 'A', 'x', 'admin', '2026-09-23T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	books, err := library.NewStore(db, dir, 16<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewSyncer(NewStore(db), &NovelArchive{Base: source.URL, HTTP: source.Client()}, books, func() time.Duration { return 24 * time.Hour },
+		slog.New(slog.NewTextHandler(io.Discard, nil)), func(string, string, string) {}), books
+}
+
+// A long first fetch shows the book early; failing partway leaves it in the library and due.
+func TestFirstFetchPublishesEarly(t *testing.T) {
+	chapterDelay, firstPublishAt = 0, 2
+	defer func() { firstPublishAt = 100 }()
+	ctx := context.Background()
+	var published, failFrom atomic.Int32
+	published.Store(4)
+	failFrom.Store(3)
+	fake := fakeArchiveFailing(t, &published, &atomic.Bool{}, &failFrom)
+	defer fake.Close()
+	syncer, books := testSyncer(t, fake)
+	novel, _ := syncer.Source.Novel(ctx, "n1")
+	if err := syncer.Store.Follow(ctx, SourceNovelArchive, novel, "usr_admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	syncer.syncDue(ctx)
+	followed, _ := syncer.Store.List(ctx)
+	if followed[0].BookID == "" || followed[0].Chapters != 2 || followed[0].Error == "" {
+		t.Fatalf("after failing at chapter 3: %+v (want the 2-chapter book attached, and the error)", followed[0])
+	}
+	if _, err := books.Get(ctx, followed[0].BookID); err != nil {
+		t.Fatalf("early book not in library: %v", err)
+	}
+
+	failFrom.Store(0)
+	syncer.Store.Recheck(ctx, SourceNovelArchive, "n1")
+	syncer.syncDue(ctx)
+	followed, _ = syncer.Store.List(ctx)
+	if followed[0].Chapters != 4 || followed[0].Error != "" {
+		t.Fatalf("after resuming: %+v", followed[0])
+	}
 }
 
 func TestFollowBuildsThenUpdatesInPlace(t *testing.T) {

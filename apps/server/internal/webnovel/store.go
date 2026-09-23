@@ -103,6 +103,13 @@ func (s *Store) Checked(ctx context.Context, source string, novel Novel, bookID 
 	return err
 }
 
+// AttachBook records the book a first fetch published early, without marking the novel
+// checked, so an interrupted fetch is still due and resumes.
+func (s *Store) AttachBook(ctx context.Context, source, id, bookID string, chapters int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE webnovels SET book_id = ?, chapters = ? WHERE source = ? AND source_id = ?`, bookID, chapters, source, id)
+	return err
+}
+
 // CachedChapters counts the leading run of cached chapters (1..n), where fetching resumes.
 func (s *Store) CachedChapters(ctx context.Context, source, id string) (int, error) {
 	var n int
