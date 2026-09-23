@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -82,6 +83,66 @@ func (s *Store) AddEdition(ctx context.Context, bookID, rawFilename string, cont
 		return Book{}, fmt.Errorf("commit add edition: %w", err)
 	}
 	committed = true
+	return s.Get(ctx, bookID)
+}
+
+// ReplaceEditionFile swaps the file of bookID's edition in the new file's format, keeping the
+// edition's ID so reading progress stays attached (a web novel that gained chapters). Clients
+// see the new sha256 and fetch it again. Without an edition in that format, it adds one.
+func (s *Store) ReplaceEditionFile(ctx context.Context, bookID, rawFilename string, content io.Reader) (Book, error) {
+	filename, err := normalizeFilename(rawFilename)
+	if err != nil {
+		return Book{}, err
+	}
+	staged, err := s.stageUpload(content)
+	if err != nil {
+		return Book{}, err
+	}
+	defer os.Remove(staged.path)
+	var editionID, oldStorage, oldPath string
+	err = s.db.QueryRowContext(ctx, `SELECT id, storage, storage_path FROM editions WHERE book_id = ? AND format = ?`, bookID, staged.format).Scan(&editionID, &oldStorage, &oldPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		file, err := os.Open(staged.path)
+		if err != nil {
+			return Book{}, fmt.Errorf("open staged book: %w", err)
+		}
+		defer file.Close()
+		return s.AddEdition(ctx, bookID, filename, file)
+	}
+	if err != nil {
+		return Book{}, fmt.Errorf("find edition: %w", err)
+	}
+	// A fresh path, so the old file keeps serving until the row points at the new one.
+	suffix, err := newID("")
+	if err != nil {
+		return Book{}, err
+	}
+	storagePath := filepath.Join("books", bookID, editionID+"-"+suffix+"."+staged.format)
+	storage, err := s.place(ctx, staged, storagePath)
+	if err != nil {
+		return Book{}, err
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	err = func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `UPDATE editions SET media_type = ?, original_filename = ?, byte_length = ?, sha256 = ?, storage_path = ?, storage = ? WHERE id = ?`,
+			staged.mediaType, filename, staged.size, staged.checksum, storagePath, storage, editionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE books SET updated_at = ? WHERE id = ?`, now, bookID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}()
+	if err != nil {
+		s.unplace(ctx, storage, storagePath)
+		return Book{}, fmt.Errorf("replace edition file: %w", err)
+	}
+	s.unplace(ctx, oldStorage, oldPath)
 	return s.Get(ctx, bookID)
 }
 

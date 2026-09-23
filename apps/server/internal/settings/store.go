@@ -1,6 +1,6 @@
-// Package settings holds the integration settings (email, S3, ntfy, Shelfmark) an
-// administrator edits in the admin console. A key saved in the database wins; otherwise its
-// environment variable applies, so existing .env deployments keep working unchanged.
+// Package settings holds the integration settings (email, S3, ntfy, Shelfmark, web novel
+// updates) an administrator edits in the admin console. A key saved in the database wins;
+// otherwise its environment variable applies, so existing .env deployments keep working.
 package settings
 
 import (
@@ -11,7 +11,9 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bookharbor/bookharbor/apps/server/internal/objectstore"
 )
@@ -24,6 +26,7 @@ const (
 	httpURL
 	email
 	boolean
+	hours
 )
 
 type definition struct {
@@ -52,6 +55,8 @@ var definitions = map[string]definition{
 	"shelfmark.url":      {"BOOKHARBOR_SHELFMARK_URL", httpURL},
 	"shelfmark.username": {"BOOKHARBOR_SHELFMARK_USERNAME", text},
 	"shelfmark.password": {"BOOKHARBOR_SHELFMARK_PASSWORD", secret},
+
+	"webnovels.syncHours": {"BOOKHARBOR_WEBNOVELS_SYNC_HOURS", hours},
 }
 
 // SecretKeys are never returned by the API and are scrubbed from exports.
@@ -141,6 +146,10 @@ func (s *Store) Update(ctx context.Context, changes map[string]string) error {
 			if value != "true" && value != "false" {
 				return &InvalidError{key, "must be true or false"}
 			}
+		case hours:
+			if n, err := strconv.Atoi(value); err != nil || n < 0 || n > 24*30 {
+				return &InvalidError{key, "must be a whole number of hours from 0 to 720"}
+			}
 		}
 		if len(value) > 2048 {
 			return &InvalidError{key, "is too long"}
@@ -162,6 +171,16 @@ func (s *Store) Update(ctx context.Context, changes map[string]string) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// WebnovelSyncInterval is how often ongoing web novels are checked for chapters: 24 hours
+// unless set, and zero when set to 0 (off).
+func (s *Store) WebnovelSyncInterval() time.Duration {
+	n, err := strconv.Atoi(s.Get("webnovels.syncHours"))
+	if err != nil {
+		n = 24
+	}
+	return time.Duration(n) * time.Hour
 }
 
 // S3 returns the current bucket settings.

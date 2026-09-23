@@ -29,6 +29,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/requests"
 	"github.com/bookharbor/bookharbor/apps/server/internal/settings"
 	"github.com/bookharbor/bookharbor/apps/server/internal/social"
+	"github.com/bookharbor/bookharbor/apps/server/internal/webnovel"
 )
 
 var (
@@ -70,6 +71,18 @@ func main() {
 		return settingsStore.S3(), settingsStore.Bool("s3.storeUploads")
 	})
 
+	notifier := notify.NewNtfy(settingsStore.Get)
+	alert := func(title, message, tag string) {
+		if notifier.Configured() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := notifier.Send(ctx, title, message, tag); err != nil {
+				logger.Error("send admin notification", "error", err, "title", title)
+			}
+		}
+	}
+	webnovels := webnovel.NewSyncer(webnovel.NewStore(db), webnovel.NewNovelArchive(), libraryStore, settingsStore.WebnovelSyncInterval, logger, alert)
+
 	handler := httpapi.New(cfg, httpapi.BuildInfo{
 		Version: version,
 		Commit:  commit,
@@ -77,7 +90,7 @@ func main() {
 		os.Getenv("BOOKHARBOR_HARDCOVER_TOKEN"),
 		os.Getenv("BOOKHARBOR_HARDCOVER_ENDPOINT"),
 		nil,
-	), mail.NewResend(settingsStore.Get), settingsStore, notify.NewNtfy(settingsStore.Get), logger)
+	), mail.NewResend(settingsStore.Get), settingsStore, notifier, webnovels, logger)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
@@ -94,6 +107,7 @@ func main() {
 		syscall.SIGTERM,
 	)
 	defer stop()
+	go webnovels.Run(shutdownSignal)
 
 	go func() {
 		<-shutdownSignal.Done()

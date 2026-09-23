@@ -226,6 +226,7 @@ func testHandlerWithMailer(t *testing.T, metadataProvider metadata.Provider, mai
 		mailer,
 		settings.NewStore(db),
 		nil,
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	), db
 }

@@ -156,6 +156,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
                         catalog(instance.name, books, offline = false)
                     }
                 }
+                (ui as? LibraryUiState.Catalog)?.let { refreshChangedDownloads(it.books) }
             } catch (error: Exception) {
                 ui = when {
                     error is HttpError && error.status == 401 -> { graph.session.tokens = null; LibraryUiState.SignIn(lastInstance, graph.session.serverUrl) }
@@ -410,6 +411,27 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             missing.forEach { book -> preferredEdition(book) { false }?.let { edition -> downloadNow(edition) } }
         }
         notice = if (missing.isEmpty()) "Everything here is already downloaded" else "Downloading ${missing.size} ${if (missing.size == 1) "book" else "books"}"
+    }
+
+    /**
+     * A downloaded file the server has since replaced (a web novel with new chapters) is fetched
+     * again in the background. The old copy stays readable until the new one is verified.
+     */
+    private fun refreshChangedDownloads(books: List<Book>) {
+        val local = graph.downloads.all().associateBy { it.editionId }
+        val changed = books.flatMap { it.editions }.filter { edition ->
+            val download = local[edition.id]
+            download != null && edition.sha256.isNotBlank() && download.sha256.isNotBlank() && !edition.sha256.equals(download.sha256, ignoreCase = true)
+        }
+        if (changed.isNotEmpty()) scope.launch {
+            changed.forEach { edition ->
+                downloadNow(edition)
+                // A failed refresh isn't a broken book: keep reading the copy already here.
+                if ((ui as? LibraryUiState.Catalog)?.downloads?.get(edition.id) == DownloadStatus.FAILED && withContext(Dispatchers.IO) { graph.downloads.get(edition.id) } != null) {
+                    updateCatalog { it.copy(downloads = it.downloads + (edition.id to DownloadStatus.AVAILABLE), errors = it.errors - edition.id) }
+                }
+            }
+        }
     }
 
     private suspend fun downloadNow(edition: Edition) = withContext(Dispatchers.IO) {

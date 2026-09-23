@@ -196,6 +196,33 @@ var migrations = []string{
 		value TEXT NOT NULL
 	) STRICT;
 	ALTER TABLE editions ADD COLUMN storage TEXT NOT NULL DEFAULT 'disk' CHECK (storage IN ('disk', 's3'));`,
+	// Web novels followed from a source site, built into an EPUB book and kept up to date.
+	// Chapters are cached so an update fetches only the new ones.
+	`CREATE TABLE webnovels (
+		source TEXT NOT NULL,
+		source_id TEXT NOT NULL,
+		title TEXT NOT NULL,
+		author TEXT NOT NULL,
+		description TEXT NOT NULL,
+		cover_url TEXT NOT NULL,
+		ongoing INTEGER NOT NULL,
+		book_id TEXT REFERENCES books(id) ON DELETE CASCADE,
+		created_by TEXT NOT NULL REFERENCES users(id),
+		chapters INTEGER NOT NULL DEFAULT 0,
+		checked_at TEXT NOT NULL DEFAULT '',
+		error TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (source, source_id)
+	) STRICT;
+	CREATE TABLE webnovel_chapters (
+		source TEXT NOT NULL,
+		source_id TEXT NOT NULL,
+		number INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		content TEXT NOT NULL,
+		PRIMARY KEY (source, source_id, number),
+		FOREIGN KEY (source, source_id) REFERENCES webnovels(source, source_id) ON DELETE CASCADE
+	) STRICT;`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

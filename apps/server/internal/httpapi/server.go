@@ -21,6 +21,7 @@ import (
 	"github.com/bookharbor/bookharbor/apps/server/internal/requests"
 	"github.com/bookharbor/bookharbor/apps/server/internal/settings"
 	"github.com/bookharbor/bookharbor/apps/server/internal/social"
+	"github.com/bookharbor/bookharbor/apps/server/internal/webnovel"
 )
 
 const maxJSONBodyBytes = 1 << 20
@@ -63,14 +64,15 @@ type server struct {
 	logger      *slog.Logger
 	storageMove storageMove
 	shelfmark   shelfmarkDownloads
+	webnovels   *webnovel.Syncer
 }
 
-func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, bookRequests *requests.Store, bookLists *lists.Store, annotationStore *annotations.Store, metadataProvider metadata.Provider, mailer Mailer, settingsStore *settings.Store, notifier Notifier, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *audit.Store, bookLibrary *library.Store, readingProgress *reading.Store, socialStore *social.Store, bookRequests *requests.Store, bookLists *lists.Store, annotationStore *annotations.Store, metadataProvider metadata.Provider, mailer Mailer, settingsStore *settings.Store, notifier Notifier, webnovels *webnovel.Syncer, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, requests: bookRequests, lists: bookLists, annotations: annotationStore, mailer: mailer, settings: settingsStore, notifier: notifier, logger: logger}
+	s := &server{config: cfg, build: build, users: users, audit: auditLog, library: bookLibrary, metadata: metadataProvider, reading: readingProgress, social: socialStore, requests: bookRequests, lists: bookLists, annotations: annotationStore, mailer: mailer, settings: settingsStore, notifier: notifier, webnovels: webnovels, logger: logger}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", adminUI())
 	mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusPermanentRedirect))
@@ -96,6 +98,11 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/admin/storage", requireMethod(http.MethodGet, s.requireAdmin(s.storageStatus)))
 	mux.Handle("/api/v1/admin/shelfmark/search", requireMethod(http.MethodGet, s.requireAdmin(s.shelfmarkSearch)))
 	mux.Handle("/api/v1/admin/shelfmark/downloads", s.requireAdmin(s.shelfmarkDownloadsHandler))
+	if webnovels != nil {
+		mux.Handle("/api/v1/admin/webnovels", s.requireAdmin(s.adminWebnovels))
+		mux.Handle("/api/v1/admin/webnovels/search", requireMethod(http.MethodGet, s.requireAdmin(s.webnovelSearch)))
+		mux.Handle("/api/v1/admin/webnovels/", s.requireAdmin(s.adminWebnovel))
+	}
 	mux.Handle("/api/v1/admin/storage/move-to-s3", requireMethod(http.MethodPost, s.requireAdmin(s.moveToS3)))
 	mux.Handle("/api/v1/admin/metadata/search", requireMethod(http.MethodGet, s.requireAuthentication(s.searchMetadata)))
 	mux.Handle("/api/v1/books", s.requireAuthentication(s.books))

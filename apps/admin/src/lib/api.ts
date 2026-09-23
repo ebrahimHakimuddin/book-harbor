@@ -137,6 +137,34 @@ export interface ShelfmarkRelease {
   raw: unknown
 }
 
+/** A novel on the source site, from a search. */
+export interface WebnovelResult {
+  id: string
+  title: string
+  author: string
+  description: string
+  coverUrl: string
+  chapters: number
+  ongoing: boolean
+  genres: string
+  followed: boolean
+}
+
+/** A followed novel and its sync state. */
+export interface Webnovel {
+  sourceId: string
+  title: string
+  author: string
+  description: string
+  coverUrl: string
+  ongoing: boolean
+  bookId?: string
+  chapters: number
+  checkedAt?: string
+  error?: string
+  progress?: string
+}
+
 export interface ShelfmarkDownload {
   id: string
   title: string
@@ -336,6 +364,11 @@ export const api = {
   testIntegration: (integration: Integration) => request<void>("/api/v1/admin/settings/test", { method: "POST", body: { integration } }),
   storage: () => request<StorageStatus>("/api/v1/admin/storage"),
   moveToS3: () => request<void>("/api/v1/admin/storage/move-to-s3", { method: "POST" }),
+  webnovels: () => request<{ items: Webnovel[]; intervalHours: number }>("/api/v1/admin/webnovels"),
+  searchWebnovels: (q: string) => request<{ items: WebnovelResult[] }>(`/api/v1/admin/webnovels/search?${new URLSearchParams({ q })}`),
+  followWebnovel: (sourceId: string) => request<void>("/api/v1/admin/webnovels", { method: "POST", body: { sourceId } }),
+  syncWebnovel: (sourceId: string) => request<void>(`/api/v1/admin/webnovels/${enc(sourceId)}/sync`, { method: "POST" }),
+  unfollowWebnovel: (sourceId: string) => request<void>(`/api/v1/admin/webnovels/${enc(sourceId)}`, { method: "DELETE" }),
   shelfmarkSearch: (title: string, author: string) =>
     request<{ items: ShelfmarkRelease[] }>(`/api/v1/admin/shelfmark/search?${new URLSearchParams({ title, author })}`),
   shelfmarkDownloads: () => request<{ items: ShelfmarkDownload[] }>("/api/v1/admin/shelfmark/downloads"),

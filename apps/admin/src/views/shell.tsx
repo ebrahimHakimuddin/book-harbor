@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { ArchiveIcon, BookMarkedIcon, BookOpenIcon, HistoryIcon, LogOutIcon, SettingsIcon, UsersIcon, type LucideIcon, Loader2Icon } from "lucide-react"
+import { ArchiveIcon, BookMarkedIcon, NewspaperIcon, BookOpenIcon, HistoryIcon, LogOutIcon, SettingsIcon, UsersIcon, type LucideIcon, Loader2Icon } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, type Session, type User } from "@/lib/api"
@@ -16,17 +16,19 @@ import { Label } from "@/components/ui/label"
 import { LibraryView } from "@/views/library"
 import { ReadersView } from "@/views/readers"
 import { RequestsView } from "@/views/requests"
+import { WebnovelsView } from "@/views/webnovels"
 import { ActivityView } from "@/views/activity"
 import { BackupView } from "@/views/backup"
 import { SettingsView } from "@/views/settings"
 
-const VIEWS = ["library", "readers", "requests", "activity", "backup", "settings"] as const
+const VIEWS = ["library", "readers", "requests", "webnovels", "activity", "backup", "settings"] as const
 type View = (typeof VIEWS)[number]
 
 const NAV: { view: View; label: string; icon: LucideIcon }[] = [
   { view: "library", label: "Library", icon: BookOpenIcon },
   { view: "readers", label: "Readers", icon: UsersIcon },
   { view: "requests", label: "Requests", icon: BookMarkedIcon },
+  { view: "webnovels", label: "Web novels", icon: NewspaperIcon },
   { view: "activity", label: "Activity", icon: HistoryIcon },
   { view: "backup", label: "Backup", icon: ArchiveIcon },
   { view: "settings", label: "Settings", icon: SettingsIcon },
@@ -107,6 +109,7 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
             {view === "library" && <LibraryView />}
             {view === "readers" && <ReadersView currentUserId={session.user.id} />}
             {view === "requests" && <RequestsView />}
+            {view === "webnovels" && <WebnovelsView />}
             {view === "activity" && <ActivityView />}
             {view === "backup" && <BackupView />}
             {view === "settings" && <SettingsView />}
