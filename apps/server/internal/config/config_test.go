@@ -3,6 +3,7 @@ package config
 import (
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -27,6 +28,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MaxUploadBytes != defaultMaxUploadBytes {
 		t.Errorf("MaxUploadBytes = %d, want %d", cfg.MaxUploadBytes, defaultMaxUploadBytes)
 	}
+	if cfg.ScanInterval != 15*time.Minute {
+		t.Errorf("ScanInterval = %v, want 15m", cfg.ScanInterval)
+	}
 }
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
@@ -41,6 +45,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "upload size", key: "BOOKHARBOR_MAX_UPLOAD_BYTES", value: "0"},
 		{name: "upload size syntax", key: "BOOKHARBOR_MAX_UPLOAD_BYTES", value: "large"},
 		{name: "upload size maximum", key: "BOOKHARBOR_MAX_UPLOAD_BYTES", value: strconv.FormatInt(maxAllowedUploadBytes+1, 10)},
+		{name: "relative library", key: "BOOKHARBOR_LIBRARY_DIRS", value: "relative/books"},
+		{name: "relative library allowlist", key: "BOOKHARBOR_LIBRARY_ALLOW_DIRS", value: "relative/books"},
+		{name: "scan interval", key: "BOOKHARBOR_SCAN_INTERVAL", value: "10s"},
 	}
 
 	for _, test := range tests {

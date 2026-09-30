@@ -47,6 +47,7 @@ type editionResponse struct {
 	OriginalFilename string    `json:"originalFilename"`
 	ByteLength       int64     `json:"byteLength"`
 	SHA256           string    `json:"sha256"`
+	Watched          bool      `json:"watched"`
 	CreatedAt        time.Time `json:"createdAt"`
 	ContentURL       string    `json:"contentUrl"`
 }
@@ -190,6 +191,10 @@ func (s *server) edition(w http.ResponseWriter, r *http.Request) {
 	content, err := s.library.OpenContent(r.Context(), value)
 	if errors.Is(err, library.ErrNotFound) {
 		notFound(w, r)
+		return
+	}
+	if errors.Is(err, library.ErrUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "edition_unavailable", "this watched file is currently unavailable")
 		return
 	}
 	if err != nil {
@@ -348,6 +353,7 @@ func newBookResponse(book library.Book) bookResponse {
 			OriginalFilename: edition.OriginalFilename,
 			ByteLength:       edition.ByteLength,
 			SHA256:           edition.SHA256,
+			Watched:          edition.Watched,
 			CreatedAt:        edition.CreatedAt,
 			ContentURL:       "/api/v1/editions/" + edition.ID + "/content",
 		})
@@ -398,14 +404,36 @@ func (s *server) deleteBook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) exportArchive(w http.ResponseWriter, r *http.Request) {
-	s.record(r, "export.create", "instance", "", "original files and database snapshot")
+	mode := r.URL.Query().Get("mode")
+	if mode != "" && mode != "full" && mode != "references" {
+		writeError(w, http.StatusBadRequest, "invalid_mode", "mode must be full or references")
+		return
+	}
+	references := mode == "references"
+	// Exports can stream a large NAS library for longer than the ordinary response timeout.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	s.record(r, "export.create", "instance", "", "mode="+mode)
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="bookharbor-export-`+time.Now().UTC().Format("20060102")+`.zip"`)
+	name := "bookharbor-export-"
+	if references {
+		name = "bookharbor-references-"
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+time.Now().UTC().Format("20060102")+`.zip"`)
 	w.Header().Set("Cache-Control", "no-store")
-	if err := s.library.WriteExport(r.Context(), w); err != nil {
+	if err := s.library.WriteExportMode(r.Context(), w, references); err != nil {
 		// Headers are already sent; the truncated archive fails to open, which is the signal.
 		s.logger.Error("write export", "error", err)
 	}
+}
+
+func (s *server) exportEstimate(w http.ResponseWriter, r *http.Request) {
+	estimate, err := s.library.ExportEstimate(r.Context())
+	if err != nil {
+		s.logger.Error("estimate export", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "unable to estimate export size")
+		return
+	}
+	writeJSON(w, http.StatusOK, estimate)
 }
 
 // bookSubresource routes /books/{id}/cover and /books/{id}/editions.

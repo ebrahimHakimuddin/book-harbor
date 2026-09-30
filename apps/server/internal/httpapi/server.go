@@ -92,10 +92,14 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	mux.Handle("/api/v1/admin/users", s.requireAuthentication(s.adminUsers))
 	mux.Handle("/api/v1/admin/users/", s.requireAdmin(s.adminUser))
 	mux.Handle("/api/v1/admin/export", requireMethod(http.MethodGet, s.requireAdmin(s.exportArchive)))
+	mux.Handle("/api/v1/admin/export/estimate", requireMethod(http.MethodGet, s.requireAdmin(s.exportEstimate)))
 	mux.Handle("/api/v1/admin/audit", requireMethod(http.MethodGet, s.requireAdmin(s.auditLog)))
 	mux.Handle("/api/v1/admin/settings", s.requireAdmin(s.adminSettings))
 	mux.Handle("/api/v1/admin/settings/test", requireMethod(http.MethodPost, s.requireAdmin(s.testIntegration)))
 	mux.Handle("/api/v1/admin/storage", requireMethod(http.MethodGet, s.requireAdmin(s.storageStatus)))
+	mux.Handle("/api/v1/admin/sources", s.requireAdmin(s.librarySources))
+	mux.Handle("/api/v1/admin/sources/scan", requireMethod(http.MethodPost, s.requireAdmin(s.scanLibrarySources)))
+	mux.Handle("/api/v1/admin/sources/", s.requireAdmin(s.librarySource))
 	mux.Handle("/api/v1/admin/shelfmark/search", requireMethod(http.MethodGet, s.requireAdmin(s.shelfmarkSearch)))
 	mux.Handle("/api/v1/admin/shelfmark/downloads", s.requireAdmin(s.shelfmarkDownloadsHandler))
 	if webnovels != nil {
@@ -196,6 +200,8 @@ func (s *server) bootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, newUserResponse(user))
+	// The startup scan may have run before an administrator existed.
+	s.library.StartSourceScan(false, s.logger)
 }
 
 func (s *server) withSecurityHeaders(next http.Handler) http.Handler {

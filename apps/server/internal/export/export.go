@@ -30,7 +30,7 @@ type manifestBook struct {
 // remain, so the archive must be stored as carefully as the server itself. openObject
 // reads a file stored in S3; the snapshot records every file as on disk, where a restore
 // puts it.
-func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string, openObject func(ctx context.Context, storagePath string) (io.ReadCloser, error)) error {
+func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string, openObject func(ctx context.Context, storagePath string) (io.ReadCloser, error), openExternal func(ctx context.Context, editionID string) (io.ReadCloser, error), references bool) error {
 	tmp, err := os.MkdirTemp(filepath.Join(dataDir, "tmp"), "export-*")
 	if err != nil {
 		return fmt.Errorf("create export workspace: %w", err)
@@ -44,18 +44,24 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string, openObj
 	if err != nil {
 		return fmt.Errorf("open snapshot: %w", err)
 	}
-	_, err = copyDB.ExecContext(ctx, `
-		DELETE FROM sessions;
+	_, err = copyDB.ExecContext(ctx, `DELETE FROM sessions;
 		DELETE FROM settings WHERE key IN ('resend.apiKey', 's3.secretKey', 'ntfy.token');
-		UPDATE editions SET storage = 'disk';`)
+		UPDATE editions SET storage = 'disk' WHERE id NOT IN (SELECT edition_id FROM source_files);`)
+	if err == nil && !references {
+		_, err = copyDB.ExecContext(ctx, `UPDATE editions SET storage_path = 'books/' || book_id || '/' || id || '.' || format
+			WHERE id IN (SELECT edition_id FROM source_files);
+			DELETE FROM source_files;
+			DELETE FROM library_sources;`)
+	}
 	copyDB.Close()
 	if err != nil {
 		return fmt.Errorf("scrub snapshot: %w", err)
 	}
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT b.id, b.title, e.id, e.original_filename, e.storage_path, e.storage, e.sha256
-		FROM editions e JOIN books b ON b.id = e.book_id ORDER BY b.created_at, e.created_at`)
+		SELECT b.id, b.title, e.id, e.original_filename, e.storage_path, e.storage, e.sha256, sf.edition_id
+		FROM editions e JOIN books b ON b.id = e.book_id
+		LEFT JOIN source_files sf ON sf.edition_id = e.id ORDER BY b.created_at, e.created_at`)
 	if err != nil {
 		return fmt.Errorf("list editions: %w", err)
 	}
@@ -66,20 +72,30 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string, openObj
 	for rows.Next() {
 		var book manifestBook
 		var storagePath, storage, filename string
-		if err := rows.Scan(&book.BookID, &book.Title, &book.EditionID, &filename, &storagePath, &storage, &book.SHA256); err != nil {
+		var external sql.NullString
+		if err := rows.Scan(&book.BookID, &book.Title, &book.EditionID, &filename, &storagePath, &storage, &book.SHA256, &external); err != nil {
 			return fmt.Errorf("scan edition: %w", err)
 		}
-		clean := filepath.Clean(storagePath)
-		if filepath.IsAbs(clean) || !strings.HasPrefix(clean, "books"+string(filepath.Separator)) {
-			return fmt.Errorf("invalid stored content path for edition %s", book.EditionID)
-		}
 		book.File = "books/" + book.EditionID + "-" + filepath.Base(filename)
-		if storage == "s3" {
-			if err := addObject(ctx, archive, book.File, clean, openObject); err != nil {
+		if external.Valid {
+			if references {
+				continue
+			}
+			if err := addObject(ctx, archive, book.File, book.EditionID, openExternal); err != nil {
 				return err
 			}
-		} else if err := addFile(archive, book.File, filepath.Join(dataDir, clean), zip.Store); err != nil {
-			return err
+		} else {
+			clean := filepath.Clean(storagePath)
+			if filepath.IsAbs(clean) || !strings.HasPrefix(clean, "books"+string(filepath.Separator)) {
+				return fmt.Errorf("invalid stored content path for edition %s", book.EditionID)
+			}
+			if storage == "s3" {
+				if err := addObject(ctx, archive, book.File, clean, openObject); err != nil {
+					return err
+				}
+			} else if err := addFile(archive, book.File, filepath.Join(dataDir, clean), zip.Store); err != nil {
+				return err
+			}
 		}
 		manifest = append(manifest, book)
 	}
@@ -112,7 +128,11 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string, openObj
 	}
 	encoder := json.NewEncoder(entry)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(map[string]any{"createdAt": time.Now().UTC(), "books": manifest}); err != nil {
+	mode := "full"
+	if references {
+		mode = "references"
+	}
+	if err := encoder.Encode(map[string]any{"createdAt": time.Now().UTC(), "mode": mode, "books": manifest}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 	return archive.Close()

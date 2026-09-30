@@ -223,6 +223,37 @@ var migrations = []string{
 		PRIMARY KEY (source, source_id, number),
 		FOREIGN KEY (source, source_id) REFERENCES webnovels(source, source_id) ON DELETE CASCADE
 	) STRICT;`,
+	// A watched source points to an operator-mounted directory. source_files owns only catalog
+	// references; deleting an edition never deletes a file in the source directory.
+	`CREATE TABLE library_sources (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		root_path TEXT NOT NULL UNIQUE,
+		enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+		last_scan_at TEXT NOT NULL DEFAULT '',
+		last_error TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL
+	) STRICT;
+	CREATE TABLE source_files (
+		edition_id TEXT PRIMARY KEY REFERENCES editions(id) ON DELETE CASCADE,
+		source_id TEXT NOT NULL REFERENCES library_sources(id) ON DELETE CASCADE,
+		rel_path TEXT NOT NULL,
+		rel_dir TEXT NOT NULL,
+		work_id TEXT NOT NULL DEFAULT '',
+		byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+		mtime_ns INTEGER NOT NULL,
+		missing_scans INTEGER NOT NULL DEFAULT 0,
+		available INTEGER NOT NULL DEFAULT 1 CHECK (available IN (0, 1)),
+		UNIQUE (source_id, rel_path)
+	) STRICT;
+	CREATE INDEX source_files_source_idx ON source_files(source_id);`,
+	`CREATE TABLE source_scan_errors (
+		source_id TEXT NOT NULL REFERENCES library_sources(id) ON DELETE CASCADE,
+		rel_path TEXT NOT NULL,
+		message TEXT NOT NULL,
+		seen_at TEXT NOT NULL,
+		PRIMARY KEY (source_id, rel_path)
+	) STRICT;`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

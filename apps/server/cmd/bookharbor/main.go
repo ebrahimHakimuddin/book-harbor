@@ -70,6 +70,10 @@ func main() {
 	libraryStore.UseObjectStorage(func() (objectstore.Config, bool) {
 		return settingsStore.S3(), settingsStore.Bool("s3.storeUploads")
 	})
+	if err := libraryStore.RegisterSources(context.Background(), cfg.LibraryDirs); err != nil {
+		logger.Error("configure watched libraries", "error", err)
+		os.Exit(1)
+	}
 
 	notifier := notify.NewNtfy(settingsStore.Get)
 	alert := func(title, message, tag string) {
@@ -108,6 +112,7 @@ func main() {
 	)
 	defer stop()
 	go webnovels.Run(shutdownSignal)
+	go libraryStore.RunSourceScans(shutdownSignal, cfg.ScanInterval, logger)
 
 	go func() {
 		<-shutdownSignal.Done()

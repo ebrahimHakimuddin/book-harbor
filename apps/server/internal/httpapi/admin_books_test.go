@@ -49,6 +49,37 @@ func TestAdminDeletesBookWithProgress(t *testing.T) {
 	}
 }
 
+func TestWatchedLibraryAdminEndpointsRequireAdmin(t *testing.T) {
+	handler := testHandler(t)
+	bootstrapAdministrator(t, handler)
+	admin := login(t, handler, "admin@example.com", "a secure first password")
+	if response := adminCall(t, handler, admin.AccessToken, http.MethodGet, "/api/v1/admin/sources", ""); response.Code != http.StatusOK {
+		t.Fatalf("admin list status = %d; %s", response.Code, response.Body)
+	}
+	response := adminCall(t, handler, admin.AccessToken, http.MethodPost, "/api/v1/admin/sources/scan", "")
+	if response.Code != http.StatusAccepted && response.Code != http.StatusConflict {
+		t.Fatalf("admin scan status = %d; %s", response.Code, response.Body)
+	}
+	reader := adminCall(t, handler, admin.AccessToken, http.MethodPost, "/api/v1/admin/users", `{"displayName":"R","email":"r@example.com","password":"a secure reader password"}`)
+	if reader.Code != http.StatusCreated {
+		t.Fatal(reader.Body)
+	}
+	readerSession := login(t, handler, "r@example.com", "a secure reader password")
+	for _, endpoint := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/admin/sources"},
+		{http.MethodPost, "/api/v1/admin/sources"},
+		{http.MethodPost, "/api/v1/admin/sources/scan"},
+		{http.MethodPatch, "/api/v1/admin/sources/src_example"},
+		{http.MethodDelete, "/api/v1/admin/sources/src_example"},
+		{http.MethodGet, "/api/v1/admin/export/estimate"},
+	} {
+		response := adminCall(t, handler, readerSession.AccessToken, endpoint.method, endpoint.path, "")
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("reader %s %s status = %d", endpoint.method, endpoint.path, response.Code)
+		}
+	}
+}
+
 func TestAdminExportContainsBooksAndScrubbedDatabase(t *testing.T) {
 	handler := testHandler(t)
 	bootstrapAdministrator(t, handler)

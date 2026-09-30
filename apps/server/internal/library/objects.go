@@ -92,7 +92,8 @@ func (s *Store) openStored(ctx context.Context, storage, storagePath string, siz
 // StorageCounts reports how many edition files are on disk and in S3.
 func (s *Store) StorageCounts(ctx context.Context) (disk, s3 int, err error) {
 	err = s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FILTER (WHERE storage = 'disk'), COUNT(*) FILTER (WHERE storage = 's3') FROM editions
+		SELECT COUNT(*) FILTER (WHERE storage = 'disk'), COUNT(*) FILTER (WHERE storage = 's3')
+		FROM editions WHERE id NOT IN (SELECT edition_id FROM source_files)
 	`).Scan(&disk, &s3)
 	return disk, s3, err
 }
@@ -109,7 +110,9 @@ func (s *Store) MoveToS3(ctx context.Context, moved func()) error {
 		var id, storagePath, checksum string
 		var size int64
 		err := s.db.QueryRowContext(ctx, `
-			SELECT id, storage_path, sha256, byte_length FROM editions WHERE storage = 'disk' ORDER BY created_at LIMIT 1
+			SELECT id, storage_path, sha256, byte_length FROM editions
+			WHERE storage = 'disk' AND id NOT IN (SELECT edition_id FROM source_files)
+			ORDER BY created_at LIMIT 1
 		`).Scan(&id, &storagePath, &checksum, &size)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil

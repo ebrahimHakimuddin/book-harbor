@@ -114,6 +114,9 @@ func (s *Store) ReplaceEditionFile(ctx context.Context, bookID, rawFilename stri
 	if err != nil {
 		return Book{}, fmt.Errorf("find edition: %w", err)
 	}
+	if strings.HasPrefix(oldPath, "external/") {
+		return Book{}, fmt.Errorf("cannot replace a watched edition with a managed file")
+	}
 	// A fresh path, so the old file keeps serving until the row points at the new one.
 	suffix, err := newID("")
 	if err != nil {

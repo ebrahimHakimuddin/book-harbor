@@ -24,6 +24,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -43,6 +45,7 @@ var (
 	ErrNotFound          = errors.New("book not found")
 	ErrTooLarge          = errors.New("book file exceeds size limit")
 	ErrUnsupportedFormat = errors.New("unsupported book format")
+	ErrUnavailable       = errors.New("watched edition is unavailable")
 )
 
 // DuplicateError reports that an uploaded file is byte-identical to an edition
@@ -60,6 +63,8 @@ type Store struct {
 	maxBytes int64
 	now      func() time.Time
 	objects  func() (objectstore.Config, bool)
+	scanMu   sync.Mutex
+	scanning atomic.Bool
 }
 
 type ImportInput struct {
@@ -108,6 +113,7 @@ type Edition struct {
 	OriginalFilename string
 	ByteLength       int64
 	SHA256           string
+	Watched          bool
 	CreatedAt        time.Time
 }
 
@@ -329,14 +335,15 @@ func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Boo
 		SELECT id, title, subtitle, description, authors_json, cover_url,
 			metadata_provider, metadata_provider_id, series, series_index, tags_json,
 			created_by, created_at, updated_at
-		FROM books`
+		FROM books WHERE EXISTS (SELECT 1 FROM editions e LEFT JOIN source_files sf ON sf.edition_id = e.id
+			WHERE e.book_id = books.id AND (sf.edition_id IS NULL OR sf.available = 1))`
 	args := []any{}
 	if cursor != "" {
 		createdAt, id, err := decodeCursor(cursor)
 		if err != nil {
 			return nil, "", err
 		}
-		query += ` WHERE created_at < ? OR (created_at = ? AND id < ?)`
+		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
 		args = append(args, createdAt, createdAt, id)
 	}
 	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
@@ -484,7 +491,12 @@ func (s *Store) OpenContent(ctx context.Context, editionID string) (Content, err
 	if err != nil {
 		return Content{}, fmt.Errorf("parse edition creation time: %w", err)
 	}
-	file, err := s.openStored(ctx, storage, storagePath, byteLength)
+	var file io.ReadSeekCloser
+	if strings.HasPrefix(storagePath, "external/") {
+		file, err = s.watchedContent(ctx, editionID)
+	} else {
+		file, err = s.openStored(ctx, storage, storagePath, byteLength)
+	}
 	if err != nil {
 		return Content{}, err
 	}
@@ -592,10 +604,11 @@ func validHTTPURL(value string) bool {
 
 func (s *Store) listEditions(ctx context.Context, bookID string) ([]Edition, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, book_id, format, media_type, original_filename, byte_length, sha256, created_at
-		FROM editions
-		WHERE book_id = ?
-		ORDER BY created_at, id
+		SELECT e.id, e.book_id, e.format, e.media_type, e.original_filename, e.byte_length, e.sha256, e.created_at,
+			sf.edition_id IS NOT NULL
+		FROM editions e LEFT JOIN source_files sf ON sf.edition_id = e.id
+		WHERE e.book_id = ? AND (sf.edition_id IS NULL OR sf.available = 1)
+		ORDER BY e.created_at, e.id
 	`, bookID)
 	if err != nil {
 		return nil, fmt.Errorf("list editions: %w", err)
@@ -607,7 +620,7 @@ func (s *Store) listEditions(ctx context.Context, bookID string) ([]Edition, err
 		var createdAt string
 		if err := rows.Scan(
 			&edition.ID, &edition.BookID, &edition.Format, &edition.MediaType,
-			&edition.OriginalFilename, &edition.ByteLength, &edition.SHA256, &createdAt,
+			&edition.OriginalFilename, &edition.ByteLength, &edition.SHA256, &createdAt, &edition.Watched,
 		); err != nil {
 			return nil, fmt.Errorf("scan edition: %w", err)
 		}
@@ -714,6 +727,7 @@ func inspectEPUB(file *os.File, size int64) (epubMetadata, error) {
 	var packageDocument struct {
 		Metadata struct {
 			Titles       []string `xml:"title"`
+			Identifiers  []string `xml:"identifier"`
 			Creators     []string `xml:"creator"`
 			Descriptions []string `xml:"description"`
 			Metas        []struct {
@@ -743,6 +757,12 @@ func inspectEPUB(file *os.File, size int64) (epubMetadata, error) {
 		}
 	}
 	metadata.Authors = packageDocument.Metadata.Creators
+	for _, identifier := range packageDocument.Metadata.Identifiers {
+		if identifier = strings.TrimSpace(identifier); identifier != "" {
+			metadata.Identifier = identifier
+			break
+		}
+	}
 	if len(packageDocument.Metadata.Descriptions) > 0 {
 		metadata.Description = packageDocument.Metadata.Descriptions[0]
 	}
@@ -790,6 +810,7 @@ func inspectEPUB(file *os.File, size int64) (epubMetadata, error) {
 // epubMetadata is what an EPUB says about itself. Every field is optional.
 type epubMetadata struct {
 	Title       string
+	Identifier  string
 	Authors     []string
 	Description string
 	Series      string
@@ -823,10 +844,12 @@ func (m epubMetadata) sanitized() epubMetadata {
 	}
 	return epubMetadata{
 		Title:       m.Title,
+		Identifier:  clip(m.Identifier, 500),
 		Authors:     authors,
 		Description: clip(description, 10_000),
 		Series:      clip(m.Series, 300),
 		SeriesIndex: index,
+		Cover:       m.Cover,
 	}
 }
 
@@ -931,7 +954,13 @@ func (s *Store) Delete(ctx context.Context, bookID string) (Book, error) {
 
 // WriteExport streams every original file and a database snapshot as a zip.
 func (s *Store) WriteExport(ctx context.Context, w io.Writer) error {
+	return s.WriteExportMode(ctx, w, false)
+}
+
+func (s *Store) WriteExportMode(ctx context.Context, w io.Writer, references bool) error {
 	return export.Write(ctx, w, s.db, s.dataDir, func(ctx context.Context, storagePath string) (io.ReadCloser, error) {
 		return s.bucket().Get(ctx, objectKey(storagePath), 0)
-	})
+	}, func(ctx context.Context, editionID string) (io.ReadCloser, error) {
+		return s.openWatchedContent(ctx, editionID, false)
+	}, references)
 }
