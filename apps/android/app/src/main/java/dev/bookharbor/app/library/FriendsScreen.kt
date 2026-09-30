@@ -89,7 +89,10 @@ fun FriendsTab(controller: AppController) {
             }
             item { Box(Modifier.padding(top = 16.dp)) { YourReadingCard(controller, state.settings, onEditGoal = { editingGoal = true }) } }
             if (state.error != null) item {
-                Text(state.error, Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                Column(Modifier.padding(top = 12.dp)) {
+                    Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = controller::loadFriends, enabled = !state.loading) { Text("Try again") }
+                }
             }
 
             if (state.incoming.isNotEmpty() || state.outgoing.isNotEmpty()) {

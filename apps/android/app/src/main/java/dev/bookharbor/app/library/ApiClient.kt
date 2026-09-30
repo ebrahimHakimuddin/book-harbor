@@ -5,10 +5,30 @@ import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
 
-class HttpError(val status: Int, message: String) : Exception(message)
+class HttpError(val status: Int, body: String) : Exception(httpErrorMessage(status, body))
 
-/** The server's error body is `{"code": "...", "message": "..."}`; fall back to the raw body if it isn't. */
-private fun errorMessage(body: String): String = runCatching { JSONObject(body).getString("message") }.getOrDefault(body)
+/** Only BookHarbor's known error envelope supplies UI copy; proxy bodies never reach a screen. */
+internal fun httpErrorMessage(status: Int, body: String): String {
+    val message = runCatching {
+        val error = JSONObject(body)
+        if (error.optString("code").isBlank()) null else error.optString("message").trim()
+    }.getOrNull()
+    if (!message.isNullOrBlank() && message.length <= 500 && !message.contains('<')) return message
+    // Short locally-created errors (e.g. "sign in required") remain useful. HTML/JSON and
+    // upstream service errors are replaced by actionable copy, including on download paths.
+    if (status < 500 && body.length in 1..160 && body.none { it == '<' || it == '>' || it == '{' || it == '[' || it == '\n' }) return body
+    return when (status) {
+        530 -> "The server is temporarily unreachable. Please try again in a few minutes."
+        in 500..599 -> "The server is temporarily unavailable. Please try again later."
+        401 -> "Your session has expired. Please sign in again."
+        403 -> "You don't have permission to do that."
+        404 -> "This item isn't available."
+        408 -> "The request timed out. Please try again."
+        426 -> "Please update BookHarbor to connect to this server."
+        429 -> "Too many requests. Please wait a moment and try again."
+        else -> "The request couldn't be completed. Please try again."
+    }
+}
 
 /**
  * The one place that talks HTTP to the BookHarbor server. Authorized calls send the
@@ -53,8 +73,8 @@ class ApiClient(
                 input.copyTo(out)
                 out.toByteArray()
             } ?: ByteArray(0)
-            if (status == 426) onVersionRejected?.invoke(errorMessage(String(bytes)))
-            if (status !in 200..299) throw HttpError(status, errorMessage(String(bytes)))
+            if (status == 426) onVersionRejected?.invoke(httpErrorMessage(status, String(bytes)))
+            if (status !in 200..299) throw HttpError(status, String(bytes))
             return bytes
         } finally {
             connection.disconnect()

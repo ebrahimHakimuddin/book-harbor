@@ -64,6 +64,29 @@ private class FakeConnection(private val body: InputStream, private val code: In
 }
 
 class LibraryClientTest {
+ @Test fun httpErrorsKeepServerGuidanceAndHideUnexpectedBodies() {
+  assertEquals("Email is already registered", HttpError(409, """{"code":"email_exists","message":"Email is already registered"}""").message)
+  assertEquals("The server is temporarily unavailable. Please try again later.", HttpError(502, "<html>Bad gateway</html>").message)
+  assertEquals("Your session has expired. Please sign in again.", HttpError(401, "").message)
+  assertEquals("The request couldn't be completed. Please try again.", HttpError(400, """{"detail":"unexpected intermediary response"}""").message)
+ }
+ @Test fun proxyFailureNeverDisplaysRawResponse() {
+  val response = """{"type":"https://developers.cloudflare.com/error-1033","title":"Error 1033: Cloudflare Tunnel error","status":530,"detail":"The host is configured as a Cloudflare Tunnel","cloudflare_error":true}"""
+  val api = ApiClient(SessionStore(InMemoryPreferences()), openConnection = {
+   object : HttpURLConnection(URL("http://test")) {
+    override fun connect() {}
+    override fun disconnect() {}
+    override fun usingProxy() = false
+    override fun getResponseCode() = 530
+    override fun getErrorStream() = ByteArrayInputStream(response.toByteArray())
+   }
+  })
+  try { api.request("http://test"); throw AssertionError("expected a connection error") }
+  catch (error: HttpError) {
+   assertEquals(530, error.status)
+   assertEquals("The server is temporarily unreachable. Please try again in a few minutes.", error.message)
+  }
+ }
  @Test fun parsesModels() { assertEquals("a", SessionTokens.fromJson("{\"accessToken\":\"a\",\"refreshToken\":\"r\"}").accessToken); val books=parseBooks("{\"items\":[{\"id\":\"b\",\"title\":\"Book\",\"editions\":[]}]}"); assertEquals("Book",books.single().title) }
  @Test fun parsesInstance() { assertEquals(false, InstanceInfo.fromJson("{\"name\":\"H\",\"version\":\"1\",\"setupRequired\":false}").setupRequired) }
  @Test fun checksumMatchMovesFile() {
