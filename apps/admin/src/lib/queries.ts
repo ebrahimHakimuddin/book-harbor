@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query"
-import { api, sessionStore, type Book, type BookFilter, type BookPage, type BookUpdate, type Role, type User } from "@/lib/api"
+import { api, sessionStore, type Book, type BookFilter, type BookPage, type BookUpdate, type CatalogLibraryInput, type Role, type User } from "@/lib/api"
 
 export const keys = {
   instance: ["instance"] as const,
@@ -61,7 +61,23 @@ export function invalidateCatalog(client: QueryClient) {
   return Promise.all([
     client.invalidateQueries({ queryKey: keys.books }),
     client.invalidateQueries({ queryKey: keys.bookCount }),
+    client.invalidateQueries({ queryKey: ["libraries"] }),
   ])
+}
+
+export function useLibraries() {
+  const session = useSyncExternalStore(sessionStore.subscribe, sessionStore.get)
+  return useQuery({ queryKey: ["libraries", session?.user.id], queryFn: async () => (await api.libraries()).items, enabled: !!session })
+}
+export function useLibraryMutations() {
+  const client = useQueryClient()
+  const audit = useAuditRefresh()
+  const refresh = () => { void invalidateCatalog(client); void audit() }
+  return {
+    save: useMutation({ mutationFn: (v: { id?: string; body: CatalogLibraryInput }) => api.saveLibrary(v.body, v.id), onSuccess: refresh }),
+    remove: useMutation({ mutationFn: api.deleteLibrary, onSuccess: refresh }),
+    move: useMutation({ mutationFn: (v: { id: string; libraryId: string }) => api.moveBookLibrary(v.id, v.libraryId), onSuccess: (book) => { patchBook(client, book); void audit() } }),
+  }
 }
 
 function useAuditRefresh() {
@@ -73,7 +89,7 @@ export function useImportBook() {
   const client = useQueryClient()
   const audit = useAuditRefresh()
   return useMutation({
-    mutationFn: (v: { file: File; title: string; onProgress?: (f: number) => void }) => api.importBook(v.file, v.title, v.onProgress),
+    mutationFn: (v: { file: File; title: string; libraryId?: string; onProgress?: (f: number) => void }) => api.importBook(v.file, v.title, v.onProgress, v.libraryId),
     onSuccess: (book) => {
       client.setQueryData(["book", book.id], book)
       void invalidateCatalog(client)
@@ -87,6 +103,15 @@ export function useUpdateBook() {
   const audit = useAuditRefresh()
   return useMutation({
     mutationFn: (v: { id: string; update: BookUpdate }) => api.updateBook(v.id, v.update),
+    onSuccess: (book) => { patchBook(client, book); void audit() },
+  })
+}
+
+export function useRefreshBookMetadata() {
+  const client = useQueryClient()
+  const audit = useAuditRefresh()
+  return useMutation({
+    mutationFn: api.refreshBookMetadata,
     onSuccess: (book) => { patchBook(client, book); void audit() },
   })
 }

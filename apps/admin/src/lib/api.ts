@@ -28,6 +28,13 @@ export interface Edition {
 }
 
 export interface Book {
+  publisher: string
+  publishedDate: string
+  language: string
+  isbn: string
+  metadataLocks: MetadataField[]
+  metadataProvenance: Partial<Record<MetadataField, string>>
+  libraryId: string
   id: string
   title: string
   subtitle: string
@@ -44,11 +51,23 @@ export interface Book {
 }
 
 export interface BookFilter {
+  libraryId?: string
   q?: string
   format?: string
   tag?: string
   series?: string
 }
+
+export interface CatalogLibrary {
+  id: string
+  name: string
+  allReaders: boolean
+  readerIds?: string[]
+  bookCount: number
+  createdAt: string
+  updatedAt: string
+}
+export interface CatalogLibraryInput { name: string; allReaders: boolean; readerIds: string[] }
 
 export interface SavedFilter {
   id: string
@@ -65,6 +84,12 @@ export interface BookPage {
 }
 
 export interface BookUpdate {
+  publisher?: string
+  publishedDate?: string
+  language?: string
+  isbn?: string
+  metadataLocks?: MetadataField[]
+  metadataProvenance?: Partial<Record<MetadataField, string>>
   title?: string
   subtitle?: string
   description?: string
@@ -75,6 +100,8 @@ export interface BookUpdate {
   tags?: string[]
   source?: { provider: string; id: string }
 }
+
+export type MetadataField = "title" | "subtitle" | "description" | "authors" | "coverUrl" | "series" | "seriesIndex" | "tags" | "publisher" | "publishedDate" | "language" | "isbn"
 
 export interface Instance {
   name: string
@@ -88,6 +115,7 @@ export interface Instance {
 }
 
 export interface Candidate {
+  isbn13: string
   provider: string
   id: string
   title: string
@@ -146,10 +174,14 @@ export interface LibrarySource {
   name: string
   path: string
   lastScanAt: string
+  lastAttemptAt: string
   lastError: string
   books: number
   available: number
   enabled: boolean
+  excludePatterns: string[]
+  fileTypes: string[]
+  scanIntervalMinutes: number
   errors?: { path: string; message: string }[]
 }
 
@@ -157,6 +189,19 @@ export interface LibrarySourcesStatus {
   items: LibrarySource[]
   scanning: boolean
   allowedRoots: string[]
+}
+
+export interface OPDSCredential {
+  id: string
+  name: string
+  createdAt: string
+}
+
+export interface OPDSConnection {
+  credential: OPDSCredential
+  username: string
+  password: string
+  catalogUrl: string
 }
 
 export type Integration = "email" | "s3" | "ntfy" | "shelfmark"
@@ -407,6 +452,10 @@ export const api = {
     sessionStore.set(null)
   },
 
+  libraries: () => request<{ items: CatalogLibrary[] }>("/api/v1/libraries"),
+  saveLibrary: (body: CatalogLibraryInput, id?: string) => request<CatalogLibrary>(`/api/v1/libraries${id ? `/${enc(id)}` : ""}`, { method: id ? "PUT" : "POST", body }),
+  deleteLibrary: (id: string) => request<void>(`/api/v1/libraries/${enc(id)}`, { method: "DELETE" }),
+  moveBookLibrary: (id: string, libraryId: string) => request<Book>(`/api/v1/book-libraries/${enc(id)}`, { method: "PUT", body: { libraryId } }),
   books: (cursor?: string, filter: BookFilter = {}, limit = 100) => {
     const params = new URLSearchParams({ limit: String(limit), ...filter })
     if (cursor) params.set("cursor", cursor)
@@ -417,13 +466,14 @@ export const api = {
   saveFilter: (body: { name: string; filter: BookFilter }, id?: string) =>
     request<SavedFilter>(`/api/v1/saved-filters${id ? `/${enc(id)}` : ""}`, { method: id ? "PUT" : "POST", body }),
   deleteFilter: (id: string) => request<void>(`/api/v1/saved-filters/${enc(id)}`, { method: "DELETE" }),
-  importBook(file: File, title: string, onProgress?: (fraction: number) => void) {
+  importBook(file: File, title: string, onProgress?: (fraction: number) => void, libraryId?: string) {
     const data = new FormData()
     data.append("file", file)
     if (title.trim()) data.append("title", title.trim())
-    return upload<Book>("/api/v1/books", data, onProgress)
+    return upload<Book>(`/api/v1/books${libraryId ? `?libraryId=${enc(libraryId)}` : ""}`, data, onProgress)
   },
   updateBook: (id: string, body: BookUpdate) => request<Book>(`/api/v1/books/${enc(id)}`, { method: "PATCH", body }),
+  refreshBookMetadata: (id: string) => request<Book>(`/api/v1/books/${enc(id)}/metadata-refresh`, { method: "POST", body: {} }),
   deleteBook: (id: string) => request<void>(`/api/v1/books/${enc(id)}`, { method: "DELETE" }),
   putCover: (id: string, file: File) =>
     request<Book>(`/api/v1/books/${enc(id)}/cover`, { method: "PUT", body: file, headers: { "Content-Type": file.type } }),
@@ -447,8 +497,13 @@ export const api = {
   testIntegration: (integration: Integration) => request<void>("/api/v1/admin/settings/test", { method: "POST", body: { integration } }),
   storage: () => request<StorageStatus>("/api/v1/admin/storage"),
   librarySources: () => request<LibrarySourcesStatus>("/api/v1/admin/sources"),
+  opdsCredentials: (userId: string) => request<{ items: OPDSCredential[]; catalogUrl: string }>(`/api/v1/admin/opds-credentials?userId=${enc(userId)}`),
+  createOPDSCredential: (userId: string, name: string) => request<OPDSConnection>(`/api/v1/admin/opds-credentials?userId=${enc(userId)}`, { method: "POST", body: { name } }),
+  revokeOPDSCredential: (userId: string, id: string) => request<void>(`/api/v1/admin/opds-credentials/${enc(id)}?userId=${enc(userId)}`, { method: "DELETE" }),
   addLibrarySource: (body: { path: string; name: string }) => request<LibrarySource>("/api/v1/admin/sources", { method: "POST", body }),
   updateLibrarySource: (id: string, body: { name: string; enabled: boolean }) => request<void>(`/api/v1/admin/sources/${enc(id)}`, { method: "PATCH", body }),
+  updateLibrarySourceControls: (id: string, body: { excludePatterns: string[]; fileTypes: string[] }) => request<void>(`/api/v1/admin/sources/${enc(id)}`, { method: "PATCH", body }),
+  updateLibrarySourceSchedule: (id: string, scanIntervalMinutes: number) => request<void>(`/api/v1/admin/sources/${enc(id)}`, { method: "PATCH", body: { scanIntervalMinutes } }),
   removeLibrarySource: (id: string, deleteCatalog = false) => request<void>(`/api/v1/admin/sources/${enc(id)}${deleteCatalog ? "?deleteCatalog=true" : ""}`, { method: "DELETE" }),
   scanLibrarySources: (verify = false) => request<{ started: boolean }>(`/api/v1/admin/sources/scan${verify ? "?verify=true" : ""}`, { method: "POST" }),
   moveToS3: () => request<void>("/api/v1/admin/storage/move-to-s3", { method: "POST" }),

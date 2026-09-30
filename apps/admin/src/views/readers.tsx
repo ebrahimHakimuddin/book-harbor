@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react"
-import { KeyRoundIcon, Loader2Icon, PauseCircleIcon, PlayCircleIcon, ShieldCheckIcon, ShieldOffIcon, Trash2Icon, UserPlusIcon, UsersIcon } from "lucide-react"
+import { BookOpenIcon, KeyRoundIcon, Loader2Icon, PauseCircleIcon, PlayCircleIcon, ShieldCheckIcon, ShieldOffIcon, Trash2Icon, UserPlusIcon, UsersIcon } from "lucide-react"
 import { toast } from "sonner"
 import type { User } from "@/lib/api"
 import { useCreateReader, useDeleteReader, useInstance, useReaders, useUpdateReader } from "@/lib/queries"
@@ -17,11 +17,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { OPDSAccess } from "@/views/opds-access"
 
 export function ReadersView({ currentUserId }: { currentUserId: string }) {
   const readers = useReaders()
   const [justAdded, setJustAdded] = useState<string | null>(null)
   const [resetting, setResetting] = useState<User | null>(null)
+  const [externalReader, setExternalReader] = useState<User | null>(null)
 
   return (
     <>
@@ -41,18 +43,19 @@ export function ReadersView({ currentUserId }: { currentUserId: string }) {
             <EmptyState icon={<UsersIcon />} title="No readers yet">Add the first reader with the form.</EmptyState>
           ) : (
             <ul className="grid divide-y rounded-xl border bg-background">
-              {readers.data?.map((user) => <ReaderRow key={user.id} user={user} self={user.id === currentUserId} fresh={user.id === justAdded} onReset={() => setResetting(user)} />)}
+              {readers.data?.map((user) => <ReaderRow key={user.id} user={user} self={user.id === currentUserId} fresh={user.id === justAdded} onReset={() => setResetting(user)} onExternalReader={() => setExternalReader(user)} />)}
             </ul>
           )}
         </div>
         <AddReader onCreated={(user) => { setJustAdded(user.id); setTimeout(() => setJustAdded(null), 2500) }} />
       </div>
       <ResetPassword user={resetting} onClose={() => setResetting(null)} />
+      {externalReader && <OPDSAccess user={externalReader} onClose={() => setExternalReader(null)} />}
     </>
   )
 }
 
-function ReaderRow({ user, self, fresh, onReset }: { user: User; self: boolean; fresh: boolean; onReset: () => void }) {
+function ReaderRow({ user, self, fresh, onReset, onExternalReader }: { user: User; self: boolean; fresh: boolean; onReset: () => void; onExternalReader: () => void }) {
   const update = useUpdateReader()
   const remove = useDeleteReader()
   const confirm = useConfirm()
@@ -99,6 +102,7 @@ function ReaderRow({ user, self, fresh, onReset }: { user: User; self: boolean; 
         <span className="hidden text-xs text-muted-foreground sm:inline">Joined {shortDate(user.createdAt)}</span>
       </div>
       <div className="flex w-full justify-end gap-0.5 sm:w-auto">
+        <IconAction label={`External reader access for ${user.displayName}`} icon={BookOpenIcon} onClick={onExternalReader} />
         <IconAction label={`Reset password for ${user.displayName}`} icon={KeyRoundIcon} onClick={onReset} />
         {!self && (
           <>

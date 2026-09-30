@@ -14,7 +14,7 @@ type Status = { state: "queued" } | { state: "uploading"; progress: number } | {
 interface Item { file: File; status: Status }
 
 /** Imports one or many files, one after another; a duplicate or bad file doesn't stop the rest. */
-export function ImportPanel({ onDone, onCancel }: { onDone: (book: Book | null) => void; onCancel: () => void }) {
+export function ImportPanel({ onDone, onCancel, libraryId }: { libraryId?: string; onDone: (book: Book | null) => void; onCancel: () => void }) {
   const [items, setItems] = useState<Item[]>([])
   const [title, setTitle] = useState("")
   const [running, setRunning] = useState(false)
@@ -31,7 +31,7 @@ export function ImportPanel({ onDone, onCancel }: { onDone: (book: Book | null) 
     for (const { file } of pending) {
       setStatus(file, { state: "uploading", progress: 0 })
       try {
-        const book = await importBook.mutateAsync({ file, title: items.length === 1 ? title : "", onProgress: (f) => setStatus(file, { state: "uploading", progress: Math.round(f * 100) }) })
+        const book = await importBook.mutateAsync({ file, libraryId, title: items.length === 1 ? title : "", onProgress: (f) => setStatus(file, { state: "uploading", progress: Math.round(f * 100) }) })
         imported.push(book)
         setStatus(file, { state: "done", book })
       } catch (error) {

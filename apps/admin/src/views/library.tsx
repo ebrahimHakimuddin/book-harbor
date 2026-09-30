@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { BookOpenIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react"
-import { useBook, useBooks, useDeleteFilter, useSavedFilters, useSaveFilter } from "@/lib/queries"
+import { useBook, useBooks, useLibraries, useDeleteFilter, useSavedFilters, useSaveFilter } from "@/lib/queries"
 import { toast } from "sonner"
 import type { Book, BookFilter } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -12,11 +12,15 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { BookEditor } from "@/views/book-editor"
+import { LibrariesPanel } from "@/views/libraries-panel"
 import { ImportPanel } from "@/views/import-panel"
 
 const FORMATS = [{ value: "", label: "All" }, { value: "epub", label: "EPUB" }, { value: "pdf", label: "PDF" }]
 
 export function LibraryView() {
+  const [managing, setManaging] = useState(false)
+  const [libraryId, setLibraryId] = useState("")
+  const libraries = useLibraries()
   const [query, setQuery] = useState("")
   const [format, setFormat] = useState("")
   const [tag, setTag] = useState("")
@@ -24,7 +28,7 @@ export function LibraryView() {
   const [activeFilterId, setActiveFilterId] = useState("")
   const [saving, setSaving] = useState<{ id?: string } | null>(null)
   const [filterName, setFilterName] = useState("")
-  const filter = useMemo<BookFilter>(() => ({ q: query.trim(), format, tag: tag.trim(), series: series.trim() }), [query, format, tag, series])
+  const filter = useMemo<BookFilter>(() => ({ q: query.trim(), format, tag: tag.trim(), series: series.trim(), libraryId }), [query, format, tag, series, libraryId])
   const [applied, setApplied] = useState(filter)
   useEffect(() => {
     const timer = setTimeout(() => setApplied(filter), 250)
@@ -52,17 +56,17 @@ export function LibraryView() {
   }, [])
 
   const selected = useBook(selectedId)
-  const filtering = query.trim() !== "" || format !== "" || tag.trim() !== "" || series.trim() !== ""
+  const filtering = query.trim() !== "" || format !== "" || tag.trim() !== "" || series.trim() !== "" || libraryId !== ""
   const searching = loading || applied !== filter
   const activeFilter = savedFilters.data?.find((item) => item.id === activeFilterId)
-  const clearFilters = () => { setSaving(null); setQuery(""); setFormat(""); setTag(""); setSeries(""); setActiveFilterId("") }
+  const clearFilters = () => { setSaving(null); setQuery(""); setFormat(""); setTag(""); setSeries(""); setLibraryId(""); setActiveFilterId("") }
   const applySaved = (id: string) => {
     setSaving(null)
     setActiveFilterId(id)
     const item = savedFilters.data?.find((item) => item.id === id)
     if (!item) { clearFilters(); return }
     setQuery(item.filter.q ?? ""); setFormat(item.filter.format ?? "")
-    setTag(item.filter.tag ?? ""); setSeries(item.filter.series ?? "")
+    setTag(item.filter.tag ?? ""); setSeries(item.filter.series ?? ""); setLibraryId(item.filter.libraryId ?? "")
   }
   const submitFilter = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -79,13 +83,15 @@ export function LibraryView() {
         title="Your library."
         description="Browse imported and watched books, and keep their catalog details tidy."
         actions={
+          <div className="flex flex-wrap gap-3"><Button variant="outline" onClick={() => setManaging((v) => !v)} aria-expanded={managing}>Manage libraries</Button>
           <Button size="lg" className="h-10" aria-expanded={importing} onClick={() => setImporting((v) => !v)}>
             <PlusIcon data-icon="inline-start" />Import book
-          </Button>
+          </Button></div>
         }
       />
 
-      {importing && <ImportPanel onCancel={() => setImporting(false)} onDone={(book) => { setImporting(false); if (book) setSelectedId(book.id) }} />}
+      {managing && <LibrariesPanel onClose={() => setManaging(false)} />}
+      {importing && <ImportPanel libraryId={libraryId || "library_main"} onCancel={() => setImporting(false)} onDone={(book) => { setImporting(false); if (book) setSelectedId(book.id) }} />}
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <div className="relative w-full max-w-sm">
@@ -107,6 +113,15 @@ export function LibraryView() {
         </p>
       </div>
 
+      <div className="mb-6 grid gap-1.5 sm:max-w-sm">
+        <label htmlFor="catalog-library" className="text-sm font-medium">Library</label>
+        <select id="catalog-library" value={libraryId} onChange={(e) => setLibraryId(e.target.value)} className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring">
+          <option value="">All libraries</option>
+          {libraries.data?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          {libraryId && !libraries.data?.some((item) => item.id === libraryId) && <option value={libraryId}>Unavailable library</option>}
+        </select>
+        {libraries.isError && <p role="alert" className="text-sm text-destructive">Libraries could not be loaded. <Button variant="link" onClick={() => void libraries.refetch()}>Try again</Button></p>}
+      </div>
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <label htmlFor="book-tag" className="text-sm font-medium">Tag</label>

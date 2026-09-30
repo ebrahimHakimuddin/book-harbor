@@ -167,6 +167,21 @@ function SourceRow({ source, scanning }: { source: LibrarySource; scanning: bool
   const client = useQueryClient()
   const confirm = useConfirm()
   const [name, setName] = useState(source.name)
+  const [patterns, setPatterns] = useState(source.excludePatterns.join("\n"))
+  const [fileTypes, setFileTypes] = useState(source.fileTypes)
+  const [scanIntervalMinutes, setScanIntervalMinutes] = useState(source.scanIntervalMinutes)
+  const excludePatterns = patterns.split("\n").map((pattern) => pattern.trim()).filter(Boolean)
+  const controlsChanged = excludePatterns.join("\n") !== source.excludePatterns.join("\n") || fileTypes.join(",") !== source.fileTypes.join(",")
+  const controls = useMutation({
+    mutationFn: () => api.updateLibrarySourceControls(source.id, { excludePatterns, fileTypes }),
+    onSuccess: () => { toast.success("Scan rules saved. Scan started."); void client.invalidateQueries({ queryKey: ["library-sources"] }) },
+    onError: (error) => toast.error(errorMessage(error, "Could not save scan rules.")),
+  })
+  const schedule = useMutation({
+    mutationFn: () => api.updateLibrarySourceSchedule(source.id, scanIntervalMinutes),
+    onSuccess: () => { toast.success("Scan schedule saved."); void client.invalidateQueries({ queryKey: ["library-sources"] }) },
+    onError: (error) => toast.error(errorMessage(error, "Could not save scan schedule.")),
+  })
   const update = useMutation({
     mutationFn: (next: { name: string; enabled: boolean }) => api.updateLibrarySource(source.id, next),
     onSuccess: () => { toast.success("Source updated."); void client.invalidateQueries({ queryKey: ["library-sources"] }) },
@@ -190,6 +205,38 @@ function SourceRow({ source, scanning }: { source: LibrarySource; scanning: bool
     <code className="break-all text-xs text-muted-foreground">{source.path}</code>
     <p>{source.enabled ? "Reading in place" : "Disabled"} · {source.available} available files · {source.books} indexed books</p>
     <p className="text-xs text-muted-foreground">{source.lastScanAt ? `Last successful scan: ${new Date(source.lastScanAt).toLocaleString()}` : "Waiting for first successful scan"}</p>
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="grid gap-1">
+        <Label htmlFor={`source-schedule-${source.id}`}>Automatic scan interval</Label>
+        <select id={`source-schedule-${source.id}`} className="h-9 rounded-md border bg-background px-3 text-sm" value={scanIntervalMinutes} onChange={(event) => setScanIntervalMinutes(Number(event.target.value))}>
+          <option value={0}>Server default</option>
+          <option value={15}>Every 15 minutes</option>
+          <option value={60}>Every hour</option>
+          <option value={360}>Every 6 hours</option>
+          <option value={720}>Every 12 hours</option>
+          <option value={1440}>Every day</option>
+          {!([0, 15, 60, 360, 720, 1440] as number[]).includes(scanIntervalMinutes) && <option value={scanIntervalMinutes}>Every {scanIntervalMinutes} minutes</option>}
+        </select>
+      </div>
+      <Button type="button" variant="outline" disabled={scanIntervalMinutes === source.scanIntervalMinutes || schedule.isPending || scanning} onClick={() => schedule.mutate()}>Save interval</Button>
+    </div>
+    <details className="rounded-lg border px-3 py-2">
+      <summary className="cursor-pointer font-medium">Scan rules</summary>
+      <div className="mt-3 grid gap-3">
+        <fieldset className="flex flex-wrap gap-4">
+          <legend className="mb-1 text-xs font-medium">File types to index</legend>
+          {(["epub", "pdf"] as const).map((type) => <label key={type} className="flex items-center gap-2 text-sm uppercase">
+            <input type="checkbox" checked={fileTypes.includes(type)} onChange={(event) => setFileTypes((current) => event.target.checked ? ["epub", "pdf"].filter((value) => value === type || current.includes(value)) : current.filter((value) => value !== type))} />{type}
+          </label>)}
+        </fieldset>
+        <div className="grid gap-1">
+          <Label htmlFor={`source-excludes-${source.id}`}>Excluded paths</Label>
+          <textarea id={`source-excludes-${source.id}`} value={patterns} onChange={(event) => setPatterns(event.target.value)} rows={3} spellCheck={false} placeholder={"Drafts/**\n*.sample.pdf"} className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs" />
+          <p className="text-xs text-muted-foreground">One pattern per line, relative to this folder. * matches a name; ** matches folders. Existing excluded books leave the catalog after two scans. Mounted files stay untouched.</p>
+        </div>
+        <Button type="button" variant="outline" className="w-fit" disabled={!controlsChanged || fileTypes.length === 0 || controls.isPending || scanning} onClick={() => controls.mutate()}>Save scan rules</Button>
+      </div>
+    </details>
     {source.lastError && <p role="alert" className="text-xs text-destructive">{source.lastError}</p>}
     {!!source.errors?.length && <details className="text-xs"><summary className="cursor-pointer">{source.errors.length} file errors</summary><ul className="mt-2 grid gap-1">{source.errors.map((error) => <li key={error.path}><code className="break-all">{error.path}</code>: {error.message}</li>)}</ul></details>}
   </div>
