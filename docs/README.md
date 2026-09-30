@@ -1,5 +1,6 @@
 # BookHarbor documentation
 
+- [`roadmap.md`](roadmap.md): feature priorities, delivered scope, and next implementation boundary.
 - [`architecture.md`](architecture.md): the server and Android modules and the
   seams between them.
 - [`api.md`](api.md): the HTTP API under `/api/v1`.
