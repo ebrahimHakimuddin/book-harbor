@@ -63,6 +63,16 @@ func (s *server) bookRequests(w http.ResponseWriter, r *http.Request) {
 		responses := make([]bookRequestResponse, len(items))
 		for i, item := range items {
 			responses[i] = newBookRequestResponse(item)
+			if item.FulfilledBookID != "" {
+				allowed, err := s.library.CanReadBook(r.Context(), principal.User.ID, item.FulfilledBookID)
+				if err != nil {
+					s.catalogError(w, err)
+					return
+				}
+				if !allowed {
+					responses[i].FulfilledBookID = nil
+				}
+			}
 		}
 		writeJSON(w, http.StatusOK, struct {
 			Items []bookRequestResponse `json:"items"`

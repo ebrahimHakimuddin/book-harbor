@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/bookharbor/bookharbor/apps/server/internal/catalogaccess"
 	"time"
 	"unicode/utf8"
 )
@@ -85,7 +86,7 @@ func (s *Store) Sync(ctx context.Context, userID string, cursor int64, changes [
 			continue
 		}
 		var bookExists int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM books WHERE id = ?`, change.BookID).Scan(&bookExists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM books WHERE id = ? AND `+catalogaccess.BookPredicate("books.id"), change.BookID, userID).Scan(&bookExists); err != nil {
 			return SyncResult{}, fmt.Errorf("check annotation book: %w", err)
 		}
 		if bookExists == 0 {
@@ -132,7 +133,7 @@ func (s *Store) Sync(ctx context.Context, userID string, cursor int64, changes [
 		result.Accepted = append(result.Accepted, change.ID)
 	}
 
-	pulled, err := query(ctx, tx, `WHERE user_id = ? AND revision > ? ORDER BY revision LIMIT ?`, userID, cursor, pullPageSize+1)
+	pulled, err := query(ctx, tx, `WHERE user_id = ? AND revision > ? AND `+catalogaccess.BookPredicate("annotations.book_id")+` ORDER BY revision LIMIT ?`, userID, cursor, userID, pullPageSize+1)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -152,7 +153,7 @@ func (s *Store) Sync(ctx context.Context, userID string, cursor int64, changes [
 		if seen[id] {
 			continue
 		}
-		winner, err := query(ctx, tx, `WHERE user_id = ? AND id = ?`, userID, id)
+		winner, err := query(ctx, tx, `WHERE user_id = ? AND id = ? AND `+catalogaccess.BookPredicate("annotations.book_id"), userID, id, userID)
 		if err != nil {
 			return SyncResult{}, err
 		}

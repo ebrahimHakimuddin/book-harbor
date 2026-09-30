@@ -13,10 +13,12 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/bookharbor/bookharbor/apps/server/internal/catalogaccess"
 	"github.com/bookharbor/bookharbor/apps/server/internal/export"
 	"github.com/bookharbor/bookharbor/apps/server/internal/objectstore"
 	"html"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path"
@@ -68,6 +70,7 @@ type Store struct {
 }
 
 type ImportInput struct {
+	LibraryID string
 	Title     string
 	Filename  string
 	Content   io.Reader
@@ -75,6 +78,13 @@ type ImportInput struct {
 }
 
 type Book struct {
+	Publisher          string
+	PublishedDate      string
+	Language           string
+	ISBN               string
+	MetadataLocks      []string
+	MetadataProvenance map[string]string
+	LibraryID          string
 	ID                 string
 	Title              string
 	Subtitle           string
@@ -93,6 +103,12 @@ type Book struct {
 }
 
 type BookUpdate struct {
+	Publisher          *string
+	PublishedDate      *string
+	Language           *string
+	ISBN               *string
+	MetadataLocks      *[]string
+	MetadataProvenance map[string]string
 	Title              *string
 	Subtitle           *string
 	Description        *string
@@ -274,6 +290,29 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 		input.CreatedBy, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return Book{}, fmt.Errorf("create book: %w", err)
 	}
+	titleOrigin := "epub"
+	if strings.TrimSpace(staged.metadata.Title) == "" {
+		titleOrigin = "filename"
+	}
+	if strings.TrimSpace(input.Title) != "" {
+		titleOrigin = "manual"
+	}
+	if err := s.initializeMetadataTx(ctx, tx, bookID, extracted, titleOrigin, "epub"); err != nil {
+		return Book{}, err
+	}
+	if input.LibraryID != "" && input.LibraryID != MainLibraryID {
+		result, err := tx.ExecContext(ctx, `UPDATE catalog_library_books SET library_id=? WHERE book_id=? AND EXISTS(SELECT 1 FROM catalog_libraries WHERE id=?)`, input.LibraryID, bookID, input.LibraryID)
+		if err != nil {
+			return Book{}, err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return Book{}, err
+		}
+		if n == 0 {
+			return Book{}, ErrNotFound
+		}
+	}
 	checksum := staged.checksum
 	storage, err := s.place(ctx, staged, storagePath)
 	if err != nil {
@@ -303,7 +342,7 @@ func (s *Store) Import(ctx context.Context, input ImportInput) (Book, error) {
 	// The embedded cover is a convenience: a bad or unsupported image leaves the book coverless
 	// rather than failing an import that already succeeded.
 	if len(staged.metadata.Cover) > 0 {
-		if book, err := s.SetCover(ctx, bookID, bytes.NewReader(staged.metadata.Cover)); err == nil {
+		if book, err := s.setCover(ctx, bookID, bytes.NewReader(staged.metadata.Cover), "epub"); err == nil {
 			return book, nil
 		}
 	}
@@ -333,7 +372,13 @@ func (s *Store) List(ctx context.Context, limit int, cursor string) ([]Book, str
 }
 
 // Search applies catalog filters before pagination. Total counts all matching books.
-func (s *Store) Search(ctx context.Context, limit int, cursor string, filter BookFilter) (books []Book, next string, total int, err error) {
+func (s *Store) Search(ctx context.Context, limit int, cursor string, filter BookFilter) ([]Book, string, int, error) {
+	return s.search(ctx, "", limit, cursor, filter)
+}
+func (s *Store) SearchForUser(ctx context.Context, userID string, limit int, cursor string, filter BookFilter) ([]Book, string, int, error) {
+	return s.search(ctx, userID, limit, cursor, filter)
+}
+func (s *Store) search(ctx context.Context, userID string, limit int, cursor string, filter BookFilter) (books []Book, next string, total int, err error) {
 	filter, err = NormalizeFilter(filter)
 	if err != nil {
 		return nil, "", 0, err
@@ -344,18 +389,28 @@ func (s *Store) Search(ctx context.Context, limit int, cursor string, filter Boo
 	query := `
 		SELECT id, title, subtitle, description, authors_json, cover_url,
 			metadata_provider, metadata_provider_id, series, series_index, tags_json,
-			created_by, created_at, updated_at
+			created_by, created_at, updated_at, publisher, published_date, language, isbn, metadata_locks_json, metadata_provenance_json,
+ (SELECT library_id FROM catalog_library_books WHERE book_id=books.id)
 		FROM books WHERE EXISTS (SELECT 1 FROM editions e LEFT JOIN source_files sf ON sf.edition_id = e.id
 			WHERE e.book_id = books.id AND (sf.edition_id IS NULL OR sf.available = 1))`
 	args := []any{}
+	if userID != "" {
+		query += ` AND ` + catalogaccess.BookPredicate("books.id")
+		args = append(args, userID)
+	}
+	if filter.LibraryID != "" {
+		query += ` AND EXISTS(SELECT 1 FROM catalog_library_books WHERE book_id=books.id AND library_id=?)`
+		args = append(args, filter.LibraryID)
+	}
 	if filter.Query != "" {
 		// instr treats SQL wildcard characters as ordinary text; JSON arrays are searched
 		// element by element so JSON escaping does not alter the metadata users see.
 		query += ` AND (instr(bookharbor_lower(title), bookharbor_lower(?)) > 0 OR instr(bookharbor_lower(subtitle), bookharbor_lower(?)) > 0
    OR instr(bookharbor_lower(description), bookharbor_lower(?)) > 0 OR instr(bookharbor_lower(series), bookharbor_lower(?)) > 0
+   OR instr(bookharbor_lower(publisher), bookharbor_lower(?)) > 0 OR instr(bookharbor_lower(isbn), bookharbor_lower(?)) > 0
    OR EXISTS (SELECT 1 FROM json_each(authors_json) WHERE instr(bookharbor_lower(value), bookharbor_lower(?)) > 0)
    OR EXISTS (SELECT 1 FROM json_each(tags_json) WHERE instr(bookharbor_lower(value), bookharbor_lower(?)) > 0))`
-		for range 6 {
+		for range 8 {
 			args = append(args, filter.Query)
 		}
 	}
@@ -422,7 +477,8 @@ func (s *Store) Get(ctx context.Context, bookID string) (Book, error) {
 	book, err := scanBook(s.db.QueryRowContext(ctx, `
 		SELECT id, title, subtitle, description, authors_json, cover_url,
 			metadata_provider, metadata_provider_id, series, series_index, tags_json,
-			created_by, created_at, updated_at
+			created_by, created_at, updated_at, publisher, published_date, language, isbn, metadata_locks_json, metadata_provenance_json,
+ (SELECT library_id FROM catalog_library_books WHERE book_id=books.id)
 		FROM books
 		WHERE id = ?
 	`, bookID))
@@ -437,78 +493,6 @@ func (s *Store) Get(ctx context.Context, bookID string) (Book, error) {
 		return Book{}, err
 	}
 	return book, nil
-}
-
-func (s *Store) UpdateMetadata(ctx context.Context, bookID string, update BookUpdate) (Book, error) {
-	book, err := s.Get(ctx, bookID)
-	if err != nil {
-		return Book{}, err
-	}
-	if update.Title != nil {
-		book.Title = strings.TrimSpace(*update.Title)
-		if !validTitle(book.Title) {
-			return Book{}, ErrInvalidTitle
-		}
-	}
-	if update.Subtitle != nil {
-		book.Subtitle = strings.TrimSpace(*update.Subtitle)
-	}
-	if update.Description != nil {
-		book.Description = strings.TrimSpace(*update.Description)
-	}
-	if update.Authors != nil {
-		book.Authors = normalizeAuthors(*update.Authors)
-	}
-	if update.CoverURL != nil {
-		book.CoverURL = strings.TrimSpace(*update.CoverURL)
-	}
-	if update.MetadataProvider != nil {
-		book.MetadataProvider = strings.TrimSpace(*update.MetadataProvider)
-	}
-	if update.MetadataProviderID != nil {
-		book.MetadataProviderID = strings.TrimSpace(*update.MetadataProviderID)
-	}
-	if update.Series != nil {
-		book.Series = strings.TrimSpace(*update.Series)
-	}
-	if update.SeriesIndex != nil {
-		book.SeriesIndex = *update.SeriesIndex
-	}
-	if update.Tags != nil {
-		book.Tags = normalizeAuthors(*update.Tags) // same trim/dedupe rules
-	}
-	if !validMetadata(book) {
-		return Book{}, ErrInvalidMetadata
-	}
-	authorsJSON, err := json.Marshal(book.Authors)
-	if err != nil {
-		return Book{}, fmt.Errorf("encode book authors: %w", err)
-	}
-	tagsJSON, err := json.Marshal(book.Tags)
-	if err != nil {
-		return Book{}, fmt.Errorf("encode book tags: %w", err)
-	}
-	book.UpdatedAt = s.now().UTC()
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE books
-		SET title = ?, subtitle = ?, description = ?, authors_json = ?, cover_url = ?,
-			metadata_provider = ?, metadata_provider_id = ?, series = ?, series_index = ?, tags_json = ?,
-			updated_at = ?
-		WHERE id = ?
-	`, book.Title, book.Subtitle, book.Description, string(authorsJSON), book.CoverURL,
-		book.MetadataProvider, book.MetadataProviderID, book.Series, book.SeriesIndex, string(tagsJSON),
-		book.UpdatedAt.Format(time.RFC3339Nano), bookID)
-	if err != nil {
-		return Book{}, fmt.Errorf("update book metadata: %w", err)
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return Book{}, fmt.Errorf("read metadata update result: %w", err)
-	}
-	if count != 1 {
-		return Book{}, ErrNotFound
-	}
-	return s.Get(ctx, bookID)
 }
 
 func (s *Store) OpenContent(ctx context.Context, editionID string) (Content, error) {
@@ -554,12 +538,12 @@ type scanner interface {
 
 func scanBook(row scanner) (Book, error) {
 	var book Book
-	var authorsJSON, tagsJSON, createdAt, updatedAt string
+	var authorsJSON, tagsJSON, createdAt, updatedAt, locksJSON, provenanceJSON string
 	if err := row.Scan(
 		&book.ID, &book.Title, &book.Subtitle, &book.Description, &authorsJSON,
 		&book.CoverURL, &book.MetadataProvider, &book.MetadataProviderID,
 		&book.Series, &book.SeriesIndex, &tagsJSON,
-		&book.CreatedBy, &createdAt, &updatedAt,
+		&book.CreatedBy, &createdAt, &updatedAt, &book.Publisher, &book.PublishedDate, &book.Language, &book.ISBN, &locksJSON, &provenanceJSON, &book.LibraryID,
 	); err != nil {
 		return Book{}, err
 	}
@@ -574,6 +558,18 @@ func scanBook(row scanner) (Book, error) {
 	}
 	if book.Tags == nil {
 		book.Tags = []string{}
+	}
+	if err := json.Unmarshal([]byte(locksJSON), &book.MetadataLocks); err != nil {
+		return Book{}, err
+	}
+	if err := json.Unmarshal([]byte(provenanceJSON), &book.MetadataProvenance); err != nil {
+		return Book{}, err
+	}
+	if book.MetadataLocks == nil {
+		book.MetadataLocks = []string{}
+	}
+	if book.MetadataProvenance == nil {
+		book.MetadataProvenance = map[string]string{}
 	}
 	var err error
 	book.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
@@ -606,13 +602,16 @@ func normalizeAuthors(authors []string) []string {
 }
 
 func validMetadata(book Book) bool {
+	if !validRichMetadata(book) {
+		return false
+	}
 	if utf8.RuneCountInString(book.Subtitle) > 300 || utf8.RuneCountInString(book.Description) > 10_000 {
 		return false
 	}
 	if len(book.Authors) > 50 || len(book.Tags) > 50 || utf8.RuneCountInString(book.Series) > 300 {
 		return false
 	}
-	if book.SeriesIndex < 0 || book.SeriesIndex > 100_000 {
+	if math.IsNaN(book.SeriesIndex) || math.IsInf(book.SeriesIndex, 0) || book.SeriesIndex < 0 || book.SeriesIndex > 100_000 {
 		return false
 	}
 	for _, tag := range book.Tags {
@@ -763,9 +762,21 @@ func inspectEPUB(file *os.File, size int64) (epubMetadata, error) {
 		return none, ErrInvalidBook
 	}
 	var packageDocument struct {
-		Metadata struct {
-			Titles       []string `xml:"title"`
-			Identifiers  []string `xml:"identifier"`
+		UniqueIdentifier string `xml:"unique-identifier,attr"`
+		Metadata         struct {
+			Titles []struct {
+				ID    string `xml:"id,attr"`
+				Value string `xml:",chardata"`
+			} `xml:"title"`
+			Identifiers []struct {
+				ID     string `xml:"id,attr"`
+				Scheme string `xml:"scheme,attr"`
+				Value  string `xml:",chardata"`
+			} `xml:"identifier"`
+			Publishers   []string `xml:"publisher"`
+			Dates        []string `xml:"date"`
+			Languages    []string `xml:"language"`
+			Subjects     []string `xml:"subject"`
 			Creators     []string `xml:"creator"`
 			Descriptions []string `xml:"description"`
 			Metas        []struct {
@@ -788,19 +799,47 @@ func inspectEPUB(file *os.File, size int64) (epubMetadata, error) {
 		return none, ErrInvalidBook
 	}
 	var metadata epubMetadata
+	titleTypes := map[string]string{}
+	for _, meta := range packageDocument.Metadata.Metas {
+		if meta.Property == "title-type" {
+			titleTypes[strings.TrimPrefix(meta.Refines, "#")] = strings.TrimSpace(meta.Value)
+		}
+	}
 	for _, title := range packageDocument.Metadata.Titles {
-		if title = strings.TrimSpace(title); title != "" {
-			metadata.Title = title
-			break
+		value := strings.TrimSpace(title.Value)
+		if titleTypes[title.ID] == "subtitle" {
+			metadata.Subtitle = value
+		} else if value != "" && (metadata.Title == "" || titleTypes[title.ID] == "main") {
+			metadata.Title = value
 		}
 	}
 	metadata.Authors = packageDocument.Metadata.Creators
 	for _, identifier := range packageDocument.Metadata.Identifiers {
-		if identifier = strings.TrimSpace(identifier); identifier != "" {
-			metadata.Identifier = identifier
-			break
+		value := strings.TrimSpace(identifier.Value)
+		if value != "" && (metadata.Identifier == "" || identifier.ID == packageDocument.UniqueIdentifier) {
+			metadata.Identifier = value
+		}
+		if metadata.ISBN == "" && (strings.EqualFold(identifier.Scheme, "isbn") || strings.HasPrefix(strings.ToLower(value), "urn:isbn:")) {
+			metadata.ISBN = normalizeISBN(value)
+		}
+		for _, meta := range packageDocument.Metadata.Metas {
+			if meta.Property == "identifier-type" && meta.Refines == "#"+identifier.ID && (strings.TrimSpace(meta.Value) == "15" || strings.TrimSpace(meta.Value) == "02") {
+				metadata.ISBN = normalizeISBN(value)
+			}
 		}
 	}
+	first := func(values []string) string {
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+		return ""
+	}
+	metadata.Publisher = first(packageDocument.Metadata.Publishers)
+	metadata.Language = first(packageDocument.Metadata.Languages)
+	metadata.PublishedDate = first(packageDocument.Metadata.Dates)
+	metadata.Tags = packageDocument.Metadata.Subjects
 	if len(packageDocument.Metadata.Descriptions) > 0 {
 		metadata.Description = packageDocument.Metadata.Descriptions[0]
 	}
@@ -847,13 +886,19 @@ func inspectEPUB(file *os.File, size int64) (epubMetadata, error) {
 
 // epubMetadata is what an EPUB says about itself. Every field is optional.
 type epubMetadata struct {
-	Title       string
-	Identifier  string
-	Authors     []string
-	Description string
-	Series      string
-	SeriesIndex float64
-	Cover       []byte
+	Subtitle      string
+	Publisher     string
+	PublishedDate string
+	Language      string
+	ISBN          string
+	Tags          []string
+	Title         string
+	Identifier    string
+	Authors       []string
+	Description   string
+	Series        string
+	SeriesIndex   float64
+	Cover         []byte
 }
 
 var markupTag = regexp.MustCompile(`<[^>]*>`)
@@ -862,6 +907,7 @@ var markupTag = regexp.MustCompile(`<[^>]*>`)
 // package document can never fail an otherwise valid import.
 func (m epubMetadata) sanitized() epubMetadata {
 	clip := func(value string, limit int) string {
+		value = strings.ReplaceAll(value, "\x00", "")
 		value = strings.Join(strings.Fields(value), " ")
 		if utf8.RuneCountInString(value) > limit {
 			value = string([]rune(value)[:limit])
@@ -877,10 +923,32 @@ func (m epubMetadata) sanitized() epubMetadata {
 	// Descriptions are often HTML; keep the text.
 	description := html.UnescapeString(markupTag.ReplaceAllString(m.Description, " "))
 	index := m.SeriesIndex
-	if index < 0 || index > 100_000 {
+	if math.IsNaN(index) || math.IsInf(index, 0) || index < 0 || index > 100_000 {
 		index = 0
 	}
+	tags := []string{}
+	for _, tag := range normalizeAuthors(m.Tags) {
+		if len(tags) < 50 {
+			tags = append(tags, clip(tag, 100))
+		}
+	}
+	date := strings.TrimSpace(m.PublishedDate)
+	if len(date) > 10 && date[10] == 'T' {
+		date = date[:10]
+	}
+	if !validPublishedDate(date) {
+		date = ""
+	}
+	language := strings.TrimSpace(m.Language)
+	if len(language) > 63 || language != "" && !languagePattern.MatchString(language) {
+		language = ""
+	}
+	isbn := normalizeISBN(m.ISBN)
+	if !validISBN(isbn) {
+		isbn = ""
+	}
 	return epubMetadata{
+		Subtitle: clip(m.Subtitle, 300), Publisher: clip(m.Publisher, 300), PublishedDate: date, Language: language, ISBN: isbn, Tags: tags,
 		Title:       m.Title,
 		Identifier:  clip(m.Identifier, 500),
 		Authors:     authors,

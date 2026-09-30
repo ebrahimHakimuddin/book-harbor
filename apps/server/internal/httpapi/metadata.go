@@ -9,9 +9,39 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bookharbor/bookharbor/apps/server/internal/library"
 	"github.com/bookharbor/bookharbor/apps/server/internal/metadata"
 	"github.com/bookharbor/bookharbor/apps/server/internal/webnovel"
 )
+
+func (s *server) refreshBookMetadata(w http.ResponseWriter, r *http.Request, bookID string) {
+	var body struct {
+		EditionID string `json:"editionId"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeError(w, 400, "invalid_json", "request body must be one valid JSON object")
+		return
+	}
+	book, err := s.library.RefreshMetadata(r.Context(), bookID, body.EditionID)
+	switch {
+	case errors.Is(err, library.ErrNotFound):
+		notFound(w, r)
+	case errors.Is(err, library.ErrUnsupportedFormat):
+		writeError(w, 422, "unsupported_format", "metadata refresh requires an EPUB edition")
+	case errors.Is(err, library.ErrUnavailable):
+		writeError(w, 503, "edition_unavailable", "the edition is unavailable or changed during refresh; scan the source and try again")
+	case errors.Is(err, library.ErrTooLarge):
+		writeError(w, 413, "file_too_large", "edition exceeds the metadata refresh size limit")
+	case errors.Is(err, library.ErrInvalidBook):
+		writeError(w, 422, "invalid_book", "unable to read EPUB metadata")
+	case err != nil:
+		s.logger.Error("refresh book metadata", "bookId", bookID, "error", err)
+		writeError(w, 500, "internal_error", "unable to refresh book metadata")
+	default:
+		s.record(r, "book.update", "book", book.ID, "metadata refreshed from EPUB")
+		writeJSON(w, 200, newBookResponse(book))
+	}
+}
 
 func (s *server) searchMetadata(w http.ResponseWriter, r *http.Request) {
 	principal, ok := authenticatedPrincipal(r)

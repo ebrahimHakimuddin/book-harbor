@@ -45,6 +45,7 @@ func Write(ctx context.Context, w io.Writer, db *sql.DB, dataDir string, openObj
 		return fmt.Errorf("open snapshot: %w", err)
 	}
 	_, err = copyDB.ExecContext(ctx, `DELETE FROM sessions;
+		DELETE FROM opds_credentials;
 		DELETE FROM settings WHERE key IN ('resend.apiKey', 's3.secretKey', 'ntfy.token');
 		UPDATE editions SET storage = 'disk' WHERE id NOT IN (SELECT edition_id FROM source_files);`)
 	if err == nil && !references {

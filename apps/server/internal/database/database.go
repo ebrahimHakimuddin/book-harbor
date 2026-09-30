@@ -284,6 +284,48 @@ var migrations = []string{
   updated_at TEXT NOT NULL,
   UNIQUE (owner_id, name)
  ) STRICT;`,
+	`CREATE TABLE catalog_libraries (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+ all_readers INTEGER NOT NULL DEFAULT 0 CHECK (all_readers IN (0,1)),
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+ ) STRICT;
+ INSERT INTO catalog_libraries VALUES ('library_main', 'Main library', 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'));
+ CREATE TABLE catalog_library_readers (
+ library_id TEXT NOT NULL REFERENCES catalog_libraries(id) ON DELETE CASCADE,
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ PRIMARY KEY (library_id,user_id)
+ ) STRICT;
+ CREATE TABLE catalog_library_books (
+ book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+ library_id TEXT NOT NULL REFERENCES catalog_libraries(id) ON DELETE RESTRICT
+ ) STRICT;
+ CREATE INDEX catalog_library_books_library_idx ON catalog_library_books(library_id);
+ INSERT INTO catalog_library_books SELECT id, 'library_main' FROM books;
+ CREATE TRIGGER books_default_library AFTER INSERT ON books BEGIN
+ INSERT INTO catalog_library_books VALUES (NEW.id, 'library_main'); END;
+ CREATE TRIGGER preserve_main_library BEFORE DELETE ON catalog_libraries WHEN OLD.id='library_main' BEGIN
+ SELECT RAISE(ABORT, 'main library cannot be deleted'); END;
+ ALTER TABLE saved_filters ADD COLUMN library_id TEXT NOT NULL DEFAULT '';`,
+	`ALTER TABLE library_sources ADD COLUMN exclude_patterns TEXT NOT NULL DEFAULT '[]';
+ ALTER TABLE library_sources ADD COLUMN file_types TEXT NOT NULL DEFAULT '["epub","pdf"]';`,
+	`ALTER TABLE library_sources ADD COLUMN scan_interval_minutes INTEGER NOT NULL DEFAULT 0 CHECK (scan_interval_minutes >= 0 AND scan_interval_minutes <= 10080);
+ ALTER TABLE library_sources ADD COLUMN last_attempt_at TEXT NOT NULL DEFAULT '';`,
+	`CREATE TABLE opds_credentials (
+ id TEXT PRIMARY KEY,
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ name TEXT NOT NULL,
+ token_hash BLOB NOT NULL UNIQUE CHECK (length(token_hash) = 32),
+ created_at TEXT NOT NULL
+ ) STRICT;
+ CREATE INDEX opds_credentials_user_idx ON opds_credentials(user_id);`,
+	`ALTER TABLE books ADD COLUMN publisher TEXT NOT NULL DEFAULT '';
+ ALTER TABLE books ADD COLUMN published_date TEXT NOT NULL DEFAULT '';
+ ALTER TABLE books ADD COLUMN language TEXT NOT NULL DEFAULT '';
+ ALTER TABLE books ADD COLUMN isbn TEXT NOT NULL DEFAULT '';
+ ALTER TABLE books ADD COLUMN metadata_locks_json TEXT NOT NULL DEFAULT '[]';
+ ALTER TABLE books ADD COLUMN metadata_provenance_json TEXT NOT NULL DEFAULT '{}';
+ UPDATE books SET metadata_locks_json='["title","subtitle","description","authors","coverUrl","series","seriesIndex","tags"]',
+ metadata_provenance_json='{"title":"legacy","subtitle":"legacy","description":"legacy","authors":"legacy","coverUrl":"legacy","series":"legacy","seriesIndex":"legacy","tags":"legacy"}';`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

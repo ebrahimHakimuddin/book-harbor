@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/bookharbor/bookharbor/apps/server/internal/catalogaccess"
 	"time"
 )
 
@@ -61,11 +62,11 @@ func (s *Store) Create(ctx context.Context, userID, name string) (List, error) {
 func (s *Store) ListAll(ctx context.Context, userID string) ([]List, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT l.id, l.owner_id, l.name, l.created_at, l.updated_at, COUNT(i.book_id)
-		FROM book_lists l LEFT JOIN book_list_items i ON i.list_id = l.id
+		FROM book_lists l LEFT JOIN book_list_items i ON i.list_id = l.id AND `+catalogaccess.BookPredicate("i.book_id")+`
 		WHERE l.owner_id = ?
 		GROUP BY l.id
 		ORDER BY l.updated_at DESC
-	`, userID)
+	`, userID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list lists: %w", err)
 	}
@@ -158,7 +159,7 @@ func (s *Store) BookIDs(ctx context.Context, userID, listID string) ([]string, e
 	if !owned {
 		return nil, ErrNotFound
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT book_id FROM book_list_items WHERE list_id = ? ORDER BY added_at DESC`, listID)
+	rows, err := s.db.QueryContext(ctx, `SELECT book_id FROM book_list_items WHERE list_id = ? AND `+catalogaccess.BookPredicate("book_list_items.book_id")+` ORDER BY added_at DESC`, listID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list books in list: %w", err)
 	}

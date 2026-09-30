@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,15 +20,19 @@ import (
 
 // Source is a directory mounted by the operator. BookHarbor only reads its files.
 type Source struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Path       string            `json:"path"`
-	LastScanAt string            `json:"lastScanAt"`
-	LastError  string            `json:"lastError"`
-	Books      int               `json:"books"`
-	Available  int               `json:"available"`
-	Enabled    bool              `json:"enabled"`
-	Errors     []SourceFileError `json:"errors"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	Path                string            `json:"path"`
+	LastScanAt          string            `json:"lastScanAt"`
+	LastAttemptAt       string            `json:"lastAttemptAt"`
+	LastError           string            `json:"lastError"`
+	Books               int               `json:"books"`
+	Available           int               `json:"available"`
+	Enabled             bool              `json:"enabled"`
+	ExcludePatterns     []string          `json:"excludePatterns"`
+	FileTypes           []string          `json:"fileTypes"`
+	ScanIntervalMinutes int               `json:"scanIntervalMinutes"`
+	Errors              []SourceFileError `json:"errors"`
 }
 
 type SourceFileError struct {
@@ -179,6 +184,121 @@ func (s *Store) UpdateSource(ctx context.Context, id, name string, enabled bool)
 	return err
 }
 
+// UpdateSourceControls changes what a watched folder indexes without touching its files.
+// A scan will make previously indexed, now excluded editions unavailable after the
+// normal two-scan grace period.
+func (s *Store) UpdateSourceControls(ctx context.Context, id string, patterns, fileTypes []string) error {
+	if !s.scanMu.TryLock() {
+		return ErrScanRunning
+	}
+	defer s.scanMu.Unlock()
+	if err := validateSourceControls(patterns, fileTypes); err != nil {
+		return err
+	}
+	patternsJSON, _ := json.Marshal(patterns)
+	fileTypesJSON, _ := json.Marshal(fileTypes)
+	result, err := s.db.ExecContext(ctx, `UPDATE library_sources SET exclude_patterns = ?, file_types = ? WHERE id = ?`,
+		string(patternsJSON), string(fileTypesJSON), id)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Zero means this source follows the server's default scan interval.
+func (s *Store) UpdateSourceSchedule(ctx context.Context, id string, minutes int) error {
+	if minutes < 0 || minutes > 10080 {
+		return fmt.Errorf("scan interval must be 0 or between 1 and 10080 minutes")
+	}
+	if !s.scanMu.TryLock() {
+		return ErrScanRunning
+	}
+	defer s.scanMu.Unlock()
+	result, err := s.db.ExecContext(ctx, `UPDATE library_sources SET scan_interval_minutes = ? WHERE id = ?`, minutes, id)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func validateSourceControls(patterns, fileTypes []string) error {
+	if len(patterns) > 100 {
+		return fmt.Errorf("at most 100 exclusion patterns are allowed")
+	}
+	for _, pattern := range patterns {
+		if pattern == "" || len(pattern) > 240 || strings.TrimSpace(pattern) != pattern || strings.HasPrefix(pattern, "/") || strings.Contains(pattern, "\\") {
+			return fmt.Errorf("invalid exclusion pattern %q", pattern)
+		}
+		for _, segment := range strings.Split(pattern, "/") {
+			if segment == "" || segment == "." || segment == ".." {
+				return fmt.Errorf("invalid exclusion pattern %q", pattern)
+			}
+			if segment != "**" {
+				if _, err := path.Match(segment, "example"); err != nil {
+					return fmt.Errorf("invalid exclusion pattern %q: %w", pattern, err)
+				}
+			}
+		}
+	}
+	if len(fileTypes) == 0 || len(fileTypes) > 2 {
+		return fmt.Errorf("select EPUB, PDF, or both")
+	}
+	seen := map[string]bool{}
+	for _, fileType := range fileTypes {
+		if fileType != "epub" && fileType != "pdf" || seen[fileType] {
+			return fmt.Errorf("invalid or duplicate file type %q", fileType)
+		}
+		seen[fileType] = true
+	}
+	return nil
+}
+
+func sourcePathExcluded(rel string, patterns []string) bool {
+	rel = filepath.ToSlash(rel)
+	for _, pattern := range patterns {
+		if !strings.Contains(pattern, "/") {
+			if matched, _ := path.Match(pattern, path.Base(rel)); matched {
+				return true
+			}
+		}
+		if matchSourcePattern(strings.Split(pattern, "/"), strings.Split(rel, "/")) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchSourcePattern(pattern, parts []string) bool {
+	// Memoization bounds work by pattern segments times path segments.
+	known := make(map[[2]int]bool)
+	result := make(map[[2]int]bool)
+	var match func(int, int) bool
+	match = func(i, j int) bool {
+		key := [2]int{i, j}
+		if known[key] {
+			return result[key]
+		}
+		known[key] = true
+		switch {
+		case i == len(pattern):
+			result[key] = j == len(parts)
+		case pattern[i] == "**":
+			result[key] = match(i+1, j) || j < len(parts) && match(i, j+1)
+		case j < len(parts):
+			matched, _ := path.Match(pattern[i], parts[j])
+			result[key] = matched && match(i+1, j+1)
+		}
+		return result[key]
+	}
+	return match(0, 0)
+}
+
 // RemoveSource never deletes files in its mounted root. Optional catalog removal only
 // removes watched editions and books that then have no remaining editions.
 func (s *Store) RemoveSource(ctx context.Context, id string, deleteCatalog bool) error {
@@ -313,7 +433,7 @@ func sourceID(path string) string {
 }
 
 func (s *Store) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ls.id, ls.name, ls.root_path, ls.last_scan_at, ls.last_error, ls.enabled,
+	rows, err := s.db.QueryContext(ctx, `SELECT ls.id, ls.name, ls.root_path, ls.last_scan_at, ls.last_attempt_at, ls.last_error, ls.enabled, ls.exclude_patterns, ls.file_types, ls.scan_interval_minutes,
 		COUNT(DISTINCT e.book_id), COUNT(sf.edition_id) FILTER (WHERE sf.available = 1)
 		FROM library_sources ls LEFT JOIN source_files sf ON sf.source_id = ls.id
 		LEFT JOIN editions e ON e.id = sf.edition_id
@@ -325,7 +445,14 @@ func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 	result := make([]Source, 0)
 	for rows.Next() {
 		var source Source
-		if err := rows.Scan(&source.ID, &source.Name, &source.Path, &source.LastScanAt, &source.LastError, &source.Enabled, &source.Books, &source.Available); err != nil {
+		var patternsJSON, fileTypesJSON string
+		if err := rows.Scan(&source.ID, &source.Name, &source.Path, &source.LastScanAt, &source.LastAttemptAt, &source.LastError, &source.Enabled, &patternsJSON, &fileTypesJSON, &source.ScanIntervalMinutes, &source.Books, &source.Available); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(patternsJSON), &source.ExcludePatterns); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(fileTypesJSON), &source.FileTypes); err != nil {
 			return nil, err
 		}
 		result = append(result, source)
@@ -365,7 +492,7 @@ func (s *Store) ScanSources(ctx context.Context, force bool) (ScanResult, error)
 		return ScanResult{}, ErrScanRunning
 	}
 	defer s.scanMu.Unlock()
-	return s.scanSourcesLocked(ctx, force)
+	return s.scanSourcesLocked(ctx, force, 0)
 }
 
 func (s *Store) StartSourceScan(force bool, logger *slog.Logger) bool {
@@ -375,7 +502,7 @@ func (s *Store) StartSourceScan(force bool, logger *slog.Logger) bool {
 	s.scanning.Store(true)
 	go func() {
 		defer s.scanMu.Unlock()
-		if _, err := s.scanSourcesLocked(context.Background(), force); err != nil {
+		if _, err := s.scanSourcesLocked(context.Background(), force, 0); err != nil {
 			logger.Error("scan watched libraries", "error", err)
 		}
 	}()
@@ -384,7 +511,7 @@ func (s *Store) StartSourceScan(force bool, logger *slog.Logger) bool {
 
 func (s *Store) Scanning() bool { return s.scanning.Load() }
 
-func (s *Store) scanSourcesLocked(ctx context.Context, force bool) (ScanResult, error) {
+func (s *Store) scanSourcesLocked(ctx context.Context, force bool, dueInterval time.Duration) (ScanResult, error) {
 	s.scanning.Store(true)
 	defer s.scanning.Store(false)
 	sources, err := s.Sources(ctx)
@@ -395,6 +522,9 @@ func (s *Store) scanSourcesLocked(ctx context.Context, force bool) (ScanResult, 
 	var failures []string
 	for _, source := range sources {
 		if !source.Enabled {
+			continue
+		}
+		if dueInterval > 0 && !sourceScanDue(source, s.now(), dueInterval) {
 			continue
 		}
 		result, err := s.scanSource(ctx, source, force)
@@ -408,11 +538,12 @@ func (s *Store) scanSourcesLocked(ctx context.Context, force bool) (ScanResult, 
 			message = err.Error()
 			failures = append(failures, source.Name+": "+message)
 		}
-		query := `UPDATE library_sources SET last_error = ? WHERE id = ?`
-		args := []any{message, source.ID}
+		attemptAt := s.now().UTC().Format(time.RFC3339Nano)
+		query := `UPDATE library_sources SET last_attempt_at = ?, last_error = ? WHERE id = ?`
+		args := []any{attemptAt, message, source.ID}
 		if err == nil {
-			query = `UPDATE library_sources SET last_scan_at = ?, last_error = ? WHERE id = ?`
-			args = []any{s.now().UTC().Format(time.RFC3339Nano), message, source.ID}
+			query = `UPDATE library_sources SET last_scan_at = ?, last_attempt_at = ?, last_error = ? WHERE id = ?`
+			args = []any{attemptAt, attemptAt, message, source.ID}
 		}
 		if _, writeErr := s.db.ExecContext(ctx, query, args...); writeErr != nil {
 			return total, writeErr
@@ -424,22 +555,49 @@ func (s *Store) scanSourcesLocked(ctx context.Context, force bool) (ScanResult, 
 	return total, nil
 }
 
+func sourceScanDue(source Source, now time.Time, defaultInterval time.Duration) bool {
+	if source.LastAttemptAt == "" {
+		return true
+	}
+	last, err := time.Parse(time.RFC3339Nano, source.LastAttemptAt)
+	if err != nil {
+		return true
+	}
+	interval := defaultInterval
+	if source.ScanIntervalMinutes > 0 {
+		interval = time.Duration(source.ScanIntervalMinutes) * time.Minute
+	}
+	return !now.Before(last.Add(interval))
+}
+
+func (s *Store) scanDueSources(ctx context.Context, interval time.Duration) (ScanResult, error) {
+	if !s.scanMu.TryLock() {
+		return ScanResult{}, ErrScanRunning
+	}
+	defer s.scanMu.Unlock()
+	return s.scanSourcesLocked(ctx, false, interval)
+}
+
 // RunSourceScans starts with a scan and polls regularly. Polling is authoritative because
 // filesystem notifications are not reliable across SMB/NFS mounts and container bind mounts.
 func (s *Store) RunSourceScans(ctx context.Context, interval time.Duration, logger *slog.Logger) {
 	if interval < time.Minute {
 		interval = 15 * time.Minute
 	}
-	ticker := time.NewTicker(interval)
+	// The minute tick lets sources choose a shorter interval than the default.
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
+	if _, err := s.ScanSources(ctx, false); err != nil && !errors.Is(err, context.Canceled) {
+		logger.Error("scan watched libraries", "error", err)
+	}
 	for {
-		if _, err := s.ScanSources(ctx, false); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("scan watched libraries", "error", err)
-		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if _, err := s.scanDueSources(ctx, interval); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrScanRunning) {
+				logger.Error("scan watched libraries", "error", err)
+			}
 		}
 	}
 }
@@ -475,6 +633,16 @@ func (s *Store) scanSource(ctx context.Context, source Source, force bool) (Scan
 			}
 			return nil
 		}
+		rel, err := filepath.Rel(source.Path, full)
+		if err != nil || !filepath.IsLocal(rel) {
+			return fmt.Errorf("invalid path in watched source: %s", full)
+		}
+		if sourcePathExcluded(rel, source.ExcludePatterns) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if entry.IsDir() {
 			return nil
 		}
@@ -482,12 +650,8 @@ func (s *Store) scanSource(ctx context.Context, source Source, force bool) (Scan
 			return nil
 		}
 		extension := strings.ToLower(filepath.Ext(entry.Name()))
-		if extension != ".epub" && extension != ".pdf" {
+		if extension != ".epub" && extension != ".pdf" || !sourceAllowsType(source.FileTypes, strings.TrimPrefix(extension, ".")) {
 			return nil
-		}
-		rel, err := filepath.Rel(source.Path, full)
-		if err != nil || !filepath.IsLocal(rel) {
-			return fmt.Errorf("invalid path in watched source: %s", full)
 		}
 		seen[rel] = true
 		state, err := s.scanFile(ctx, root, source, rel, force)
@@ -549,6 +713,15 @@ func (s *Store) scanSource(ctx context.Context, source Source, force bool) (Scan
 		return result, fmt.Errorf("%d file errors (first: %s)", len(fileErrors), fileErrors[0])
 	}
 	return result, nil
+}
+
+func sourceAllowsType(fileTypes []string, fileType string) bool {
+	for _, allowed := range fileTypes {
+		if allowed == fileType {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) scanFile(ctx context.Context, root *os.Root, source Source, rel string, force bool) (string, error) {
@@ -630,6 +803,15 @@ func (s *Store) scanFile(ctx context.Context, root *os.Root, source Source, rel 
 		if err != nil {
 			return "", err
 		}
+		var bookID string
+		if err := tx.QueryRowContext(ctx, `SELECT book_id FROM editions WHERE id=?`, currentID).Scan(&bookID); err != nil {
+			return "", err
+		}
+		if format == "epub" {
+			if err := s.updateMetadataTx(ctx, tx, bookID, extractedUpdate(metadata), "epub", true); err != nil {
+				return "", err
+			}
+		}
 		return "updated", tx.Commit()
 	}
 	// A unique checksum for a path that disappeared is a rename, not a new book.
@@ -681,8 +863,16 @@ func (s *Store) indexNewFile(ctx context.Context, source Source, rel string, inf
 	}
 	metadata = metadata.sanitized()
 	dir := filepath.Dir(rel)
+	titleOrigin, authorOrigin := "epub", "epub"
+	if strings.TrimSpace(metadata.Title) == "" {
+		titleOrigin = "filename"
+	}
+	if len(metadata.Authors) == 0 {
+		authorOrigin = "folder"
+	}
 	title := strings.TrimSpace(metadata.Title)
 	if title == "" && dir != "." {
+		titleOrigin = "folder"
 		title = filepath.Base(dir)
 	}
 	if title == "" {
@@ -727,6 +917,11 @@ func (s *Store) indexNewFile(ctx context.Context, source Source, rel string, inf
 			return "", err
 		}
 	}
+	if newBook {
+		if err := s.initializeMetadataTx(ctx, tx, bookID, metadata, titleOrigin, authorOrigin); err != nil {
+			return "", err
+		}
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO editions (id, book_id, format, media_type, original_filename, byte_length, sha256, storage_path, storage, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'disk', ?)`, editionID, bookID, format, mediaType, filepath.Base(rel), info.Size(), checksum, "external/"+editionID, when)
 	if err != nil {
@@ -742,7 +937,7 @@ func (s *Store) indexNewFile(ctx context.Context, source Source, rel string, inf
 	}
 	if newBook && len(metadata.Cover) > 0 {
 		if err := os.MkdirAll(filepath.Join(s.dataDir, "books", bookID), 0o700); err == nil {
-			_, _ = s.SetCover(ctx, bookID, bytes.NewReader(metadata.Cover))
+			_, _ = s.setCover(ctx, bookID, bytes.NewReader(metadata.Cover), "epub")
 		}
 	}
 	return "added", nil

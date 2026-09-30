@@ -19,10 +19,11 @@ var (
 )
 
 type BookFilter struct {
-	Query  string `json:"q"`
-	Format string `json:"format"`
-	Tag    string `json:"tag"`
-	Series string `json:"series"`
+	LibraryID string `json:"libraryId"`
+	Query     string `json:"q"`
+	Format    string `json:"format"`
+	Tag       string `json:"tag"`
+	Series    string `json:"series"`
 }
 
 type SavedFilter struct {
@@ -38,10 +39,11 @@ func NormalizeFilter(filter BookFilter) (BookFilter, error) {
 	filter.Format = strings.ToLower(strings.TrimSpace(filter.Format))
 	filter.Tag = strings.TrimSpace(filter.Tag)
 	filter.Series = strings.TrimSpace(filter.Series)
+	filter.LibraryID = strings.TrimSpace(filter.LibraryID)
 	if filter.Format != "" && filter.Format != "epub" && filter.Format != "pdf" {
 		return BookFilter{}, ErrInvalidFilter
 	}
-	for _, value := range []string{filter.Query, filter.Tag, filter.Series} {
+	for _, value := range []string{filter.Query, filter.Tag, filter.Series, filter.LibraryID} {
 		if !utf8.ValidString(value) || utf8.RuneCountInString(value) > 300 || strings.ContainsRune(value, 0) {
 			return BookFilter{}, ErrInvalidFilter
 		}
@@ -50,7 +52,7 @@ func NormalizeFilter(filter BookFilter) (BookFilter, error) {
 }
 
 func (s *Store) SavedFilters(ctx context.Context, userID string) ([]SavedFilter, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, query, format, tag, series, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, query, format, tag, series, library_id, created_at, updated_at
 		FROM saved_filters WHERE owner_id = ? ORDER BY name COLLATE NOCASE, id`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list saved filters: %w", err)
@@ -98,11 +100,11 @@ func (s *Store) SaveFilter(ctx context.Context, userID, id, name string, filter 
 		}
 		created = stamp
 		result, err = s.db.ExecContext(ctx, `INSERT INTO saved_filters
-			(id, owner_id, name, query, format, tag, series, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id, userID, name, filter.Query, filter.Format, filter.Tag, filter.Series, created, stamp)
+			(id, owner_id, name, query, format, tag, series, library_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, userID, name, filter.Query, filter.Format, filter.Tag, filter.Series, filter.LibraryID, created, stamp)
 	} else {
-		result, err = s.db.ExecContext(ctx, `UPDATE saved_filters SET name = ?, query = ?, format = ?, tag = ?, series = ?, updated_at = ?
-			WHERE id = ? AND owner_id = ?`, name, filter.Query, filter.Format, filter.Tag, filter.Series, stamp, id, userID)
+		result, err = s.db.ExecContext(ctx, `UPDATE saved_filters SET name = ?, query = ?, format = ?, tag = ?, series = ?, library_id = ?, updated_at = ?
+			WHERE id = ? AND owner_id = ?`, name, filter.Query, filter.Format, filter.Tag, filter.Series, filter.LibraryID, stamp, id, userID)
 	}
 	if err != nil {
 		var sqliteErr *sqlite.Error
@@ -141,7 +143,7 @@ func (s *Store) DeleteFilter(ctx context.Context, userID, id string) error {
 func scanSavedFilter(row interface{ Scan(...any) error }) (SavedFilter, error) {
 	var item SavedFilter
 	var created, updated string
-	if err := row.Scan(&item.ID, &item.Name, &item.Filter.Query, &item.Filter.Format, &item.Filter.Tag, &item.Filter.Series, &created, &updated); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &item.Filter.Query, &item.Filter.Format, &item.Filter.Tag, &item.Filter.Series, &item.Filter.LibraryID, &created, &updated); err != nil {
 		return item, err
 	}
 	var err error

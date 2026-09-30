@@ -67,11 +67,39 @@ func (s *server) librarySource(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPatch:
 		var input struct {
-			Name    string `json:"name"`
-			Enabled bool   `json:"enabled"`
+			Name                string    `json:"name"`
+			Enabled             bool      `json:"enabled"`
+			ExcludePatterns     *[]string `json:"excludePatterns"`
+			FileTypes           *[]string `json:"fileTypes"`
+			ScanIntervalMinutes *int      `json:"scanIntervalMinutes"`
 		}
 		if err := decodeJSON(w, r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		if input.ScanIntervalMinutes != nil {
+			if input.ExcludePatterns != nil || input.FileTypes != nil {
+				writeError(w, http.StatusBadRequest, "invalid_source", "update schedule and scan controls separately")
+				return
+			}
+			if err := s.library.UpdateSourceSchedule(r.Context(), id, *input.ScanIntervalMinutes); err != nil {
+				sourceMutationError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if input.ExcludePatterns != nil || input.FileTypes != nil {
+			if input.ExcludePatterns == nil || input.FileTypes == nil {
+				writeError(w, http.StatusBadRequest, "invalid_source", "both exclusion patterns and file types are required")
+				return
+			}
+			if err := s.library.UpdateSourceControls(r.Context(), id, *input.ExcludePatterns, *input.FileTypes); err != nil {
+				sourceMutationError(w, err)
+				return
+			}
+			s.library.StartSourceScan(false, s.logger)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if input.Enabled {

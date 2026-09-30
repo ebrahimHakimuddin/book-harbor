@@ -160,6 +160,10 @@ func CoverURL(bookID string) string { return "/api/v1/books/" + bookID + "/cover
 
 // SetCover stores an uploaded cover image and points the book at it.
 func (s *Store) SetCover(ctx context.Context, bookID string, content io.Reader) (Book, error) {
+	return s.setCover(ctx, bookID, content, "manual")
+}
+
+func (s *Store) setCover(ctx context.Context, bookID string, content io.Reader, origin string) (Book, error) {
 	if _, err := s.Get(ctx, bookID); err != nil {
 		return Book{}, err
 	}
@@ -190,7 +194,7 @@ func (s *Store) SetCover(ctx context.Context, bookID string, content io.Reader) 
 	if err := os.Rename(temporary.Name(), s.coverPath(bookID)); err != nil {
 		return Book{}, fmt.Errorf("store cover: %w", err)
 	}
-	return s.setCoverURL(ctx, bookID, CoverURL(bookID))
+	return s.setCoverURL(ctx, bookID, CoverURL(bookID), origin)
 }
 
 // RemoveCover deletes an uploaded cover and clears the book's cover URL.
@@ -201,12 +205,26 @@ func (s *Store) RemoveCover(ctx context.Context, bookID string) (Book, error) {
 	if err := os.Remove(s.coverPath(bookID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Book{}, fmt.Errorf("remove cover: %w", err)
 	}
-	return s.setCoverURL(ctx, bookID, "")
+	return s.setCoverURL(ctx, bookID, "", "manual")
 }
 
-func (s *Store) setCoverURL(ctx context.Context, bookID, url string) (Book, error) {
-	if _, err := s.db.ExecContext(ctx, `UPDATE books SET cover_url = ?, updated_at = ? WHERE id = ?`, url, s.now().UTC().Format(time.RFC3339Nano), bookID); err != nil {
-		return Book{}, fmt.Errorf("update cover url: %w", err)
+func (s *Store) setCoverURL(ctx context.Context, bookID, url, origin string) (Book, error) {
+	if origin == "manual" {
+		return s.UpdateMetadata(ctx, bookID, BookUpdate{CoverURL: &url})
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Book{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE books SET id=id WHERE id=?`, bookID); err != nil {
+		return Book{}, err
+	}
+	if err := s.updateMetadataTx(ctx, tx, bookID, BookUpdate{CoverURL: &url}, origin, true); err != nil {
+		return Book{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Book{}, err
 	}
 	return s.Get(ctx, bookID)
 }

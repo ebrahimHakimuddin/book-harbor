@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/bookharbor/bookharbor/apps/server/internal/export"
 )
@@ -114,6 +115,150 @@ func TestWatchedLibraryIndexesInPlaceAndPreservesIdentity(t *testing.T) {
 	}
 	if _, err := os.Stat(newPath); err != nil {
 		t.Fatalf("deletion touched source: %v", err)
+	}
+}
+
+func TestSourceScanControlsPreserveFilesAndBookIdentity(t *testing.T) {
+	store, db, _ := testLibraryStore(t, 2<<20)
+	defer db.Close()
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "Drafts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"main.epub", "main.pdf", "Drafts/draft.epub"} {
+		content := []byte("%PDF-1.7\nbody\n%%EOF")
+		if filepath.Ext(name) == ".epub" {
+			content = validEPUB(t, name)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), content, 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source, err := store.AddSource(ctx, root, "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := store.ScanSources(ctx, false); err != nil || result.Added != 3 {
+		t.Fatalf("initial scan = %+v, %v", result, err)
+	}
+	books, _, err := store.List(ctx, 50, "")
+	if err != nil || len(books) != 3 {
+		t.Fatalf("initial books = %d, %v", len(books), err)
+	}
+	ids := map[string]string{}
+	for _, book := range books {
+		ids[book.Title] = book.ID
+	}
+	if err := store.UpdateSourceControls(ctx, source.ID, []string{"Drafts/**"}, []string{"epub"}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := store.ScanSources(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	books, _, err = store.List(ctx, 50, "")
+	if err != nil || len(books) != 1 || books[0].Title != "main.epub" {
+		t.Fatalf("filtered books = %+v, %v", books, err)
+	}
+	for _, name := range []string{"main.epub", "main.pdf", "Drafts/draft.epub"} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Fatalf("source file %s changed: %v", name, err)
+		}
+	}
+	if err := store.UpdateSourceControls(ctx, source.ID, []string{}, []string{"epub", "pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ScanSources(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	books, _, err = store.List(ctx, 50, "")
+	if err != nil || len(books) != 3 {
+		t.Fatalf("restored books = %d, %v", len(books), err)
+	}
+	for _, book := range books {
+		if ids[book.Title] != book.ID {
+			t.Fatalf("identity for %q changed", book.Title)
+		}
+	}
+}
+
+func TestSourceScanPatternValidationAndMatching(t *testing.T) {
+	for _, pattern := range []string{"/absolute", "../outside", "folder//book.epub", "bad[", "foo\\bar"} {
+		if err := validateSourceControls([]string{pattern}, []string{"epub"}); err == nil {
+			t.Errorf("accepted %q", pattern)
+		}
+	}
+	if err := validateSourceControls(nil, nil); err == nil {
+		t.Error("accepted no file types")
+	}
+	if err := validateSourceControls(nil, []string{"epub", "epub"}); err == nil {
+		t.Error("accepted duplicate file types")
+	}
+	for _, item := range []struct {
+		path, pattern string
+		want          bool
+	}{
+		{"Drafts", "Drafts/**", true},
+		{"Drafts/nested/book.epub", "Drafts/**", true},
+		{"main.epub", "Drafts/**", false},
+		{"nested/book.sample.pdf", "*.sample.pdf", true},
+		{"book.epub", "**/*.epub", true},
+	} {
+		if got := sourcePathExcluded(item.path, []string{item.pattern}); got != item.want {
+			t.Errorf("pattern %q on %q = %v", item.pattern, item.path, got)
+		}
+	}
+}
+
+func TestSourceSchedulesOnlyScanDueFolders(t *testing.T) {
+	store, db, _ := testLibraryStore(t, 2<<20)
+	defer db.Close()
+	ctx := context.Background()
+	base := t.TempDir()
+	var now = time.Now().Add(time.Hour)
+	store.now = func() time.Time { return now }
+	for _, name := range []string{"fast", "default"} {
+		root := filepath.Join(base, name)
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name+".pdf"), []byte("%PDF-1.7\nbody\n%%EOF"), 0o444); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.AddSource(ctx, root, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sources, err := store.Sources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources {
+		if source.Name == "fast" {
+			if err := store.UpdateSourceSchedule(ctx, source.ID, 15); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if result, err := store.ScanSources(ctx, false); err != nil || result.Added != 2 {
+		t.Fatalf("startup scan = %+v, %v", result, err)
+	}
+	now = now.Add(16 * time.Minute)
+	if result, err := store.scanDueSources(ctx, time.Hour); err != nil || result.Unchanged != 1 {
+		t.Fatalf("first due scan = %+v, %v", result, err)
+	}
+	now = now.Add(15 * time.Minute)
+	if result, err := store.scanDueSources(ctx, time.Hour); err != nil || result.Unchanged != 1 {
+		t.Fatalf("second due scan = %+v, %v", result, err)
+	}
+	now = now.Add(30 * time.Minute)
+	if result, err := store.scanDueSources(ctx, time.Hour); err != nil || result.Unchanged != 2 {
+		t.Fatalf("hour due scan = %+v, %v", result, err)
+	}
+	if err := store.UpdateSourceSchedule(ctx, sources[0].ID, -1); err == nil {
+		t.Fatal("accepted negative interval")
 	}
 }
 

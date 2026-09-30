@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/bookharbor/bookharbor/apps/server/internal/catalogaccess"
 	"time"
 )
 
@@ -159,8 +160,8 @@ func (s *Store) resolve(ctx context.Context, requestID string, status Status, bo
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE book_requests SET status = ?, fulfilled_book_id = ?, resolved_at = ?
-		WHERE id = ? AND status = 'open'
-	`, string(status), bookIDValue, now, requestID)
+		WHERE id = ? AND status = 'open' AND (? != 'fulfilled' OR `+catalogaccess.BookPredicateForUser("?", "book_requests.requested_by")+`)
+	`, string(status), bookIDValue, now, requestID, string(status), bookID)
 	if err != nil {
 		return fmt.Errorf("resolve book request: %w", err)
 	}
@@ -175,6 +176,15 @@ func (s *Store) resolve(ctx context.Context, requestID string, status Status, bo
 		}
 		if count == 0 {
 			return ErrNotFound
+		}
+		if status == StatusFulfilled {
+			var current string
+			if err := s.db.QueryRowContext(ctx, `SELECT status FROM book_requests WHERE id=?`, requestID).Scan(&current); err != nil {
+				return err
+			}
+			if current == "open" {
+				return ErrBookNotFound
+			}
 		}
 		return ErrNotOpen
 	}

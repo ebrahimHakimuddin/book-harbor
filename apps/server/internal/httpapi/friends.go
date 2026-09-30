@@ -112,6 +112,13 @@ func (s *server) newFriendResponse(r *http.Request, viewerID, friendID string) (
 		if len(response.CurrentlyReading) >= friendActivityLimit {
 			break
 		}
+		allowed, err := s.library.CanReadBook(r.Context(), viewerID, progress.BookID)
+		if err != nil {
+			return friendResponse{}, err
+		}
+		if !allowed {
+			continue
+		}
 		book, err := s.library.Get(r.Context(), progress.BookID)
 		if err != nil {
 			continue // the book may have been deleted since this progress was recorded
@@ -443,6 +450,14 @@ func (s *server) friendProfile(w http.ResponseWriter, r *http.Request, viewerID,
 			if progress.Percentage <= 0 || progress.Percentage >= reading.FinishedThreshold || len(profile.ReadingNow) >= friendProfileLimit {
 				continue
 			}
+			allowed, accessErr := s.library.CanReadBook(r.Context(), viewerID, progress.BookID)
+			if accessErr != nil {
+				s.catalogError(w, accessErr)
+				return
+			}
+			if !allowed {
+				continue
+			}
 			if book, err := s.library.Get(r.Context(), progress.BookID); err == nil {
 				profile.ReadingNow = append(profile.ReadingNow, friendActivityBookResponse{
 					BookID: book.ID, Title: book.Title, CoverURL: book.CoverURL,
@@ -455,6 +470,14 @@ func (s *server) friendProfile(w http.ResponseWriter, r *http.Request, viewerID,
 	if err == nil {
 		profile.FinishedTotal = &total
 		for _, item := range finished {
+			allowed, accessErr := s.library.CanReadBook(r.Context(), viewerID, item.BookID)
+			if accessErr != nil {
+				s.catalogError(w, accessErr)
+				return
+			}
+			if !allowed {
+				continue
+			}
 			if book, err := s.library.Get(r.Context(), item.BookID); err == nil {
 				profile.Finished = append(profile.Finished, finishedBookResponse{
 					BookID: book.ID, Title: book.Title, CoverURL: book.CoverURL, FinishedAt: item.FinishedAt.Format(time.RFC3339Nano),

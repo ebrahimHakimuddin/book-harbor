@@ -194,6 +194,9 @@ func (s *server) listItemsForList(w http.ResponseWriter, r *http.Request, userID
 			return
 		}
 		bookID := strings.TrimSpace(body.BookID)
+		if !s.allowBook(w, r, bookID) {
+			return
+		}
 		if err := s.lists.AddBook(r.Context(), userID, listID, bookID); err != nil {
 			s.writeListError(w, err)
 			return

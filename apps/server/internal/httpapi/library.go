@@ -16,20 +16,27 @@ import (
 const multipartOverheadAllowance int64 = 1 << 20
 
 type bookResponse struct {
-	ID          string              `json:"id"`
-	Title       string              `json:"title"`
-	Subtitle    string              `json:"subtitle"`
-	Description string              `json:"description"`
-	Authors     []string            `json:"authors"`
-	CoverURL    string              `json:"coverUrl"`
-	Series      string              `json:"series"`
-	SeriesIndex float64             `json:"seriesIndex"`
-	Tags        []string            `json:"tags"`
-	Source      *bookMetadataSource `json:"source,omitempty"`
-	CreatedBy   string              `json:"createdBy"`
-	CreatedAt   time.Time           `json:"createdAt"`
-	UpdatedAt   time.Time           `json:"updatedAt"`
-	Editions    []editionResponse   `json:"editions"`
+	Publisher          string              `json:"publisher"`
+	PublishedDate      string              `json:"publishedDate"`
+	Language           string              `json:"language"`
+	ISBN               string              `json:"isbn"`
+	MetadataLocks      []string            `json:"metadataLocks"`
+	MetadataProvenance map[string]string   `json:"metadataProvenance"`
+	LibraryID          string              `json:"libraryId"`
+	ID                 string              `json:"id"`
+	Title              string              `json:"title"`
+	Subtitle           string              `json:"subtitle"`
+	Description        string              `json:"description"`
+	Authors            []string            `json:"authors"`
+	CoverURL           string              `json:"coverUrl"`
+	Series             string              `json:"series"`
+	SeriesIndex        float64             `json:"seriesIndex"`
+	Tags               []string            `json:"tags"`
+	Source             *bookMetadataSource `json:"source,omitempty"`
+	CreatedBy          string              `json:"createdBy"`
+	CreatedAt          time.Time           `json:"createdAt"`
+	UpdatedAt          time.Time           `json:"updatedAt"`
+	Editions           []editionResponse   `json:"editions"`
 	// WebnovelChapters is how many chapters of a followed web novel are in the book so far;
 	// absent for other books. Clients compare it to what the reader has seen.
 	WebnovelChapters int `json:"webnovelChapters,omitempty"`
@@ -73,6 +80,10 @@ func (s *server) books(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) book(w http.ResponseWriter, r *http.Request) {
+	id, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/books/"), "/")
+	if !s.allowBook(w, r, id) {
+		return
+	}
 	if id, sub, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/books/"), "/"); ok {
 		s.bookSubresource(w, r, id, sub)
 		return
@@ -125,15 +136,21 @@ func (s *server) patchBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Title       *string   `json:"title"`
-		Subtitle    *string   `json:"subtitle"`
-		Description *string   `json:"description"`
-		Authors     *[]string `json:"authors"`
-		CoverURL    *string   `json:"coverUrl"`
-		Series      *string   `json:"series"`
-		SeriesIndex *float64  `json:"seriesIndex"`
-		Tags        *[]string `json:"tags"`
-		Source      *struct {
+		Publisher          *string           `json:"publisher"`
+		PublishedDate      *string           `json:"publishedDate"`
+		Language           *string           `json:"language"`
+		ISBN               *string           `json:"isbn"`
+		MetadataLocks      *[]string         `json:"metadataLocks"`
+		MetadataProvenance map[string]string `json:"metadataProvenance"`
+		Title              *string           `json:"title"`
+		Subtitle           *string           `json:"subtitle"`
+		Description        *string           `json:"description"`
+		Authors            *[]string         `json:"authors"`
+		CoverURL           *string           `json:"coverUrl"`
+		Series             *string           `json:"series"`
+		SeriesIndex        *float64          `json:"seriesIndex"`
+		Tags               *[]string         `json:"tags"`
+		Source             *struct {
 			Provider string `json:"provider"`
 			ID       string `json:"id"`
 		} `json:"source"`
@@ -143,11 +160,13 @@ func (s *server) patchBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if request.Title == nil && request.Subtitle == nil && request.Description == nil && request.Authors == nil && request.CoverURL == nil && request.Source == nil &&
-		request.Series == nil && request.SeriesIndex == nil && request.Tags == nil {
+		request.Series == nil && request.SeriesIndex == nil && request.Tags == nil && request.Publisher == nil && request.PublishedDate == nil && request.Language == nil && request.ISBN == nil && request.MetadataLocks == nil {
 		writeError(w, http.StatusUnprocessableEntity, "no_metadata_changes", "at least one metadata field is required")
 		return
 	}
 	update := library.BookUpdate{
+		Publisher: request.Publisher, PublishedDate: request.PublishedDate, Language: request.Language, ISBN: request.ISBN,
+		MetadataLocks: request.MetadataLocks, MetadataProvenance: request.MetadataProvenance,
 		Title: request.Title, Subtitle: request.Subtitle, Description: request.Description,
 		Authors: request.Authors, CoverURL: request.CoverURL,
 		Series: request.Series, SeriesIndex: request.SeriesIndex, Tags: request.Tags,
@@ -188,6 +207,16 @@ func (s *server) edition(w http.ResponseWriter, r *http.Request) {
 		notFound(w, r)
 		return
 	}
+	principal, _ := authenticatedPrincipal(r)
+	allowed, err := s.library.CanReadEdition(r.Context(), principal.User.ID, value)
+	if err != nil {
+		s.catalogError(w, err)
+		return
+	}
+	if !allowed {
+		notFound(w, r)
+		return
+	}
 	content, err := s.library.OpenContent(r.Context(), value)
 	if errors.Is(err, library.ErrNotFound) {
 		notFound(w, r)
@@ -225,8 +254,9 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	params := r.URL.Query()
-	books, next, total, err := s.library.Search(r.Context(), limit, params.Get("cursor"), library.BookFilter{
-		Query: params.Get("q"), Format: params.Get("format"), Tag: params.Get("tag"), Series: params.Get("series"),
+	principal, _ := authenticatedPrincipal(r)
+	books, next, total, err := s.library.SearchForUser(r.Context(), principal.User.ID, limit, params.Get("cursor"), library.BookFilter{
+		Query: params.Get("q"), Format: params.Get("format"), Tag: params.Get("tag"), Series: params.Get("series"), LibraryID: params.Get("libraryId"),
 	})
 	if errors.Is(err, library.ErrInvalidFilter) {
 		writeError(w, http.StatusBadRequest, "invalid_filter", "use EPUB or PDF format and at most 300 characters per search field")
@@ -314,7 +344,7 @@ func (s *server) importBook(w http.ResponseWriter, r *http.Request, createdBy st
 		Title:     title,
 		Filename:  filename,
 		Content:   file,
-		CreatedBy: createdBy,
+		CreatedBy: createdBy, LibraryID: r.URL.Query().Get("libraryId"),
 	})
 	if err != nil {
 		s.writeImportError(w, err)
@@ -333,6 +363,8 @@ func (s *server) writeImportError(w http.ResponseWriter, err error) {
 			"code": "duplicate_book", "message": "this file is already in the library as \"" + duplicate.Title + "\"",
 			"details": map[string]string{"bookId": duplicate.BookID},
 		})
+	case errors.Is(err, library.ErrNotFound):
+		s.catalogError(w, err)
 	case errors.Is(err, library.ErrTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, "book_too_large", "uploaded book exceeds the configured size limit")
 	case errors.Is(err, library.ErrUnsupportedFormat):
@@ -370,7 +402,8 @@ func newBookResponse(book library.Book) bookResponse {
 	if book.MetadataProvider != "" && book.MetadataProviderID != "" {
 		source = &bookMetadataSource{Provider: book.MetadataProvider, ID: book.MetadataProviderID}
 	}
-	return bookResponse{
+	return bookResponse{LibraryID: book.LibraryID,
+		Publisher: book.Publisher, PublishedDate: book.PublishedDate, Language: book.Language, ISBN: book.ISBN, MetadataLocks: book.MetadataLocks, MetadataProvenance: book.MetadataProvenance,
 		ID: book.ID, Title: book.Title, Subtitle: book.Subtitle, Description: book.Description,
 		Authors: book.Authors, CoverURL: book.CoverURL, Series: book.Series, SeriesIndex: book.SeriesIndex,
 		Tags: book.Tags, Source: source, CreatedBy: book.CreatedBy,
@@ -451,6 +484,10 @@ func (s *server) bookSubresource(w http.ResponseWriter, r *http.Request, id, sub
 		return
 	}
 	switch {
+	case sub == "metadata-refresh" && r.Method == http.MethodPost:
+		s.requireAdmin(func(w http.ResponseWriter, r *http.Request) { s.refreshBookMetadata(w, r, id) }).ServeHTTP(w, r)
+	case sub == "metadata-refresh":
+		writeMethodNotAllowed(w, "POST")
 	case sub == "cover" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
 		s.serveCover(w, r, id)
 	case sub == "cover" && r.Method == http.MethodPut:
@@ -481,6 +518,9 @@ func (s *server) serveCover(w http.ResponseWriter, r *http.Request, bookID strin
 	}
 	defer file.Close()
 	w.Header().Set("Cache-Control", "private, max-age=300")
+	if strings.HasPrefix(r.URL.Path, "/opds/") {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, "", info.ModTime(), file)
 }

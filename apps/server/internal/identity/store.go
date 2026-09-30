@@ -305,6 +305,9 @@ func (s *Store) UpdateUser(ctx context.Context, id string, update UserUpdate) (U
 		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`, now, id); err != nil {
 			return User{}, fmt.Errorf("revoke user sessions: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM opds_credentials WHERE user_id = ?`, id); err != nil {
+			return User{}, fmt.Errorf("revoke OPDS credentials: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return User{}, fmt.Errorf("commit user update: %w", err)
@@ -366,6 +369,9 @@ func (s *Store) UpdateSelf(ctx context.Context, id string, displayName *string, 
 	if newPassword != nil {
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, newPasswordHash, id); err != nil {
 			return User{}, fmt.Errorf("update password: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM opds_credentials WHERE user_id = ?`, id); err != nil {
+			return User{}, fmt.Errorf("revoke OPDS credentials: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

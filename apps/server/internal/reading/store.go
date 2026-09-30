@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/bookharbor/bookharbor/apps/server/internal/catalogaccess"
 	"math"
 	"sort"
 	"strconv"
@@ -125,8 +126,8 @@ func (s *Store) Sync(ctx context.Context, userID string, cursor int64, changes [
 		format, ok := editionFormats[key]
 		if !ok {
 			err := tx.QueryRowContext(ctx, `
-				SELECT format FROM editions WHERE id = ? AND book_id = ?
-			`, change.EditionID, change.BookID).Scan(&format)
+				SELECT format FROM editions WHERE id = ? AND book_id = ? AND `+catalogaccess.BookPredicate("editions.book_id")+`
+			`, change.EditionID, change.BookID, userID).Scan(&format)
 			if errors.Is(err, sql.ErrNoRows) {
 				return SyncResult{}, ErrUnknownEdition
 			}
@@ -189,10 +190,10 @@ func (s *Store) SnapshotForUser(ctx context.Context, userID string, limit int) (
 		SELECT event_revision, client_event_id, device_id, book_id, edition_id,
 			locator_kind, locator_value, percentage, occurred_at
 		FROM reading_progress
-		WHERE user_id = ?
+		WHERE user_id = ? AND `+catalogaccess.BookPredicate("reading_progress.book_id")+`
 		ORDER BY updated_at DESC
 		LIMIT ?
-	`, userID, limit)
+	`, userID, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read progress snapshot: %w", err)
 	}
@@ -347,10 +348,10 @@ func changedBookIDs(ctx context.Context, tx *sql.Tx, userID string, cursor int64
 	rows, err := tx.QueryContext(ctx, `
 		SELECT revision, book_id
 		FROM reading_events
-		WHERE user_id = ? AND revision > ?
+		WHERE user_id = ? AND revision > ? AND `+catalogaccess.BookPredicate("reading_events.book_id")+`
 		ORDER BY revision
 		LIMIT ?
-	`, userID, cursor, pullPageSize+1)
+	`, userID, cursor, userID, pullPageSize+1)
 	if err != nil {
 		return nil, cursor, false, fmt.Errorf("read progress changes: %w", err)
 	}
@@ -483,9 +484,9 @@ func (s *Store) FinishedBooks(ctx context.Context, userID string, limit int) ([]
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT book_id, finished_at FROM reading_progress
-		WHERE user_id = ? AND finished_at IS NOT NULL
+		WHERE user_id = ? AND finished_at IS NOT NULL AND `+catalogaccess.BookPredicate("reading_progress.book_id")+`
 		ORDER BY finished_at DESC LIMIT ?
-	`, userID, limit)
+	`, userID, userID, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list finished books: %w", err)
 	}
