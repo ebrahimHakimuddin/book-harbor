@@ -52,6 +52,9 @@ func (s *server) librarySources(w http.ResponseWriter, r *http.Request) {
 	if len(allow) == 0 {
 		allow = s.config.LibraryDirs
 	}
+	if allow == nil {
+		allow = []string{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": sources, "scanning": s.library.Scanning(), "allowedRoots": allow})
 }
 
