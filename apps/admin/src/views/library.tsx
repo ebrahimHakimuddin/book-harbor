@@ -50,7 +50,7 @@ export function LibraryView() {
     <>
       <PageHeading
         title="Your library."
-        description="Import books and keep their catalog details tidy."
+        description="Browse imported and watched books, and keep their catalog details tidy."
         actions={
           <Button size="lg" className="h-10" aria-expanded={importing} onClick={() => setImporting((v) => !v)}>
             <PlusIcon data-icon="inline-start" />Import book
@@ -88,7 +88,7 @@ export function LibraryView() {
         <Grid>{Array.from({ length: 8 }, (_, i) => <div key={i} className="grid gap-2"><Skeleton className="aspect-[2/3] rounded-lg" /><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-1/2" /></div>)}</Grid>
       ) : books.length === 0 ? (
         <EmptyState icon={<BookOpenIcon />} title="No books yet" action={<Button onClick={() => setImporting(true)}><PlusIcon data-icon="inline-start" />Import your first book</Button>}>
-          Import an EPUB, PDF, MOBI, or AZW3 to begin your library.
+          Import a book or configure a watched folder in Settings to begin your library.
         </EmptyState>
       ) : filtered.length === 0 ? (
         <EmptyState icon={<SearchIcon />} title="No matches" action={<Button variant="outline" onClick={() => { setQuery(""); setFormat("") }}>Clear filters</Button>}>
@@ -119,7 +119,7 @@ function BookTile({ book, selected, onOpen }: { book: Book; selected: boolean; o
         <span className="line-clamp-2 text-sm leading-snug font-semibold text-navy">{book.title}</span>
         <span className="line-clamp-1 text-xs text-muted-foreground">{book.authors.join(", ") || book.subtitle || "Metadata not added"}</span>
       </span>
-      <span className="flex gap-1">{book.editions.map((e) => <Badge key={e.id} variant="secondary" className="h-5 rounded-md px-1.5 text-[0.65rem] font-bold tracking-wide text-teal-dark uppercase">{e.format}</Badge>)}</span>
+      <span className="flex gap-1">{book.editions.map((e) => <Badge key={e.id} variant="secondary" className="h-5 rounded-md px-1.5 text-[0.65rem] font-bold tracking-wide text-teal-dark uppercase">{e.format}{e.watched ? " · NAS" : ""}</Badge>)}</span>
     </button>
   )
 }

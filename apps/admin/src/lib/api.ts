@@ -22,6 +22,7 @@ export interface Edition {
   originalFilename: string
   byteLength: number
   sha256: string
+  watched?: boolean
   createdAt: string
   contentUrl: string
 }
@@ -122,6 +123,24 @@ export interface StorageStatus {
   moving: boolean
   moved: number
   error: string
+}
+
+export interface LibrarySource {
+  id: string
+  name: string
+  path: string
+  lastScanAt: string
+  lastError: string
+  books: number
+  available: number
+  enabled: boolean
+  errors?: { path: string; message: string }[]
+}
+
+export interface LibrarySourcesStatus {
+  items: LibrarySource[]
+  scanning: boolean
+  allowedRoots: string[]
 }
 
 export type Integration = "email" | "s3" | "ntfy" | "shelfmark"
@@ -402,6 +421,11 @@ export const api = {
   updateSettings: (body: Record<string, string>) => request<Settings>("/api/v1/admin/settings", { method: "PATCH", body }),
   testIntegration: (integration: Integration) => request<void>("/api/v1/admin/settings/test", { method: "POST", body: { integration } }),
   storage: () => request<StorageStatus>("/api/v1/admin/storage"),
+  librarySources: () => request<LibrarySourcesStatus>("/api/v1/admin/sources"),
+  addLibrarySource: (body: { path: string; name: string }) => request<LibrarySource>("/api/v1/admin/sources", { method: "POST", body }),
+  updateLibrarySource: (id: string, body: { name: string; enabled: boolean }) => request<void>(`/api/v1/admin/sources/${enc(id)}`, { method: "PATCH", body }),
+  removeLibrarySource: (id: string, deleteCatalog = false) => request<void>(`/api/v1/admin/sources/${enc(id)}${deleteCatalog ? "?deleteCatalog=true" : ""}`, { method: "DELETE" }),
+  scanLibrarySources: (verify = false) => request<{ started: boolean }>(`/api/v1/admin/sources/scan${verify ? "?verify=true" : ""}`, { method: "POST" }),
   moveToS3: () => request<void>("/api/v1/admin/storage/move-to-s3", { method: "POST" }),
   webnovels: () => request<{ items: Webnovel[]; intervalHours: number }>("/api/v1/admin/webnovels"),
   searchWebnovels: (q: string) => request<{ items: WebnovelResult[] }>(`/api/v1/admin/webnovels/search?${new URLSearchParams({ q })}`),
@@ -427,8 +451,9 @@ export const api = {
     if (!response.ok) throw await toError(response)
     return URL.createObjectURL(await response.blob())
   },
-  async exportArchive() {
-    const response = await send("/api/v1/admin/export", {})
+  exportEstimate: () => request<{ managedBytes: number; watchedBytes: number; watchedFiles: number }>("/api/v1/admin/export/estimate"),
+  async exportArchive(mode: "full" | "references" = "full") {
+    const response = await send(`/api/v1/admin/export?mode=${mode}`, {})
     if (!response.ok) throw await toError(response)
     return response.blob()
   },

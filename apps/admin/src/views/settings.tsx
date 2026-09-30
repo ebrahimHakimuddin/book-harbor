@@ -1,8 +1,8 @@
 import { useState, type FormEvent, type ReactNode } from "react"
-import { BellIcon, BookDownIcon, CodeIcon, InfoIcon, CloudUploadIcon, HardDriveIcon, Loader2Icon, MailIcon, SendIcon } from "lucide-react"
+import { BellIcon, BookDownIcon, CodeIcon, InfoIcon, CloudUploadIcon, HardDriveIcon, Loader2Icon, MailIcon, SendIcon, FolderOpenIcon } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { api, APP_VERSION, type Integration, type Settings } from "@/lib/api"
+import { api, APP_VERSION, type Integration, type LibrarySource, type Settings } from "@/lib/api"
 import { keys, useInstance } from "@/lib/queries"
 import { errorMessage } from "@/lib/format"
 import { useConfirm } from "@/components/confirm"
@@ -90,13 +90,14 @@ export function SettingsView() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings })
   return (
     <>
-      <PageHeading title="Settings." description="Connect email, storage, notifications, and Shelfmark. Values saved here override the server's environment." />
+      <PageHeading title="Settings." description="Connect your library, email, storage, notifications, and Shelfmark." />
       {settings.isPending ? (
         <div className="grid gap-6">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-64 rounded-xl" />)}</div>
       ) : settings.isError ? (
         <p role="alert" className="text-destructive">{errorMessage(settings.error, "Settings could not be loaded.")}</p>
       ) : (
         <div className="grid max-w-6xl divide-y">
+          <LibrarySources />
           {INTEGRATIONS.map((item) => (
             <Section key={item.integration} item={item} settings={settings.data}>
               {item.integration === "s3" && <StorageMove configured={item.required.every((key) => settings.data[key]?.set)} />}
@@ -107,6 +108,91 @@ export function SettingsView() {
       )}
     </>
   )
+}
+
+function LibrarySources() {
+  const client = useQueryClient()
+  const status = useQuery({ queryKey: ["library-sources"], queryFn: api.librarySources, refetchInterval: 5000 })
+  const [path, setPath] = useState("")
+  const [name, setName] = useState("")
+  const add = useMutation({
+    mutationFn: api.addLibrarySource,
+    onSuccess: () => { setPath(""); setName(""); toast.success("Source added. Scan started."); void client.invalidateQueries({ queryKey: ["library-sources"] }) },
+    onError: (error) => toast.error(errorMessage(error, "Could not add source.")),
+  })
+  const scan = useMutation({
+    mutationFn: api.scanLibrarySources,
+    onSuccess: () => { toast.success("Library scan started."); void client.invalidateQueries({ queryKey: ["library-sources"] }) },
+    onError: (error) => toast.error(errorMessage(error, "Library scan could not start.")),
+  })
+  return (
+    <section aria-labelledby="settings-library-sources" className="grid gap-5 py-8 first:pt-0 lg:grid-cols-[17rem_minmax(0,1fr)] lg:gap-10">
+      <header className="flex items-start gap-3.5 lg:flex-col lg:gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-mist text-teal-dark [&_svg]:size-5"><FolderOpenIcon /></span>
+        <div className="grid gap-1.5">
+          <h2 id="settings-library-sources" className="text-xl font-bold text-navy">Watched libraries</h2>
+          <p className="text-sm text-muted-foreground">Index folders mounted on this server. Books stay where they are.</p>
+        </div>
+      </header>
+      <div className="grid min-w-0 content-start gap-4 rounded-xl border bg-background p-5 sm:p-6">
+        {status.isError && <p role="alert" className="text-sm text-destructive">{errorMessage(status.error, "Could not load watched libraries.")}</p>}
+        {status.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No folders configured. Mount a book folder read-only, then add its path below.</p>}
+        {status.data?.items.map((source) => <SourceRow key={source.id} source={source} scanning={status.data.scanning} />)}
+        <form className="grid gap-3 border-t pt-4" onSubmit={(event) => { event.preventDefault(); add.mutate({ path: path.trim(), name: name.trim() }) }}>
+          <strong className="text-sm text-navy">Add source folder</strong>
+          {status.data?.allowedRoots.length ? (
+            <p className="text-xs text-muted-foreground">Allowed mounted roots: {status.data.allowedRoots.map((root) => <code className="mx-1 break-all" key={root}>{root}</code>)}</p>
+          ) : <p className="text-xs text-muted-foreground">Set BOOKHARBOR_LIBRARY_ALLOW_DIRS on the server before adding folders here.</p>}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-1"><Label htmlFor="source-path">Absolute folder path</Label><Input id="source-path" value={path} onChange={(event) => setPath(event.target.value)} placeholder="/library/Author" required /></div>
+            <div className="grid gap-1"><Label htmlFor="source-name">Display name (optional)</Label><Input id="source-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Family books" /></div>
+          </div>
+          <Button type="submit" className="w-fit" disabled={add.isPending || status.data?.scanning || !status.data?.allowedRoots.length}>Add folder</Button>
+        </form>
+        {status.data && status.data.items.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="outline" onClick={() => scan.mutate(false)} disabled={scan.isPending || status.data.scanning}>
+              {status.data.scanning ? <Loader2Icon className="animate-spin" /> : <FolderOpenIcon />} {status.data.scanning ? "Scanning…" : "Scan now"}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => scan.mutate(true)} disabled={scan.isPending || status.data.scanning}>Verify all files</Button>
+            <span className="text-xs text-muted-foreground">Automatic scans also run on the server schedule.</span>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SourceRow({ source, scanning }: { source: LibrarySource; scanning: boolean }) {
+  const client = useQueryClient()
+  const confirm = useConfirm()
+  const [name, setName] = useState(source.name)
+  const update = useMutation({
+    mutationFn: (next: { name: string; enabled: boolean }) => api.updateLibrarySource(source.id, next),
+    onSuccess: () => { toast.success("Source updated."); void client.invalidateQueries({ queryKey: ["library-sources"] }) },
+    onError: (error) => toast.error(errorMessage(error, "Could not update source.")),
+  })
+  const remove = useMutation({
+    mutationFn: () => api.removeLibrarySource(source.id, true),
+    onSuccess: () => { toast.success("Source catalog removed. Mounted files were kept."); void client.invalidateQueries({ queryKey: ["library-sources"] }) },
+    onError: (error) => toast.error(errorMessage(error, "Could not remove source.")),
+  })
+  const removeCatalog = async () => {
+    if (await confirm({ title: `Remove ${source.name} from the catalog?`, description: "This removes its indexed editions and any books that have no other editions. Reading data for those books is deleted. Files in the mounted folder are never changed.", action: "Remove catalog" })) remove.mutate()
+  }
+  return <div className="grid gap-2 border-b pb-4 text-sm">
+    <div className="flex flex-wrap items-center gap-2">
+      <Input aria-label={`Name for ${source.path}`} value={name} onChange={(event) => setName(event.target.value)} className="max-w-xs font-semibold" maxLength={120} />
+      <Button type="button" variant="outline" disabled={name.trim() === source.name || !name.trim() || update.isPending || scanning} onClick={() => update.mutate({ name: name.trim(), enabled: source.enabled })}>Save name</Button>
+      <Button type="button" variant="outline" disabled={update.isPending || scanning} onClick={() => update.mutate({ name: name.trim() || source.name, enabled: !source.enabled })}>{source.enabled ? "Disable" : "Enable"}</Button>
+      <Button type="button" variant="ghost" disabled={remove.isPending || scanning} onClick={() => void removeCatalog()}>Remove catalog</Button>
+    </div>
+    <code className="break-all text-xs text-muted-foreground">{source.path}</code>
+    <p>{source.enabled ? "Reading in place" : "Disabled"} · {source.available} available files · {source.books} indexed books</p>
+    <p className="text-xs text-muted-foreground">{source.lastScanAt ? `Last successful scan: ${new Date(source.lastScanAt).toLocaleString()}` : "Waiting for first successful scan"}</p>
+    {source.lastError && <p role="alert" className="text-xs text-destructive">{source.lastError}</p>}
+    {!!source.errors?.length && <details className="text-xs"><summary className="cursor-pointer">{source.errors.length} file errors</summary><ul className="mt-2 grid gap-1">{source.errors.map((error) => <li key={error.path}><code className="break-all">{error.path}</code>: {error.message}</li>)}</ul></details>}
+  </div>
 }
 
 function Section({ item, settings, children }: { item: IntegrationCard; settings: Settings; children?: ReactNode }) {
