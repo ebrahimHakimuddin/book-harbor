@@ -83,6 +83,7 @@ class OpenedBook(val book: Book, val edition: Edition, val file: File, val posit
 
 /** Everything the screens read and every action they can take. Work runs on IO; state is Compose state. */
 class AppController(private val graph: AppGraph, private val scope: CoroutineScope) {
+    val browse = BrowseController(CatalogClient(graph.api), scope)
     var ui by mutableStateOf<LibraryUiState>(if (graph.session.serverUrl.isBlank()) LibraryUiState.Setup else LibraryUiState.Loading)
         private set
     var opened by mutableStateOf<OpenedBook?>(null)
@@ -188,10 +189,11 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
     /** Leaves an error screen for the state it came from. */
     fun dismissError(to: LibraryUiState) { ui = to }
 
-    fun connect(url: String) { graph.session.serverUrl = url; load() }
+    fun connect(url: String) { browse.reset(); graph.session.serverUrl = url; load() }
     fun changeServer() { ui = LibraryUiState.Setup }
 
     fun signIn(email: String, password: String) {
+        browse.reset()
         ui = LibraryUiState.Loading
         scope.launch(Dispatchers.IO) {
             try {
@@ -231,6 +233,7 @@ class AppController(private val graph: AppGraph, private val scope: CoroutineSco
             Notifications.forget(graph.prefs) // the next account's library isn't "new"
             ContinueReadingWidget.refresh(graph.context)
             cache.clear()
+            withContext(Dispatchers.Main) { browse.reset() }
             opened = null
             ui = when (signOutTarget) {
                 SignOutTarget.SIGN_IN -> LibraryUiState.SignIn(lastInstance, graph.session.serverUrl)

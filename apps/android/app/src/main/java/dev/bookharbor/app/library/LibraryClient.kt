@@ -36,8 +36,13 @@ data class Book(
     val tags: List<String> = emptyList(),
     /** Chapters in the book so far when it's a followed web novel; 0 for any other book. */
     val webnovelChapters: Int = 0,
+    val libraryId: String = "",
+    val publisher: String = "",
+    val publishedDate: String = "",
+    val language: String = "",
+    val isbn: String = "",
 )
-data class BookPage(val books: List<Book>, val nextCursor: String?)
+data class BookPage(val books: List<Book>, val nextCursor: String?, val total: Int = books.size)
 
 data class SessionTokens(val accessToken: String, val refreshToken: String, val tokenType: String = "Bearer") {
     companion object { fun fromJson(json: String) = JSONObject(json).let { SessionTokens(it.getString("accessToken"), it.getString("refreshToken"), it.optString("tokenType", "Bearer")) } }
@@ -63,13 +68,18 @@ fun parseBookPage(json: String): BookPage {
             seriesIndex = book.optDouble("seriesIndex", 0.0).takeUnless { it.isNaN() } ?: 0.0,
             tags = (0 until tags.length()).map { tags.getString(it) },
             webnovelChapters = book.optInt("webnovelChapters", 0),
+            libraryId = book.optString("libraryId"),
+            publisher = book.optString("publisher"),
+            publishedDate = book.optString("publishedDate"),
+            language = book.optString("language"),
+            isbn = book.optString("isbn"),
             editions = (0 until editions.length()).map { editionIndex ->
                 val edition = editions.getJSONObject(editionIndex)
                 Edition(edition.getString("id"), edition.optString("format"), edition.optString("mediaType"), edition.optString("originalFilename"), edition.optString("contentUrl"), edition.optLong("byteLength", 0), edition.optString("sha256"))
             },
         )
     }
-    return BookPage(books, root.optString("nextCursor").ifEmpty { null })
+    return BookPage(books, root.optString("nextCursor").ifEmpty { null }, root.optInt("total", books.size))
 }
 
 fun parseBooks(json: String): List<Book> = parseBookPage(json).books
@@ -314,6 +324,9 @@ fun encodeBooks(books: List<Book>): String = JSONObject().put("items", JSONArray
             put("authors", JSONArray(book.authors))
             put("description", book.description); put("series", book.series); put("seriesIndex", book.seriesIndex)
             put("tags", JSONArray(book.tags)); put("webnovelChapters", book.webnovelChapters)
+            put("libraryId", book.libraryId)
+            put("publisher", book.publisher); put("publishedDate", book.publishedDate)
+            put("language", book.language); put("isbn", book.isbn)
             put("editions", JSONArray().also { editions ->
                 book.editions.forEach { e ->
                     editions.put(JSONObject().put("id", e.id).put("format", e.format).put("mediaType", e.mediaType).put("originalFilename", e.originalFilename).put("contentUrl", e.contentUrl).put("byteLength", e.byteLength).put("sha256", e.sha256))
