@@ -53,9 +53,10 @@ offline downloads, a comfortable reader, and their place kept across devices.
 
 - Offline reading of downloaded books, with resumable, checksum-verified
   downloads.
-- EPUB as continuous vertical chapters; PDF as a continuous page list.
-- Themes, typefaces, size, spacing, margins, alignment, and brightness per
-  book; read-aloud, dictionary lookup, and search inside a book.
+- EPUB scroll, one-page and two-page reading; PDF as a continuous page list.
+- Themes, custom page colors and private background images, warm tint,
+  typefaces, size, spacing, margins, alignment and brightness in a device-local
+  reading profile; read-aloud, dictionary lookup and search inside a book.
 - Bookmarks, highlights, and notes, synced across devices.
 - Reading progress synced through an offline-safe protocol that never loses a
   newer position.

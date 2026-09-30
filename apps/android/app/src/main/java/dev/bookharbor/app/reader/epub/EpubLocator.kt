@@ -21,9 +21,10 @@ data class EpubPosition(val chapterIndex: Int, val path: String, val offset: Int
 
         fun parse(cfi: String): EpubPosition? {
             val match = PATTERN.matchEntire(cfi.trim()) ?: return null
-            val step = match.groupValues[1].toInt()
+            val step = match.groupValues[1].toIntOrNull() ?: return null
             if (step < 2 || step % 2 != 0) return null
-            return EpubPosition(step / 2 - 1, match.groupValues[2], match.groupValues[3].ifEmpty { "0" }.toInt())
+            val offset = match.groupValues[3].ifEmpty { "0" }.toIntOrNull() ?: return null
+            return EpubPosition(step / 2 - 1, match.groupValues[2], offset)
         }
     }
 }

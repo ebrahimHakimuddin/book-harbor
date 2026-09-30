@@ -5,6 +5,10 @@ package dev.bookharbor.app.reader
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.CompositionLocalProvider
 import android.app.Activity
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.union
@@ -98,10 +102,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.semantics.Role
@@ -122,6 +130,9 @@ import dev.bookharbor.app.ui.BrandIcons
 import dev.bookharbor.app.ui.IconAction
 import dev.bookharbor.app.ui.theme.BookHarborTheme
 import dev.bookharbor.app.ui.theme.LiterataFamily
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 /**
@@ -141,6 +152,7 @@ fun ReaderScaffold(
     progress: Float = state.overallProgress,
     percentage: Int = state.overallPercentage,
     fixedLayout: Boolean = false,
+    pagedLayoutAvailable: Boolean = true,
     contentsLabel: String = "Contents",
     /** True while the content is actively scrolling, so the chrome can duck out of the way. */
     isScrolling: Boolean = false,
@@ -169,7 +181,7 @@ fun ReaderScaffold(
         onPauseOrDispose { stats.stop() }
     }
     val hour by produceState(LocalTime.now().hour) { while (true) { delay(60_000); value = LocalTime.now().hour } }
-    val effective = state.settings.effectiveAt(hour)
+        val effective = state.settings.effectiveAt(hour)
     // The sleep timer holds the screen awake until it fires, then closes the book (saving the
     // place) so the device can sleep normally.
     var sleepMinutes by remember { mutableIntStateOf(0) }
@@ -196,6 +208,16 @@ fun ReaderScaffold(
     ReaderFullscreen(chromeVisible)
     BookHarborTheme(readerTheme = effective.theme) {
         BrightnessEffect(effective.brightness)
+        val baseColors = MaterialTheme.colorScheme
+        val solid = if (!fixedLayout && effective.pageBackground == PageBackground.Solid) runCatching { Color(android.graphics.Color.parseColor(effective.pageColor)) }.getOrNull() else null
+        val background = if (!fixedLayout) Color(0xFFFFB35C).copy(alpha = effective.warmth * 0.18f).compositeOver(solid ?: baseColors.background) else baseColors.background
+        val pageColors = baseColors.copy(background = background, onBackground = if (solid != null) readablePageTextColor(background) else baseColors.onBackground)
+        val paged = !fixedLayout && pagedLayoutAvailable && state.settings.epubLayout != EpubLayout.Scroll
+        val context = LocalContext.current
+        val backgroundImage by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, effective.pageBackground, effective.pageImageVersion, fixedLayout) {
+            value = if (!fixedLayout && effective.pageBackground == PageBackground.Image) withContext(Dispatchers.IO) { ReaderBackgrounds.load(context) } else null
+        }
+        MaterialTheme(colorScheme = pageColors, typography = MaterialTheme.typography, shapes = MaterialTheme.shapes) {
         // The bars float over the page instead of taking layout space, and the page's padding is
         // fixed from the system bar sizes whether or not they're showing -- so showing or hiding
         // the chrome (and going fullscreen) never moves the text.
@@ -206,15 +228,24 @@ fun ReaderScaffold(
         // the back arrow) aren't left at Compose's default black on a dark page.
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            if (backgroundImage != null) {
+                Image(backgroundImage!!, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background.copy(alpha = 0.88f)))
+            }
             // A tap in the middle band shows/hides the chrome; a link or other clickable span
             // inside the content consumes its own tap first, so this never fires for it.
             Box(
-                Modifier.fillMaxSize().pointerInput(touchExplorationEnabled) {
+                Modifier.fillMaxSize().pointerInput(touchExplorationEnabled, paged) {
                     detectTapGestures(onTap = { offset ->
-                        if (!touchExplorationEnabled && offset.x in size.width * 0.3f..size.width * 0.7f) chromeVisible = !chromeVisible
+                        if (!touchExplorationEnabled) when {
+                            paged && offset.x < size.width * 0.3f -> currentOnPage?.invoke(false)
+                            paged && offset.x > size.width * 0.7f -> currentOnPage?.invoke(true)
+                            offset.x in size.width * 0.3f..size.width * 0.7f -> chromeVisible = !chromeVisible
+                        }
                     })
                 },
             ) { content(pagePadding) }
+            if (fixedLayout && effective.warmth > 0f) Box(Modifier.fillMaxSize().background(Color(0xFFFFB35C).copy(alpha = effective.warmth * 0.18f)))
             AnimatedVisibility(
                 visible = chromeVisible,
                 modifier = Modifier.align(Alignment.TopCenter),
@@ -234,11 +265,11 @@ fun ReaderScaffold(
                 enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { it },
                 exit = fadeOut(tween(220)) + slideOutVertically(tween(220)) { it },
             ) {
-                val unit = if (fixedLayout) "page" else "chapter"
+                val unit = if (fixedLayout || paged) "page" else "chapter"
                 ReaderProgressBar(
                     progress = progress, label = progressLabel, percentage = percentage,
-                    onPrevious = { onAction(ReaderAction.SelectChapter(state.chapterIndex - 1)) }.takeIf { state.chapterIndex > 0 },
-                    onNext = { onAction(ReaderAction.SelectChapter(state.chapterIndex + 1)) }.takeIf { state.chapterIndex < state.chapters.lastIndex },
+                    onPrevious = if (paged) ({ currentOnPage?.invoke(false); Unit }) else ({ onAction(ReaderAction.SelectChapter(state.chapterIndex - 1)) }).takeIf { state.chapterIndex > 0 },
+                    onNext = if (paged) ({ currentOnPage?.invoke(true); Unit }) else ({ onAction(ReaderAction.SelectChapter(state.chapterIndex + 1)) }).takeIf { state.chapterIndex < state.chapters.lastIndex },
                     previousLabel = "Previous $unit", nextLabel = "Next $unit",
                 )
             }
@@ -262,12 +293,22 @@ fun ReaderScaffold(
         if (state.contentsOpen) {
             ContentsSheet(state, contentsLabel, onAction, annotations, search, onGoTo = { onGoTo(it); onAction(ReaderAction.CloseContents) })
         }
+        }
     }
 }
 
 private val TopBarHeight = 58.dp
 /** The footer: a 2dp progress line over a 48dp row. */
 private val ProgressBarHeight = 50.dp
+
+/** Choose the higher contrast ink for a user supplied solid page color. */
+internal fun readablePageTextColor(background: Color): Color {
+    val dark = Color.Black
+    val light = Color.White
+    val darkContrast = (background.luminance() + 0.05f) / (dark.luminance() + 0.05f)
+    val lightContrast = (light.luminance() + 0.05f) / (background.luminance() + 0.05f)
+    return if (darkContrast >= lightContrast) dark else light
+}
 
 /** Hides the system status/navigation bars in step with the reader chrome, so hiding chrome
  * gives a genuinely fullscreen page rather than just a page with no title bar. A swipe from the
@@ -365,7 +406,7 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
             Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close reader")
         }
         Text(bookTitle, Modifier.weight(1f).padding(horizontal = 4.dp), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (onReadAloud != null) IconAction(BrandIcons.Headphones, "Read aloud", onReadAloud, tint = MaterialTheme.colorScheme.onSurface)
+        if (onReadAloud != null) IconAction(BrandIcons.Headphones, "Read aloud", onReadAloud, tint = MaterialTheme.colorScheme.onBackground)
         // Adding a bookmark pops the icon and ticks; removing it just settles back.
         val haptics = LocalHapticFeedback.current
         val pop = remember { Animatable(1f) }
@@ -375,12 +416,12 @@ private fun ReaderTopBar(bookTitle: String, onClose: () -> Unit, onContents: () 
                 if (bookmarked) BrandIcons.BookmarkAdded else BrandIcons.Bookmark,
                 if (bookmarked) "Remove bookmark" else "Bookmark this place",
                 Modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value },
-                tint = animateColorAsState(if (bookmarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface, tween(200), label = "bookmark").value,
+                tint = MaterialTheme.colorScheme.onBackground,
             )
         }
-        IconAction(BrandIcons.List, contentsLabel, onContents, tint = MaterialTheme.colorScheme.onSurface)
+        IconAction(BrandIcons.List, contentsLabel, onContents, tint = MaterialTheme.colorScheme.onBackground)
         TextButton(onClick = onSettings, modifier = Modifier.semantics { contentDescription = "Reading settings" }) {
-            Text("Aa", fontFamily = LiterataFamily, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+            Text("Aa", fontFamily = LiterataFamily, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = MaterialTheme.colorScheme.onBackground)
         }
     }
 }
@@ -402,20 +443,20 @@ private fun ReaderProgressBar(
             .padding(bottom = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()),
     ) {
         val shown by animateFloatAsState(progress.coerceIn(0f, 1f), tween(300), label = "reading progress")
-        Box(Modifier.fillMaxWidth().height(2.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
-            Box(Modifier.fillMaxWidth(shown).height(2.dp).background(MaterialTheme.colorScheme.secondary))
+        Box(Modifier.fillMaxWidth().height(2.dp).background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.15f))) {
+            Box(Modifier.fillMaxWidth(shown).height(2.dp).background(MaterialTheme.colorScheme.onBackground))
         }
         Row(
             modifier = Modifier.fillMaxWidth().height(ProgressBarHeight - 2.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = { onPrevious?.invoke() }, enabled = onPrevious != null) {
-                Icon(BrandIcons.ChevronLeft, previousLabel, tint = if (onPrevious != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+                Icon(BrandIcons.ChevronLeft, previousLabel, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = if (onPrevious != null) 0.85f else 0.35f))
             }
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.weight(1f))
-            Text("$percentage%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 6.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onBackground, maxLines = 1, modifier = Modifier.weight(1f))
+            Text("$percentage%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.padding(end = 6.dp))
             IconButton(onClick = { onNext?.invoke() }, enabled = onNext != null) {
-                Icon(BrandIcons.ChevronRight, nextLabel, tint = if (onNext != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+                Icon(BrandIcons.ChevronRight, nextLabel, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = if (onNext != null) 0.85f else 0.35f))
             }
         }
     }
@@ -432,7 +473,7 @@ fun ChapterTransition(nextChapter: ReaderChapter?, onNextChapter: () -> Unit, on
     ) {
         Text("CHAPTER COMPLETE", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelMedium, letterSpacing = 1.7.sp)
         Spacer(Modifier.height(12.dp))
-        Text(nextChapter?.title ?: "You reached the final page", style = MaterialTheme.typography.headlineMedium)
+        Text(nextChapter?.title ?: "You reached the final page", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(22.dp))
         // The last chapter's action actually finishes the book (records 100% and returns to the
         // library) rather than ending on a dead, disabled button.
@@ -610,6 +651,15 @@ private fun ReaderSettingsSheet(
         contentWindowInsets = { WindowInsets.statusBars.union(WindowInsets.ime) },
     ) {
         val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        var colorDraft by remember(settings.pageColor) { mutableStateOf(settings.pageColor) }
+        val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) scope.launch {
+                runCatching { withContext(Dispatchers.IO) { ReaderBackgrounds.import(context, uri) } }
+                    .onSuccess { onAction(ReaderAction.SetPageImageVersion(it)) }
+                    .onFailure { Toast.makeText(context, it.message ?: "Could not use that image", Toast.LENGTH_LONG).show() }
+            }
+        }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
             Text("Reading settings", style = MaterialTheme.typography.headlineMedium)
             val minutes = remember { stats.secondsToday() / 60 }
@@ -623,6 +673,32 @@ private fun ReaderSettingsSheet(
             ThemeSwatches(settings.theme) { onAction(ReaderAction.SelectTheme(it)) }
 
             if (!fixedLayout) {
+                SettingsSection("Page layout")
+                ChoiceRow(EpubLayout.entries, settings.epubLayout, EpubLayout::label) { onAction(ReaderAction.SetEpubLayout(it)) }
+
+                SettingsSection("Page background")
+                ChoiceRow(PageBackground.entries, settings.pageBackground, PageBackground::label) {
+                    if (it == PageBackground.Image && !ReaderBackgrounds.file(context).isFile) imagePicker.launch("image/*")
+                    else onAction(ReaderAction.SetPageBackground(it))
+                }
+                if (settings.pageBackground == PageBackground.Solid) {
+                    OutlinedTextField(colorDraft, { colorDraft = it.take(7) }, label = { Text("Color (#RRGGBB)") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), singleLine = true)
+                    val previewColor = ReaderSettings.validPageColor(colorDraft)?.let { Color(android.graphics.Color.parseColor(it)) }
+                    if (previewColor != null) {
+                        Box(Modifier.fillMaxWidth().height(48.dp).padding(top = 8.dp).background(previewColor), contentAlignment = Alignment.Center) {
+                            Text("Sample page", color = readablePageTextColor(previewColor))
+                        }
+                    }
+                    Button(onClick = { onAction(ReaderAction.SetPageColor(colorDraft)) }, enabled = previewColor != null && colorDraft.uppercase() != settings.pageColor, modifier = Modifier.padding(top = 8.dp)) { Text("Use color") }
+                }
+                if (settings.pageBackground == PageBackground.Image) {
+                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { imagePicker.launch("image/*") }) { Text("Choose image") }
+                        TextButton(onClick = { ReaderBackgrounds.remove(context); onAction(ReaderAction.SetPageBackground(PageBackground.Theme)) }) { Text("Remove") }
+                    }
+                    Text("A private copy is saved on this device. Text sits on a translucent reading panel.", style = MaterialTheme.typography.bodySmall)
+                }
+
                 SettingsSection("Text")
                 SettingLabel("Typeface")
                 ChoiceRow(ReaderTypeface.entries, settings.typeface, ReaderTypeface::label) { onAction(ReaderAction.SelectTypeface(it)) }
@@ -644,6 +720,7 @@ private fun ReaderSettingsSheet(
             }
 
             SettingsSection("Screen")
+            SettingSlider("Warmth", if (settings.warmth == 0f) "Off" else "${(settings.warmth * 100).roundToInt()}%", settings.warmth, 0f..1f) { onAction(ReaderAction.SetWarmth(it)) }
             SettingSwitch("Custom brightness", if (settings.brightness == null) "Following the system" else "${(settings.brightness * 100).roundToInt()}%", settings.brightness != null, top = 0.dp) {
                 onAction(ReaderAction.SetBrightness(if (it) 0.6f else null))
             }
@@ -660,7 +737,7 @@ private fun ReaderSettingsSheet(
                 }
             }
             SettingSwitch("Show reading progress", "Chapter or page, and overall position", settings.showProgress) { onAction(ReaderAction.SetProgressVisible(it)) }
-            SettingSwitch("Volume keys turn pages", "Volume down scrolls forward a screen, up goes back", settings.volumeKeys) { onAction(ReaderAction.SetVolumeKeys(it)) }
+            SettingSwitch("Volume keys turn pages", "Volume down goes forward; volume up goes back", settings.volumeKeys) { onAction(ReaderAction.SetVolumeKeys(it)) }
             Spacer(Modifier.height(20.dp))
             SettingLabel("Orientation")
             ChoiceRow(ReaderOrientation.entries, settings.orientation, ReaderOrientation::label) { onAction(ReaderAction.SetOrientation(it)) }

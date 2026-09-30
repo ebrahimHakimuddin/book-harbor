@@ -12,6 +12,8 @@ class EpubBook private constructor(
     private val zip: ZipFile,
     val title: String,
     val chapters: List<Chapter>,
+    /** Page-flow directions that the reflow pager cannot lay out correctly. */
+    val pagedFallbackReason: String?,
 ) : Closeable {
     val totalWeight: Long = chapters.sumOf { it.weight }.coerceAtLeast(1)
 
@@ -89,7 +91,8 @@ class EpubBook private constructor(
                 Item(it.getAttribute("id"), href, it.getAttribute("properties"), it.getAttribute("media-type"))
             }.associateBy { it.id }
 
-            val spine = Xml.children(parts["spine"] ?: throw EpubException("EPUB has no spine")).filter { it.tag() == "itemref" && it.getAttribute("linear") != "no" }
+            val spineElement = parts["spine"] ?: throw EpubException("EPUB has no spine")
+            val spine = Xml.children(spineElement).filter { it.tag() == "itemref" && it.getAttribute("linear") != "no" }
             val titles = tableOfContents(zip, opf, parts["spine"], manifest.values.map { Triple(it.id, it.href, it.properties + "|" + it.mediaType) })
 
             val chapters = spine.mapNotNull { ref ->
@@ -100,7 +103,28 @@ class EpubBook private constructor(
             }
             if (chapters.isEmpty()) throw EpubException("EPUB has no readable chapters")
             val numbered = chapters.mapIndexed { index, chapter -> if (chapter.title.isBlank()) chapter.copy(title = "Chapter ${index + 1}") else chapter }
-            return EpubBook(zip, title, numbered)
+            val rtl = spineElement.getAttribute("page-progression-direction").equals("rtl", ignoreCase = true)
+            val verticalPattern = Regex("(?:-epub-)?writing-mode\\s*:\\s*(?:vertical|sideways)", RegexOption.IGNORE_CASE)
+            val rtlPattern = Regex("\\bdir\\s*=\\s*['\"]rtl['\"]", RegexOption.IGNORE_CASE)
+            val directionalStyles = zip.entries().asSequence().filter { entry ->
+                val extension = entry.name.substringAfterLast('.', "").lowercase()
+                extension == "css" || entry.name == numbered.first().href
+            }.any { entry ->
+                if (entry.size > MAX_DOCUMENT_BYTES) false else runCatching {
+                    zip.getInputStream(entry).bufferedReader().use { reader ->
+                        val content = StringBuilder()
+                        val buffer = CharArray(8192)
+                        while (content.length < MAX_DOCUMENT_BYTES) {
+                            val count = reader.read(buffer, 0, minOf(buffer.size.toLong(), MAX_DOCUMENT_BYTES - content.length).toInt())
+                            if (count < 0) break
+                            content.append(buffer, 0, count)
+                        }
+                        verticalPattern.containsMatchIn(content) || rtlPattern.containsMatchIn(content)
+                    }
+                }.getOrDefault(false)
+            }
+            val fallback = if (rtl || directionalStyles) "This EPUB uses right-to-left or vertical page flow. Scroll mode is used for this book." else null
+            return EpubBook(zip, title, numbered, fallback)
         }
 
         /** href → title from the EPUB 3 nav document, falling back to the EPUB 2 NCX. */

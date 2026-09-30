@@ -84,4 +84,24 @@ class ReaderStateTest {
         val changed = ReaderState.preview().reduce(ReaderAction.SelectTheme(ReaderTheme.Black)).reduce(ReaderAction.SetFontScale(1.4f))
         assertEquals(ReaderSettings.Default, changed.reduce(ReaderAction.ResetSettings).settings)
     }
+
+    @Test
+    fun layoutAndPageSurfacePersistAndValidate() {
+        val settings = ReaderSettings(epubLayout = EpubLayout.TwoPages, pageBackground = PageBackground.Image,
+            pageColor = "#D8C9A7", pageImageVersion = 42, warmth = 0.65f)
+        assertEquals(settings, ReaderSettings.fromMap(settings.toMap()))
+        val corrupt = ReaderSettings.fromMap(mapOf("epubLayout" to "Sideways", "pageBackground" to "Invisible",
+            "pageColor" to "red", "pageImageVersion" to "-4", "warmth" to "NaN"))
+        assertEquals(EpubLayout.Scroll, corrupt.epubLayout)
+        assertEquals(PageBackground.Theme, corrupt.pageBackground)
+        assertEquals(ReaderSettings.Default.pageColor, corrupt.pageColor)
+        assertEquals(0L, corrupt.pageImageVersion)
+        assertEquals(0f, corrupt.warmth)
+        val changed = ReaderState.preview().reduce(ReaderAction.SetEpubLayout(EpubLayout.OnePage))
+            .reduce(ReaderAction.SetPageColor("#aabbcc")).reduce(ReaderAction.SetWarmth(2f))
+        assertEquals(EpubLayout.OnePage, changed.settings.epubLayout)
+        assertEquals("#AABBCC", changed.settings.pageColor)
+        assertEquals(PageBackground.Solid, changed.settings.pageBackground)
+        assertEquals(1f, changed.settings.warmth)
+    }
 }

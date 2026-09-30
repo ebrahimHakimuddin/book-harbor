@@ -6,9 +6,12 @@ primary controls usable without leaving the page.
 
 ## EPUB reading model
 
-An EPUB chapter is one uninterrupted vertical scrolling surface. Text reflows
-to the viewport and the reader does not divide a chapter into simulated pages.
-Long chapters may be scrolled continuously from start to finish.
+EPUBs offer Scroll, One page, and Two pages. Scroll keeps each chapter on a
+continuous vertical surface. Page modes reflow text into measured page spans;
+a long paragraph can continue onto the next page. Two pages uses a spread on
+wide screens and one page on narrow screens. Tap the page edges, swipe, use the
+footer controls or volume keys to turn pages. A book with right-to-left or
+vertical writing falls back to Scroll with a reader message.
 
 Only the current spine item is mounted in the reading surface. Images and text
 inside that item load incrementally, while the next item may be parsed and
@@ -21,9 +24,9 @@ The end of every chapter contains a deliberate transition card showing:
 - the next chapter's title when one exists; and
 - a prominent **Next chapter** action.
 
-Reaching the bottom never advances automatically. Activating the action swaps
-in the next chapter, scrolls to its start, moves accessibility focus to its
-heading, and records the new location. The last chapter instead offers a
+Reaching the bottom or the final page never advances automatically. Activating
+the action swaps in the next chapter, scrolls to its start, moves accessibility
+focus to its heading, and records the new location. The last chapter offers a
 **Finish book** action. Previous/next chapter actions also remain available in
 the reader controls for non-linear navigation.
 
@@ -54,7 +57,8 @@ is a display summary calculated from stable publication positions across the
 EPUB spine, or from page index and count for PDF. It is never used in place of
 the format-specific locator.
 
-Scrolling updates the local position at a bounded cadence and always flushes it
+Scrolling updates the local position at a bounded cadence; page turns save the
+first visible content offset. Both modes flush the position
 when the app backgrounds, the book closes, or the chapter changes. Each durable
 local update creates an immutable synchronization event as defined in
 [`offline-sync.md`](offline-sync.md). Reading remains fully functional while
@@ -70,20 +74,24 @@ The settings sheet previews changes immediately and is fully usable offline.
 Initial EPUB controls include:
 
 - theme: system, light, sepia, dark, and black;
-- typeface: publisher, reader serif, reader sans serif, and an
-  accessibility-focused face;
+- page background: built-in theme, custom solid color, or a local image;
+- warmth tint, independent of brightness and the night schedule;
+- EPUB layout: continuous scroll, one page, or two pages on wide screens;
+- typeface: Literata or Inter;
 - font size;
 - line height;
 - paragraph spacing;
 - horizontal margin;
-- text alignment, including preserving the publisher default; and
+- text alignment: left or justified; and
 - screen brightness override, with a system-brightness option.
 
-Theme, typography, progress visibility, and brightness are stored locally as a
-reader profile and apply to newly opened books. A reader may reset an individual
-setting or the whole profile to defaults. Settings changes must not require a
-server round trip. Reader settings stay on the device; reading progress and
-annotations sync across devices.
+Theme, typography, layout, progress visibility, brightness, and page surface
+are stored locally as one reader profile and apply to newly opened books.
+Selected page images are downsampled into private device storage and are never
+uploaded. If an image disappears or cannot be decoded, the reader uses its
+built-in page color. Warmth affects only the reader's content surface, not the
+device display. A reader may reset the profile to defaults. Settings changes
+need no server round trip; reading progress and annotations sync across devices.
 
 The main overlay also provides table of contents, chapter/page navigation,
 progress, settings, and close. Controls meet Android
@@ -152,8 +160,7 @@ dictionary or translate app. PDFs zoom with a pinch, from 1x to 4x.
 
 - A downloaded EPUB and PDF can be opened, navigated, customized, closed, and
   reopened in airplane mode.
-- An EPUB chapter scrolls continuously without page snapping or an artificial
-  break inside the chapter.
+- Scroll mode is continuous; page modes split long text without dropping it.
 - The reader does not enter another chapter until the reader activates the
   next-chapter control or chooses a destination explicitly.
 - The saved locator resolves to the same passage after changing EPUB typography

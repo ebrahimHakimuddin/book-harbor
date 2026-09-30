@@ -74,6 +74,11 @@ sealed interface ReaderAction {
     data class SetWordEmphasis(val enabled: Boolean) : ReaderAction
     data class SetLetterSpacing(val em: Float) : ReaderAction
     data class SetWordSpacing(val em: Float) : ReaderAction
+    data class SetEpubLayout(val layout: EpubLayout) : ReaderAction
+    data class SetPageBackground(val background: PageBackground) : ReaderAction
+    data class SetPageColor(val color: String) : ReaderAction
+    data class SetPageImageVersion(val version: Long) : ReaderAction
+    data class SetWarmth(val amount: Float) : ReaderAction
     data object ResetSettings : ReaderAction
 }
 
@@ -107,5 +112,10 @@ fun ReaderState.reduce(action: ReaderAction): ReaderState = when (action) {
     is ReaderAction.SetWordEmphasis -> copy(settings = settings.copy(wordEmphasis = action.enabled))
     is ReaderAction.SetLetterSpacing -> copy(settings = settings.copy(letterSpacing = action.em.coerceIn(0f, 0.15f)))
     is ReaderAction.SetWordSpacing -> copy(settings = settings.copy(wordSpacing = action.em.coerceIn(0f, 0.6f)))
+    is ReaderAction.SetEpubLayout -> copy(settings = settings.copy(epubLayout = action.layout))
+    is ReaderAction.SetPageBackground -> copy(settings = settings.copy(pageBackground = action.background))
+    is ReaderAction.SetPageColor -> ReaderSettings.validPageColor(action.color)?.let { copy(settings = settings.copy(pageColor = it, pageBackground = PageBackground.Solid)) } ?: this
+    is ReaderAction.SetPageImageVersion -> copy(settings = settings.copy(pageImageVersion = action.version.coerceAtLeast(0), pageBackground = PageBackground.Image))
+    is ReaderAction.SetWarmth -> copy(settings = settings.copy(warmth = action.amount.coerceIn(0f, 1f)))
     ReaderAction.ResetSettings -> copy(settings = ReaderSettings.Default)
 }

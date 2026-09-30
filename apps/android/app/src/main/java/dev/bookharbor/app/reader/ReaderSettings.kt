@@ -26,6 +26,18 @@ enum class ReaderOrientation(val label: String) {
     Landscape("Landscape"),
 }
 
+enum class EpubLayout(val label: String) {
+    Scroll("Scroll"),
+    OnePage("One page"),
+    TwoPages("Two pages"),
+}
+
+enum class PageBackground(val label: String) {
+    Theme("Theme"),
+    Solid("Color"),
+    Image("Image"),
+}
+
 /** The reader profile. It lives on the device and applies to every book; no server round trip. */
 data class ReaderSettings(
     val theme: ReaderTheme = ReaderTheme.System,
@@ -53,6 +65,14 @@ data class ReaderSettings(
     /** Extra space between letters and after each word, in ems. */
     val letterSpacing: Float = 0f,
     val wordSpacing: Float = 0f,
+    val epubLayout: EpubLayout = EpubLayout.Scroll,
+    val pageBackground: PageBackground = PageBackground.Theme,
+    /** Opaque #RRGGBB, used only for [PageBackground.Solid]. */
+    val pageColor: String = "#F5EBD7",
+    /** Local private image generation; changing this reloads the image without a server round trip. */
+    val pageImageVersion: Long = 0,
+    /** Local warm tint intensity, 0..1. */
+    val warmth: Float = 0f,
 ) {
     /** True when [hour] (0..23) falls in the night window, which may wrap past midnight. */
     fun isNight(hour: Int): Boolean = when {
@@ -80,6 +100,8 @@ data class ReaderSettings(
         put("nightStart", nightStart.toString()); put("nightEnd", nightEnd.toString()); put("nightBrightness", nightBrightness.toString())
         put("volumeKeys", volumeKeys.toString()); put("orientation", orientation.name); put("hyphenation", hyphenation.toString())
         put("wordEmphasis", wordEmphasis.toString()); put("letterSpacing", letterSpacing.toString()); put("wordSpacing", wordSpacing.toString())
+        put("epubLayout", epubLayout.name); put("pageBackground", pageBackground.name); put("pageColor", pageColor)
+        put("pageImageVersion", pageImageVersion.toString()); put("warmth", warmth.toString())
     }
 
     companion object {
@@ -106,7 +128,14 @@ data class ReaderSettings(
             wordEmphasis = map["wordEmphasis"]?.toBooleanStrictOrNull() ?: Default.wordEmphasis,
             letterSpacing = (map["letterSpacing"]?.toFloatOrNull() ?: Default.letterSpacing).coerceIn(0f, 0.15f),
             wordSpacing = (map["wordSpacing"]?.toFloatOrNull() ?: Default.wordSpacing).coerceIn(0f, 0.6f),
+            epubLayout = enumOr(map["epubLayout"], Default.epubLayout),
+            pageBackground = enumOr(map["pageBackground"], Default.pageBackground),
+            pageColor = validPageColor(map["pageColor"]) ?: Default.pageColor,
+            pageImageVersion = map["pageImageVersion"]?.toLongOrNull()?.coerceAtLeast(0) ?: 0,
+            warmth = (map["warmth"]?.toFloatOrNull() ?: 0f).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f,
         )
+
+        fun validPageColor(value: String?): String? = value?.uppercase()?.takeIf { it.matches(Regex("^#[0-9A-F]{6}$")) }
 
         private inline fun <reified T : Enum<T>> enumOr(name: String?, fallback: T): T =
             enumValues<T>().firstOrNull { it.name == name } ?: fallback
@@ -125,6 +154,6 @@ class ReaderSettingsStore(private val preferences: SharedPreferences) {
 
     private companion object {
         const val PREFIX = "reader."
-        val KEYS = listOf("theme", "typeface", "fontScale", "lineHeight", "paragraphSpacing", "margin", "alignment", "brightness", "showProgress", "nightSchedule", "nightStart", "nightEnd", "nightBrightness", "volumeKeys", "orientation", "hyphenation", "wordEmphasis", "letterSpacing", "wordSpacing")
+        val KEYS = listOf("theme", "typeface", "fontScale", "lineHeight", "paragraphSpacing", "margin", "alignment", "brightness", "showProgress", "nightSchedule", "nightStart", "nightEnd", "nightBrightness", "volumeKeys", "orientation", "hyphenation", "wordEmphasis", "letterSpacing", "wordSpacing", "epubLayout", "pageBackground", "pageColor", "pageImageVersion", "warmth")
     }
 }

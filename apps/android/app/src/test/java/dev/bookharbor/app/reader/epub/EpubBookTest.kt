@@ -35,6 +35,23 @@ class EpubBookTest {
         }
     }
 
+    @Test fun directionalBooksUseScrollFallback() {
+        EpubBook.open(epub(opf = OPF.replace("<spine>", """<spine page-progression-direction="rtl">"""))).use {
+            assertNotNull(it.pagedFallbackReason)
+        }
+        EpubBook.open(epub("OEBPS/book.css" to "body { writing-mode: vertical-rl; }")).use {
+            assertNotNull(it.pagedFallbackReason)
+        }
+        EpubBook.open(epub()).use { assertNull(it.pagedFallbackReason) }
+    }
+
+    @Test fun textOffsetsRoundTripAndOversizedLocatorsFailSafely() {
+        val position = EpubPosition(1, "/4/6", 1250)
+        assertEquals(position, EpubPosition.parse(position.toCfi()))
+        assertNull(EpubPosition.parse("epubcfi(/6/99999999999999999!/4/2:0)"))
+        assertNull(EpubPosition.parse("epubcfi(/6/2!/4/2:999999999999999999)"))
+    }
+
     @Test fun fallsBackToTheNcxAndThenToChapterNumbers() {
         val withNcx = epub(nav = null, ncx = """<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap><navPoint><navLabel><text>Old Style One</text></navLabel><content src="ch1.xhtml"/></navPoint></navMap></ncx>""",
             opf = OPF.replace("""<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>""", """<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>""").replace("<spine>", """<spine toc="ncx">"""))
