@@ -34,6 +34,8 @@ offline downloads, a comfortable reader, and their place kept across devices.
 - A web admin console at `/admin/` for importing books, editing metadata,
   managing readers, and settings.
 - Book files on local disk or in an S3-compatible bucket (AWS, R2, MinIO).
+- Read-only indexing of existing EPUB/PDF folders on a NAS or local mount, with
+  periodic scans and no copy into BookHarbor storage.
 - Full export of books and data, and an offline `restore` command.
 - Email through Resend for invites and password resets; admin alerts through
   ntfy.
@@ -73,6 +75,26 @@ docker compose up --build
 Then open `http://localhost:8080/admin/` to create the first administrator.
 Data lives in the `bookharbor-data` volume.
 
+### Index an existing library
+
+Mount an existing `Author/Book` folder on the Docker host (for example using
+SMB or NFS), then uncomment the read-only bind mount in `compose.yaml` and set
+`BOOKHARBOR_LIBRARY_DIRS=/library` in `.env`. Set
+`BOOKHARBOR_LIBRARY_ALLOW_DIRS=/library` to allow administrators to add nested
+source folders in Settings. The paths name directories
+*inside the container*. For a direct Go installation, set the variable to one
+or more absolute paths separated by the OS path-list separator. Keep the
+BookHarbor data directory outside all watched roots.
+
+On startup, BookHarbor scans EPUB and PDF files recursively, and repeats the
+scan every 15 minutes by default (`BOOKHARBOR_SCAN_INTERVAL`). **Settings → Watched libraries** can add, rename, enable, or disable sources inside the approved mounts; it shows last scan and file errors and offers Scan now and Verify all. It uses the same catalog and Android download
+API as imported books. Upload/import remains available. Source files are never
+renamed, moved, or deleted by BookHarbor. A missing mount keeps catalog and
+reading data intact; books are hidden after two complete scans confirm their
+files have gone. Restore the mount and scan again to make them available.
+Removing a source's catalog entry deletes its indexed editions and any book
+without another edition, but never deletes source files on the NAS.
+
 The default image includes Calibre so MOBI and AZW3 can be converted. For a much
 smaller image without that, build the `slim` target:
 
@@ -107,8 +129,10 @@ then the app.
 
 ### Backups
 
-**Backup** in the admin console downloads one zip with every book file, the
-covers, and a snapshot of the database. To restore it into an empty data
+**Backup** in the admin console offers a full zip with every managed and watched
+book file, covers, and a snapshot of the database. A smaller reference backup
+includes managed files and the metadata and paths for watched books; restore
+it with the same NAS paths mounted and configured. To restore into an empty data
 directory, with the server stopped:
 
 ```sh

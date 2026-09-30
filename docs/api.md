@@ -204,6 +204,38 @@ embedded cover. A file byte-identical to an existing edition, here or through
 it matches. The default upload limit is 512 MiB and can be changed with
 `BOOKHARBOR_MAX_UPLOAD_BYTES`.
 
+## Watched libraries
+
+Set `BOOKHARBOR_LIBRARY_DIRS` to absolute directories visible to the server
+(colon-separated on Linux) for automatic registration. Set
+`BOOKHARBOR_LIBRARY_ALLOW_DIRS` to the mounted roots within which administrators
+may add source folders. If the allowlist is unset, the automatically registered
+directories are the allowlist. Sources are scanned at startup and every 15
+minutes by default; use `BOOKHARBOR_SCAN_INTERVAL` to change the period.
+BookHarbor only reads mounted files. Removing an auto-registration path from
+the environment does not disable an existing source; disable it in Settings.
+
+All source routes require administrator authentication:
+
+- `GET /api/v1/admin/sources` lists sources, enabled state, available file count,
+  last successful scan, root error, up to 100 file-level errors, current scan
+  activity, and the operator allowlist.
+- `POST /api/v1/admin/sources` accepts `{ "path": "/library/Author", "name": "Author" }`.
+  The path must be an existing directory inside an allowed mount. It starts a scan.
+- `PATCH /api/v1/admin/sources/{id}` accepts `{ "name": "New name", "enabled": true }`.
+  Disabling hides the source while keeping its catalog and reading data.
+- `DELETE /api/v1/admin/sources/{id}` disables the source and keeps its catalog;
+  `?deleteCatalog=true` also deletes its indexed editions and orphan books.
+  Neither form changes files in the mounted folder.
+- `POST /api/v1/admin/sources/scan` starts an asynchronous scan; add
+  `?verify=true` to rehash unchanged files.
+
+`GET /api/v1/admin/export/estimate` reports managed and watched file bytes.
+`GET /api/v1/admin/export?mode=full` includes all source bytes and restores
+them as managed files. `mode=references` omits watched bytes but preserves
+their paths in the database snapshot, so the same roots must be mounted and
+configured after restore. Both archives include managed files and covers.
+
 An edition response includes format, byte length, media type, SHA-256 checksum,
 and an authenticated content URL. A book built from a followed web novel also
 has `webnovelChapters`, the chapters in it so far; when its file is replaced

@@ -9,7 +9,8 @@ behavior independent of HTTP, the database, and file storage.
 ```text
 Android app ----\                          /-- SQLite metadata (data directory)
                  versioned HTTP API ---- BookHarbor server
-Admin console --/   (/api/v1)              \-- book files (disk or S3)
+Admin console --/   (/api/v1)              \-- managed book files (disk or S3)
+                                            \-- watched read-only NAS folders
                                             \-- integrations: Resend, ntfy,
                                                 Hardcover, Shelfmark, novelarchive.cc
 ```
@@ -28,7 +29,14 @@ All live under `apps/server/internal/`.
   deep operation: validate the format (converting MOBI/AZW3 to EPUB first),
   checksum it, extract EPUB metadata, store the original, and create the
   edition atomically. Files live on disk or in S3 (`objectstore`); an edition's
-  file can be replaced in place, which web novel updates use.
+  file can be replaced in place, which web novel updates use. Operator-mounted
+  EPUB/PDF roots are indexed by periodic scans into `library_sources` and
+  `source_files`; per-file failures are recorded in `source_scan_errors`. Admin
+  source mutations are constrained to operator-configured mount roots. These
+  editions reference files in place. The scanner keeps
+  catalog IDs stable across unchanged scans, renames, and same-path revisions,
+  and marks missing files unavailable without deleting progress. Content is
+  opened relative to an `os.Root` anchored at the configured source directory.
 - **reading**: per-reader progress. Format-specific locators are authoritative;
   percentages are display summaries. See [`offline-sync.md`](offline-sync.md).
 - **annotations**: bookmarks, highlights, and notes, synced with
@@ -50,7 +58,8 @@ All live under `apps/server/internal/`.
 - **notify** and **mail**: ntfy pushes for administrators, and email through
   Resend.
 - **audit**: a log of account, book, and settings changes.
-- **export**: the full backup zip and the offline `restore` command.
+- **export**: a portable full backup, a smaller backup that retains external
+  source references, and the offline `restore` command.
 - **httpapi**: routes, request validation, and error codes. Handlers translate
   between HTTP and the modules above.
 
