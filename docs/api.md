@@ -164,7 +164,7 @@ added or gaining chapters.
 ## Library
 
 ```text
-GET    /books?limit=&cursor=
+GET    /books?limit=&cursor=&q=&format=&tag=&series=
 GET    /books/{bookId}
 POST   /books                         administrator only
 PATCH  /books/{bookId}                administrator only
@@ -177,8 +177,45 @@ GET    /editions/{editionId}/content
 ```
 
 `GET /books` returns up to `limit` books (default 50, maximum 100), newest
-first, plus `nextCursor` when more remain. Pass it back as `cursor` to fetch the
-next page; a malformed cursor returns `400 invalid_cursor`.
+first, plus `total` (matching books across all pages) and `nextCursor` when more
+remain. Pass it back as `cursor` with the same filters to fetch the next page;
+restart without a cursor when filters change. A malformed cursor returns
+`400 invalid_cursor`.
+
+Search runs on the server before pagination. `q` is a literal substring search
+across title, subtitle, description, each author, series, and each tag; `%` and
+`_` are ordinary characters. Text matching uses Unicode lowercase mapping
+(without accent folding). `format` is `epub` or `pdf` and must match an available
+edition; unavailable watched files do not satisfy it. `tag` and `series` match
+whole values. All supplied filters must match. Text fields are trimmed and
+limited to 300 characters; unsupported formats or oversized fields return
+`400 invalid_filter`. Search covers catalog metadata, not book contents.
+
+### Saved filters
+
+```text
+GET    /saved-filters
+POST   /saved-filters
+PUT    /saved-filters/{filterId}
+DELETE /saved-filters/{filterId}
+```
+
+These authenticated routes act only on the caller's own filters, including
+for administrators. The index returns `{ "items": [...] }` sorted by name.
+Create and replace take `{ "name": "Sea reads", "filter": { "q": "harbor",
+"format": "epub", "tag": "Adventure", "series": "Sea Stories" } }`. An empty
+`filter` object saves the unfiltered catalog. Names are trimmed, require 1–100
+characters, and are unique per user ignoring ASCII case. Create returns `201`
+and replace returns `200`, both with `{ "id", "name", "filter", "createdAt",
+"updatedAt" }`; `PUT` replaces the whole definition, so omitted filter fields
+clear previous values. Delete returns `204`. Unknown or another user's IDs
+return `404`, duplicate names return `409 filter_name_taken`, invalid names or
+filters return `422`, and a missing `filter` object returns `422 invalid_filter`.
+Apply a saved filter by passing its fields to `GET /books`.
+
+The admin library supports saving, applying, updating, and deleting these
+filters. Android clients can use the same API; Android search/filter UI has
+not yet been migrated to it.
 
 `POST /books/{bookId}/editions` takes the same single-`file` multipart body as
 `POST /books` and adds another format to an existing book. A book holds one

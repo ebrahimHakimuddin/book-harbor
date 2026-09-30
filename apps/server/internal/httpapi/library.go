@@ -224,7 +224,14 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
-	books, next, err := s.library.List(r.Context(), limit, r.URL.Query().Get("cursor"))
+	params := r.URL.Query()
+	books, next, total, err := s.library.Search(r.Context(), limit, params.Get("cursor"), library.BookFilter{
+		Query: params.Get("q"), Format: params.Get("format"), Tag: params.Get("tag"), Series: params.Get("series"),
+	})
+	if errors.Is(err, library.ErrInvalidFilter) {
+		writeError(w, http.StatusBadRequest, "invalid_filter", "use EPUB or PDF format and at most 300 characters per search field")
+		return
+	}
 	if errors.Is(err, library.ErrInvalidCursor) {
 		writeError(w, http.StatusBadRequest, "invalid_cursor", "cursor is not valid")
 		return
@@ -244,7 +251,8 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		Items      []bookResponse `json:"items"`
 		NextCursor string         `json:"nextCursor,omitempty"`
-	}{Items: items, NextCursor: next})
+		Total      int            `json:"total"`
+	}{Items: items, NextCursor: next, Total: total})
 }
 
 // parseBookUpload reads a multipart body holding exactly one "file" part and,

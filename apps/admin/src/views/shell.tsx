@@ -3,7 +3,7 @@ import { ArchiveIcon, BookMarkedIcon, NewspaperIcon, BookOpenIcon, HistoryIcon, 
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, type Session, type User } from "@/lib/api"
-import { useBooks, useBookRequests, useReaders, useUpdateSelf } from "@/lib/queries"
+import { useBookCount, useBookRequests, useReaders, useUpdateSelf } from "@/lib/queries"
 import { errorMessage, initials, passwordOk } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Wordmark } from "@/components/brand"
@@ -50,11 +50,11 @@ export function Shell({ session, instanceName }: { session: Session; instanceNam
   const client = useQueryClient()
   const [view, setView] = useView()
   const [accountOpen, setAccountOpen] = useState(false)
-  const books = useBooks()
+  const books = useBookCount()
   const readers = useReaders()
   const requests = useBookRequests()
   const counts: Partial<Record<View, number | undefined>> = {
-    library: books.loading ? undefined : books.books.length,
+    library: books.data,
     readers: readers.data?.length,
     requests: requests.data?.length || undefined,
   }

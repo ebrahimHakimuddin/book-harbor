@@ -327,7 +327,17 @@ func (s *Store) checkDuplicate(ctx context.Context, checksum string) error {
 
 // List returns books newest first. Pass the returned next cursor to fetch the
 // following page; next is empty when there are no more books.
-func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Book, next string, err error) {
+func (s *Store) List(ctx context.Context, limit int, cursor string) ([]Book, string, error) {
+	books, next, _, err := s.Search(ctx, limit, cursor, BookFilter{})
+	return books, next, err
+}
+
+// Search applies catalog filters before pagination. Total counts all matching books.
+func (s *Store) Search(ctx context.Context, limit int, cursor string, filter BookFilter) (books []Book, next string, total int, err error) {
+	filter, err = NormalizeFilter(filter)
+	if err != nil {
+		return nil, "", 0, err
+	}
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
@@ -338,10 +348,38 @@ func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Boo
 		FROM books WHERE EXISTS (SELECT 1 FROM editions e LEFT JOIN source_files sf ON sf.edition_id = e.id
 			WHERE e.book_id = books.id AND (sf.edition_id IS NULL OR sf.available = 1))`
 	args := []any{}
+	if filter.Query != "" {
+		// instr treats SQL wildcard characters as ordinary text; JSON arrays are searched
+		// element by element so JSON escaping does not alter the metadata users see.
+		query += ` AND (instr(bookharbor_lower(title), bookharbor_lower(?)) > 0 OR instr(bookharbor_lower(subtitle), bookharbor_lower(?)) > 0
+   OR instr(bookharbor_lower(description), bookharbor_lower(?)) > 0 OR instr(bookharbor_lower(series), bookharbor_lower(?)) > 0
+   OR EXISTS (SELECT 1 FROM json_each(authors_json) WHERE instr(bookharbor_lower(value), bookharbor_lower(?)) > 0)
+   OR EXISTS (SELECT 1 FROM json_each(tags_json) WHERE instr(bookharbor_lower(value), bookharbor_lower(?)) > 0))`
+		for range 6 {
+			args = append(args, filter.Query)
+		}
+	}
+	if filter.Format != "" {
+		query += ` AND EXISTS (SELECT 1 FROM editions e LEFT JOIN source_files sf ON sf.edition_id = e.id
+   WHERE e.book_id = books.id AND e.format = ? AND (sf.edition_id IS NULL OR sf.available = 1))`
+		args = append(args, filter.Format)
+	}
+	if filter.Tag != "" {
+		query += ` AND EXISTS (SELECT 1 FROM json_each(tags_json) WHERE bookharbor_lower(value) = bookharbor_lower(?))`
+		args = append(args, filter.Tag)
+	}
+	if filter.Series != "" {
+		query += ` AND bookharbor_lower(series) = bookharbor_lower(?)`
+		args = append(args, filter.Series)
+	}
+	countQuery := "SELECT COUNT(*) " + query[strings.Index(query, "FROM books"):]
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, "", 0, fmt.Errorf("count matching books: %w", err)
+	}
 	if cursor != "" {
 		createdAt, id, err := decodeCursor(cursor)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		query += ` AND (created_at < ? OR (created_at = ? AND id < ?))`
 		args = append(args, createdAt, createdAt, id)
@@ -350,7 +388,7 @@ func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Boo
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, "", fmt.Errorf("list books: %w", err)
+		return nil, "", 0, fmt.Errorf("list books: %w", err)
 	}
 	defer rows.Close()
 
@@ -358,12 +396,12 @@ func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Boo
 	for rows.Next() {
 		book, err := scanBook(rows)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		books = append(books, book)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", fmt.Errorf("iterate books: %w", err)
+		return nil, "", 0, fmt.Errorf("iterate books: %w", err)
 	}
 	if len(books) > limit {
 		books = books[:limit]
@@ -373,11 +411,11 @@ func (s *Store) List(ctx context.Context, limit int, cursor string) (books []Boo
 	for index := range books {
 		editions, err := s.listEditions(ctx, books[index].ID)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		books[index].Editions = editions
 	}
-	return books, next, nil
+	return books, next, total, nil
 }
 
 func (s *Store) Get(ctx context.Context, bookID string) (Book, error) {

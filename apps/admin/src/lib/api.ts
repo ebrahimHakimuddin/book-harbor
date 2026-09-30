@@ -43,7 +43,23 @@ export interface Book {
   editions: Edition[]
 }
 
+export interface BookFilter {
+  q?: string
+  format?: string
+  tag?: string
+  series?: string
+}
+
+export interface SavedFilter {
+  id: string
+  name: string
+  filter: BookFilter
+  createdAt: string
+  updatedAt: string
+}
+
 export interface BookPage {
+  total: number
   items: Book[]
   nextCursor?: string
 }
@@ -391,7 +407,16 @@ export const api = {
     sessionStore.set(null)
   },
 
-  books: (cursor?: string) => request<BookPage>(`/api/v1/books?limit=100${cursor ? `&cursor=${enc(cursor)}` : ""}`),
+  books: (cursor?: string, filter: BookFilter = {}, limit = 100) => {
+    const params = new URLSearchParams({ limit: String(limit), ...filter })
+    if (cursor) params.set("cursor", cursor)
+    return request<BookPage>(`/api/v1/books?${params}`)
+  },
+  book: (id: string) => request<Book>(`/api/v1/books/${enc(id)}`),
+  savedFilters: () => request<{ items: SavedFilter[] }>("/api/v1/saved-filters"),
+  saveFilter: (body: { name: string; filter: BookFilter }, id?: string) =>
+    request<SavedFilter>(`/api/v1/saved-filters${id ? `/${enc(id)}` : ""}`, { method: id ? "PUT" : "POST", body }),
+  deleteFilter: (id: string) => request<void>(`/api/v1/saved-filters/${enc(id)}`, { method: "DELETE" }),
   importBook(file: File, title: string, onProgress?: (fraction: number) => void) {
     const data = new FormData()
     data.append("file", file)

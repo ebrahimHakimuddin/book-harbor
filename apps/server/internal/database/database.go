@@ -3,14 +3,32 @@ package database
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
+
+// SQLite's built-in lower/NOCASE handle ASCII only. Catalog text uses Go's
+// Unicode lowercase mapping so authors and titles in other scripts match too.
+func init() {
+	sqlite.MustRegisterDeterministicScalarFunction("bookharbor_lower", 1,
+		func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			if args[0] == nil {
+				return nil, nil
+			}
+			value, ok := args[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("bookharbor_lower expects text")
+			}
+			return strings.ToLower(value), nil
+		})
+}
 
 const databaseFilename = "bookharbor.db"
 
@@ -254,6 +272,18 @@ var migrations = []string{
 		seen_at TEXT NOT NULL,
 		PRIMARY KEY (source_id, rel_path)
 	) STRICT;`,
+	`CREATE TABLE saved_filters (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL COLLATE NOCASE,
+  query TEXT NOT NULL DEFAULT '',
+  format TEXT NOT NULL DEFAULT '' CHECK (format IN ('', 'epub', 'pdf')),
+  tag TEXT NOT NULL DEFAULT '',
+  series TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (owner_id, name)
+ ) STRICT;`,
 }
 
 // Open creates or opens BookHarbor's metadata database and applies all known

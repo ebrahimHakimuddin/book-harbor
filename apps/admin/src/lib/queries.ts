@@ -1,10 +1,11 @@
-import { useEffect } from "react"
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query"
-import { api, sessionStore, type Book, type BookPage, type BookUpdate, type Role, type User } from "@/lib/api"
+import { useEffect, useSyncExternalStore } from "react"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query"
+import { api, sessionStore, type Book, type BookFilter, type BookPage, type BookUpdate, type Role, type User } from "@/lib/api"
 
 export const keys = {
   instance: ["instance"] as const,
   books: ["books"] as const,
+  bookCount: ["bookCount"] as const,
   readers: ["readers"] as const,
   audit: ["audit"] as const,
   bookRequests: ["bookRequests"] as const,
@@ -12,27 +13,55 @@ export const keys = {
 
 export const useInstance = () => useQuery({ queryKey: keys.instance, queryFn: api.instance, retry: false })
 
-// Loads every page: search and format filters run in the browser over the full catalog.
-export function useBooks() {
+// Request pickers can load the whole catalog; the library loads pages on demand.
+export function useBooks(filter: BookFilter = {}, autoLoad = true) {
   const query = useInfiniteQuery({
-    queryKey: keys.books,
-    queryFn: ({ pageParam }) => api.books(pageParam),
+    queryKey: [...keys.books, filter],
+    queryFn: ({ pageParam }) => api.books(pageParam, filter),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page: BookPage) => page.nextCursor,
   })
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
   useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+    if (autoLoad && hasNextPage && !isFetchingNextPage && !query.isError) void fetchNextPage()
+  }, [autoLoad, hasNextPage, isFetchingNextPage, fetchNextPage, query.isError])
   const books = query.data?.pages.flatMap((page) => page.items) ?? []
-  return { ...query, books, loading: query.isPending || hasNextPage }
+  return { ...query, books, total: query.data?.pages[0]?.total ?? 0, loading: query.isPending || (autoLoad && hasNextPage) }
 }
 
-// Replace a book everywhere it is cached, without refetching the whole catalog.
+// Update open editors immediately, then refresh search membership.
 function patchBook(client: ReturnType<typeof useQueryClient>, book: Book) {
-  client.setQueryData<InfiniteData<BookPage>>(keys.books, (data) =>
+  client.setQueryData(["book", book.id], book)
+  client.setQueriesData<InfiniteData<BookPage>>({ queryKey: keys.books }, (data) =>
     data && { ...data, pages: data.pages.map((page) => ({ ...page, items: page.items.map((b) => (b.id === book.id ? book : b)) })) },
   )
+  // Metadata and editions can change which searches this book matches.
+  void invalidateCatalog(client)
+}
+
+export const useBook = (id: string | null) => useQuery({ queryKey: ["book", id], queryFn: () => api.book(id!), enabled: !!id })
+export const useBookCount = () => useQuery({ queryKey: keys.bookCount, queryFn: async () => (await api.books(undefined, {}, 1)).total })
+export function useSavedFilters() {
+  const session = useSyncExternalStore(sessionStore.subscribe, sessionStore.get)
+  return useQuery({ queryKey: ["savedFilters", session?.user.id], queryFn: async () => (await api.savedFilters()).items, enabled: !!session })
+}
+export function useSaveFilter() {
+  const client = useQueryClient()
+  return useMutation({ mutationFn: (v: { name: string; filter: BookFilter; id?: string }) => api.saveFilter({ name: v.name, filter: v.filter }, v.id),
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ["savedFilters"] }) } })
+}
+export function useDeleteFilter() {
+  const client = useQueryClient()
+  return useMutation({ mutationFn: api.deleteFilter, onSuccess: () => { void client.invalidateQueries({ queryKey: ["savedFilters"] }) } })
+}
+
+// Imports can complete outside the library screen. Keep the catalog and its
+// sidebar count in sync without mixing their different cache data shapes.
+export function invalidateCatalog(client: QueryClient) {
+  return Promise.all([
+    client.invalidateQueries({ queryKey: keys.books }),
+    client.invalidateQueries({ queryKey: keys.bookCount }),
+  ])
 }
 
 function useAuditRefresh() {
@@ -46,9 +75,8 @@ export function useImportBook() {
   return useMutation({
     mutationFn: (v: { file: File; title: string; onProgress?: (f: number) => void }) => api.importBook(v.file, v.title, v.onProgress),
     onSuccess: (book) => {
-      client.setQueryData<InfiniteData<BookPage>>(keys.books, (data) =>
-        data ? { ...data, pages: data.pages.map((page, i) => (i === 0 ? { ...page, items: [book, ...page.items] } : page)) } : data,
-      )
+      client.setQueryData(["book", book.id], book)
+      void invalidateCatalog(client)
       void audit()
     },
   })
@@ -69,9 +97,11 @@ export function useDeleteBook() {
   return useMutation({
     mutationFn: (id: string) => api.deleteBook(id),
     onSuccess: (_, id) => {
-      client.setQueryData<InfiniteData<BookPage>>(keys.books, (data) =>
+      client.setQueriesData<InfiniteData<BookPage>>({ queryKey: keys.books }, (data) =>
         data && { ...data, pages: data.pages.map((page) => ({ ...page, items: page.items.filter((b) => b.id !== id) })) },
       )
+      client.removeQueries({ queryKey: ["book", id] })
+      void invalidateCatalog(client)
       void audit()
     },
   })

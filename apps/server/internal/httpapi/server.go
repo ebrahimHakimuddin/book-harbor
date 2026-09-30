@@ -110,6 +110,8 @@ func New(cfg config.Config, build BuildInfo, users *identity.Store, auditLog *au
 	}
 	mux.Handle("/api/v1/admin/storage/move-to-s3", requireMethod(http.MethodPost, s.requireAdmin(s.moveToS3)))
 	mux.Handle("/api/v1/admin/metadata/search", requireMethod(http.MethodGet, s.requireAuthentication(s.searchMetadata)))
+	mux.Handle("/api/v1/saved-filters", s.requireAuthentication(s.savedFilters))
+	mux.Handle("/api/v1/saved-filters/", s.requireAuthentication(s.savedFilter))
 	mux.Handle("/api/v1/books", s.requireAuthentication(s.books))
 	mux.Handle("/api/v1/books/", s.requireAuthentication(s.book))
 	mux.Handle("/api/v1/editions/", s.requireAuthentication(s.edition))

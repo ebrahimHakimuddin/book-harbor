@@ -3,7 +3,7 @@ import { CheckIcon, Loader2Icon, NewspaperIcon, PlusIcon, RefreshCwIcon, SearchI
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, type Webnovel } from "@/lib/api"
-import { keys } from "@/lib/queries"
+import { invalidateCatalog } from "@/lib/queries"
 import { errorMessage, timeAgo } from "@/lib/format"
 import { Cover } from "@/components/cover"
 import { useConfirm } from "@/components/confirm"
@@ -29,7 +29,7 @@ export function WebnovelsView() {
   // A novel's book appearing or growing changes the library's list too.
   const client = useQueryClient()
   const books = followed.data?.items.map((n) => `${n.bookId}:${n.chapters}`).join(",")
-  useEffect(() => { if (books) void client.invalidateQueries({ queryKey: keys.books }) }, [books, client])
+  useEffect(() => { if (books) void invalidateCatalog(client) }, [books, client])
   return (
     <>
       <PageHeading title="Web novels." description="Follow a novel from novelarchive.cc to add it to the library as a book. Ongoing ones get new chapters automatically." />
@@ -114,7 +114,7 @@ function FollowedRow({ novel }: { novel: Webnovel }) {
   const sync = useMutation({ mutationFn: () => api.syncWebnovel(novel.sourceId), onSuccess: refresh, onError: (e) => toast.error(errorMessage(e, "Could not start a sync.")) })
   const unfollow = useMutation({
     mutationFn: () => api.unfollowWebnovel(novel.sourceId),
-    onSuccess: () => { refresh(); void client.invalidateQueries({ queryKey: keys.books }) },
+    onSuccess: () => { refresh(); void invalidateCatalog(client) },
     onError: (e) => toast.error(errorMessage(e, "Could not unfollow.")),
   })
   const stop = async () => {

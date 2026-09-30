@@ -3,7 +3,7 @@ import { BookDownIcon, BookMarkedIcon, NewspaperIcon, CheckCircle2Icon, CopyIcon
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, APIError, type Book, type BookRequest } from "@/lib/api"
-import { keys, useBookRequests, useBooks, useDeclineBookRequest, useFulfillBookRequest, useImportBook, useUpdateBook } from "@/lib/queries"
+import { invalidateCatalog, keys, useBookRequests, useBooks, useDeclineBookRequest, useFulfillBookRequest, useImportBook, useUpdateBook } from "@/lib/queries"
 import { errorMessage, timeAgo } from "@/lib/format"
 import { Cover } from "@/components/cover"
 import { useConfirm } from "@/components/confirm"
@@ -295,7 +295,7 @@ function ShelfmarkSection({ group, onDone }: { group: RequestGroup; onDone: () =
   useEffect(() => {
     if (!imported || announced.current) return
     announced.current = true
-    void client.invalidateQueries({ queryKey: keys.books })
+    void invalidateCatalog(client)
     void client.invalidateQueries({ queryKey: keys.bookRequests })
     toast.success(`"${group.title}" was downloaded and added.`)
     onDone()

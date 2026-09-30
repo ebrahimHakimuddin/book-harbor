@@ -33,6 +33,8 @@ offline downloads, a comfortable reader, and their place kept across devices.
   metadata search through Hardcover.
 - A web admin console at `/admin/` for importing books, editing metadata,
   managing readers, and settings.
+- Server-side catalog search with format, tag, and series filters; private saved
+  filters in the admin library, with paginated results.
 - Book files on local disk or in an S3-compatible bucket (AWS, R2, MinIO).
 - Read-only indexing of existing EPUB/PDF folders on a NAS or local mount, with
   periodic scans and no copy into BookHarbor storage.
