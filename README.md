@@ -29,12 +29,15 @@ offline downloads, a comfortable reader, and their place kept across devices.
 
 - EPUB and PDF books, plus MOBI, AZW, and AZW3, which are converted to EPUB on
   import (needs Calibre, included in the default Docker image).
-- Title, authors, description, series, and cover read from each EPUB; optional
-  metadata search through Hardcover.
+- Title, subtitle, authors, description, series, tags, publisher, publication
+  date, language, ISBN, and cover read from EPUBs; optional Hardcover suggestions.
+  Field locks protect curated metadata during EPUB refresh and watched rescans.
 - A web admin console at `/admin/` for importing books, editing metadata,
   managing readers, and settings.
-- Server-side catalog search with format, tag, and series filters; private saved
-  filters in the admin library, with paginated results.
+- Server-side catalog search with library, format, tag, and series filters;
+  private saved filters and paginated results in the admin library and Android Browse.
+- Named libraries with per-reader access and an [OPDS catalog](docs/opds.md)
+  for external readers, using revocable connection credentials.
 - Book files on local disk or in an S3-compatible bucket (AWS, R2, MinIO).
 - Read-only indexing of existing EPUB/PDF folders on a NAS or local mount, with
   periodic scans and no copy into BookHarbor storage.
@@ -90,7 +93,7 @@ or more absolute paths separated by the OS path-list separator. Keep the
 BookHarbor data directory outside all watched roots.
 
 On startup, BookHarbor scans EPUB and PDF files recursively, and repeats the
-scan every 15 minutes by default (`BOOKHARBOR_SCAN_INTERVAL`). **Settings → Watched libraries** can add, rename, enable, or disable sources inside the approved mounts; it shows last scan and file errors and offers Scan now and Verify all. It uses the same catalog and Android download
+scan every 15 minutes by default (`BOOKHARBOR_SCAN_INTERVAL`). **Settings → Watched libraries** can add, rename, enable, or disable sources inside the approved mounts, choose EPUB/PDF indexing, exclude paths with patterns, and set each source's automatic scan interval. It shows last scan and file errors and offers Scan now and Verify all. It uses the same catalog and Android download
 API as imported books. Upload/import remains available. Source files are never
 renamed, moved, or deleted by BookHarbor. A missing mount keeps catalog and
 reading data intact; books are hidden after two complete scans confirm their

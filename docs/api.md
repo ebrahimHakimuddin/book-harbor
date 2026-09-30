@@ -190,6 +190,48 @@ edition; unavailable watched files do not satisfy it. `tag` and `series` match
 whole values. All supplied filters must match. Text fields are trimmed and
 limited to 300 characters; unsupported formats or oversized fields return
 `400 invalid_filter`. Search covers catalog metadata, not book contents.
+`libraryId` scopes results to a named library; every result is also filtered by
+the caller's current library access. Book responses include their `libraryId`.
+
+### Named libraries
+
+```text
+GET    /libraries
+POST   /libraries                   administrator only
+PUT    /libraries/{libraryId}       administrator only
+DELETE /libraries/{libraryId}       administrator only
+PUT    /book-libraries/{bookId}     administrator only
+```
+
+Each book belongs to one logical catalog library. Library groups are distinct
+from mounted sources and private reading lists. Existing books and new imports
+default to `library_main` (initially named “Main library”), which grants all
+readers access after migration. Administrators can rename or restrict this
+library, but cannot delete it.
+
+The index returns `{ "items": [...] }` for accessible libraries; administrators
+also receive reader grant IDs. Create/replace take `{ "name": "Family books",
+"allReaders": false, "readerIds": ["usr_example"] }`. Administrators can always
+access every library. `allReaders` includes future reader accounts. Unknown
+grant IDs return `422` and roll back the whole update. Names are unique ignoring
+ASCII case. Delete requires an empty library; deleting the main or a nonempty
+library returns `409`.
+
+Move a book with `{ "libraryId": "library_example" }` at the book-library route.
+Moving preserves book/edition identities and reading data. Add `?libraryId=...`
+to a managed `POST /books` import to assign its library at creation. Watched
+sources and automated imports initially use the main library.
+
+Access applies to search/counts, detail, covers, downloads, lists, progress and
+annotation sync, and social book metadata. Denied book/edition IDs return `404`.
+Revocation takes effect on subsequent server requests; it does not erase
+already downloaded copies from devices.
+
+### External readers
+
+See [OPDS connections and routes](opds.md) for the `/opds` catalog and revocable
+per-account external reader credentials. OPDS keys authorize only its catalog
+and acquisition routes, and do not authenticate ordinary API endpoints.
 
 ### Saved filters
 
@@ -203,7 +245,8 @@ DELETE /saved-filters/{filterId}
 These authenticated routes act only on the caller's own filters, including
 for administrators. The index returns `{ "items": [...] }` sorted by name.
 Create and replace take `{ "name": "Sea reads", "filter": { "q": "harbor",
-"format": "epub", "tag": "Adventure", "series": "Sea Stories" } }`. An empty
+"format": "epub", "tag": "Adventure", "series": "Sea Stories",
+"libraryId": "library_example" } }`. An empty
 `filter` object saves the unfiltered catalog. Names are trimmed, require 1–100
 characters, and are unique per user ignoring ASCII case. Create returns `201`
 and replace returns `200`, both with `{ "id", "name", "filter", "createdAt",
@@ -213,9 +256,10 @@ return `404`, duplicate names return `409 filter_name_taken`, invalid names or
 filters return `422`, and a missing `filter` object returns `422 invalid_filter`.
 Apply a saved filter by passing its fields to `GET /books`.
 
-The admin library supports saving, applying, updating, and deleting these
-filters. Android clients can use the same API; Android search/filter UI has
-not yet been migrated to it.
+The admin library and Android Browse support saving, applying, updating, and
+deleting these filters. Android searches through this API in pages of 50 books;
+its unfiltered offline catalog remains separate from search results. Offline
+search matches cached metadata; saved-filter mutations require a connection.
 
 `POST /books/{bookId}/editions` takes the same single-`file` multipart body as
 `POST /books` and adds another format to an existing book. A book holds one
@@ -248,7 +292,7 @@ Set `BOOKHARBOR_LIBRARY_DIRS` to absolute directories visible to the server
 `BOOKHARBOR_LIBRARY_ALLOW_DIRS` to the mounted roots within which administrators
 may add source folders. If the allowlist is unset, the automatically registered
 directories are the allowlist. Sources are scanned at startup and every 15
-minutes by default; use `BOOKHARBOR_SCAN_INTERVAL` to change the period.
+minutes by default; use `BOOKHARBOR_SCAN_INTERVAL` to change the default period.
 BookHarbor only reads mounted files. Removing an auto-registration path from
 the environment does not disable an existing source; disable it in Settings.
 
@@ -256,11 +300,24 @@ All source routes require administrator authentication:
 
 - `GET /api/v1/admin/sources` lists sources, enabled state, available file count,
   last successful scan, root error, up to 100 file-level errors, current scan
-  activity, and the operator allowlist.
+  activity, the operator allowlist, `excludePatterns`, `fileTypes`,
+  `scanIntervalMinutes` (zero means the server default), and `lastAttemptAt`.
 - `POST /api/v1/admin/sources` accepts `{ "path": "/library/Author", "name": "Author" }`.
   The path must be an existing directory inside an allowed mount. It starts a scan.
 - `PATCH /api/v1/admin/sources/{id}` accepts `{ "name": "New name", "enabled": true }`.
   Disabling hides the source while keeping its catalog and reading data.
+- The same `PATCH` route accepts scan controls as
+  `{ "excludePatterns": ["Drafts/**", "*.sample.pdf"], "fileTypes": ["epub"] }`.
+  Both fields are required together. File types may contain `epub`, `pdf`, or
+  both. Patterns are relative to the source root, one per entry: `*` matches
+  one path segment and `**` matches folders at any depth. A pattern without a
+  slash also matches names in nested folders. Updating controls starts a scan;
+  excluded editions become unavailable after two complete scans. Source files
+  and catalog identities are kept, so removing a rule restores the same books.
+- The same `PATCH` route accepts `{ "scanIntervalMinutes": 60 }` to scan this
+  source hourly. Use zero to follow the server default. The allowed range is
+  0–10080 minutes. Startup and manual scans still scan every enabled source.
+  Failed automatic scans are retried at the selected interval.
 - `DELETE /api/v1/admin/sources/{id}` disables the source and keeps its catalog;
   `?deleteCatalog=true` also deletes its indexed editions and orphan books.
   Neither form changes files in the mounted folder.
@@ -282,7 +339,8 @@ byte ranges so Android can verify and resume a partial download.
 
 `PATCH /books/{bookId}` accepts any non-empty subset of `title`, `subtitle`,
 `description`, `authors`, `coverUrl`, `series`, `seriesIndex` (0 for
-unnumbered), `tags`, and a reviewed external metadata `source`:
+unnumbered), `tags`, `publisher`, `publishedDate`, `language`, `isbn`,
+`metadataLocks`, and a reviewed external metadata `source`:
 
 ```json
 {
@@ -294,9 +352,36 @@ unnumbered), `tags`, and a reviewed external metadata `source`:
   "series": "Hainish Cycle",
   "seriesIndex": 4,
   "tags": ["Science fiction", "Book club"],
+  "publisher": "Ace Books",
+  "publishedDate": "1969",
+  "language": "en",
   "source": { "provider": "hardcover", "id": "12345" }
 }
 ```
+
+Publication dates accept `YYYY`, `YYYY-MM`, or a valid `YYYY-MM-DD`. Language
+accepts a language tag such as `en-US`. ISBN accepts checksum-valid ISBN-10 or
+ISBN-13, with spaces/hyphens removed before storage. Invalid values return `422`.
+EPUB import extracts these fields, subtitle and subjects/tags; PDF metadata
+continues to use filename/folder fallbacks plus administrator edits.
+
+Book responses include `metadataLocks` (field names) and `metadataProvenance`
+(field-to-origin mapping, such as `epub`, `manual`, `filename`, `folder`,
+`hardcover`, or `legacy`). Changed manual fields are locked automatically.
+An explicit `metadataLocks` array replaces the entire lock set; `[]` unlocks
+all fields, including fields edited in that request. Allowed names are `title`,
+`subtitle`, `description`, `authors`, `coverUrl`, `series`, `seriesIndex`, `tags`,
+`publisher`, `publishedDate`, `language`, and `isbn`. `metadataProvenance` may
+provide an origin for edited fields. Existing catalog values migrate with
+legacy origins and locks to preserve earlier manual edits.
+
+Administrators can `POST /books/{bookId}/metadata-refresh` with `{}` to reread
+the EPUB edition, or `{ "editionId": "ed_..." }` to select one. Refresh and
+watched-file rescans update unlocked fields, keep existing values when source
+metadata is absent, and preserve book/edition IDs and reading state. Cover
+images are managed separately. PDF-only refresh returns `422 unsupported_format`;
+unavailable or changed bytes return `503 edition_unavailable`. Publisher and
+ISBN participate in catalog substring search and Android cached offline search.
 
 Metadata search is a suggestion workflow rather than a direct write. When
 `BOOKHARBOR_HARDCOVER_TOKEN` is configured, the admin search endpoint queries
